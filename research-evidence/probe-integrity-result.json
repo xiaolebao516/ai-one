@@ -1,0 +1,13 @@
+{
+  "experiment": "unchanged upstream capOutboxEntry -> bus -> waitForResponse",
+  "originalChars": 1050013,
+  "originalBytes": 2850013,
+  "truncatedFlag": true,
+  "waiterResolved": true,
+  "receivedChars": 332229,
+  "receivedTerminalMarker": false,
+  "replayOriginalChars": 5000,
+  "replayChars": 2506,
+  "replayHasEllipsis": true,
+  "boundary": "Node module probe; polling mocked; no real webview or account"
+}

@@ -1,0 +1,51 @@
+$ pnpm build:injected && pnpm typecheck && pnpm lint && pnpm test && pnpm agent:verify && node scripts/check-adapters.mjs
+$ esbuild injected/bootstrap.ts injected/engine.ts --bundle --format=iife --platform=browser --target=es2020 --outdir=src-tauri/gen/injected
+
+  src-tauri\gen\injected\engine.js     94.8kb
+  src-tauri\gen\injected\bootstrap.js  16.0kb
+
+Done in 169ms
+$ tsc --noEmit
+$ eslint .
+$ vitest run
+
+ RUN  v4.1.11 C:/Users/Administrator/AppData/Local/Temp/ai-one-research-155195dc/multi-ai-chat-desktop
+
+
+ Test Files  63 passed (63)
+      Tests  781 passed (781)
+   Start at  21:18:34
+   Duration  3.75s (transform 19.67s, setup 0ms, import 28.68s, tests 9.83s, environment 4ms)
+
+$ node --test scripts/agent/tests/*.test.mjs
+✔ after-audit comparison accepts only the matching before receipt (0.4791ms)
+✔ artifact signature includes evidence probes (0.1127ms)
+✔ audit accepts only a same-contract same-repository launch receipt (0.1234ms)
+✔ doctor emits the versioned JSON contract (438.2608ms)
+✔ launch dry-run reports a plan without changing runtime state (442.4591ms)
+✔ audit current is read-only and emits declared effects (453.3279ms)
+✔ commands reject invalid usage with exit code 2 (233.7393ms)
+✔ Node prerequisite matches the package-manager and lint-tool intersection (0.4756ms)
+✔ agent release manifest validates against its schema (29.0151ms)
+✔ manifest entrypoints and package scripts stay aligned (0.7135ms)
+✔ Codex and Claude skills share one maintained instruction body (0.4999ms)
+✔ contract declares explicit trust and host-change boundaries (0.3581ms)
+✔ all localized READMEs expose the same Agent contract boundary (1.2557ms)
+✔ lifecycle scripts contain no host package-manager or privilege escalation command (0.5665ms)
+✔ runner identity requires both runner path and exact token text (0.5202ms)
+✔ EPERM from signal zero still means the process exists (0.0826ms)
+✔ a READY marker from an earlier run cannot satisfy a new run (0.4917ms)
+✔ current-run marker proves control-pane readiness (0.0746ms)
+✔ dead launch distinguishes failure from a normal post-ready exit (0.2321ms)
+✔ a live PID with the wrong runner identity is foreign (0.0552ms)
+✔ readiness wait is bound to one launch and treats missing state as failure (0.4484ms)
+✔ Windows agent commands accept only shell-safe tokens (0.4724ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1627.0168
+Adapter schema and bundled seed checks passed.

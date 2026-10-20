@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "2.0.0",
+  "command": "doctor",
+  "ok": false,
+  "state": "missing_prerequisites",
+  "platform": "win32",
+  "root": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\ai-one-research-155195dc\\multi-ai-chat-desktop",
+  "checks": [
+    {
+      "name": "repository",
+      "ok": true,
+      "detail": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\ai-one-research-155195dc\\multi-ai-chat-desktop"
+    },
+    {
+      "name": "node",
+      "ok": true,
+      "detail": "v24.18.0 (requires ^22.13.0 || >=24.0.0)"
+    },
+    {
+      "name": "pnpm",
+      "ok": true,
+      "detail": "11.25.0"
+    },
+    {
+      "name": "cargo",
+      "ok": false,
+      "detail": "'cargo' �����ڲ����ⲿ���Ҳ���ǿ����еĳ���"
+    },
+    {
+      "name": "rustc",
+      "ok": false,
+      "detail": "'rustc' �����ڲ����ⲿ���Ҳ���ǿ����еĳ���"
+    },
+    {
+      "name": "msvc-cpp-build-tools",
+      "ok": true,
+      "detail": "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community"
+    }
+  ]
+}
