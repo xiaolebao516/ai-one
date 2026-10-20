@@ -24,6 +24,17 @@ export class ProviderPageReloadedError extends ProviderResponseError {
   }
 }
 
+const PROVIDER_RESPONSE_TRUNCATED_REASON = 'response truncated in transport';
+
+// The page outbox caps oversized entries and marks RESPONSE_DONE as truncated. A cut answer must
+// never stand in for the full reply, so it fails the step instead of flowing to the next role.
+export class ProviderResponseTruncatedError extends ProviderResponseError {
+  constructor(provider: AIProvider) {
+    super(provider, `[Error: ${PROVIDER_RESPONSE_TRUNCATED_REASON}]`, PROVIDER_RESPONSE_TRUNCATED_REASON);
+    this.name = 'ProviderResponseTruncatedError';
+  }
+}
+
 export function isProviderPageReloadedError(error: unknown): error is ProviderPageReloadedError {
   return error instanceof ProviderPageReloadedError;
 }

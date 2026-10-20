@@ -2,7 +2,7 @@ import type { AIProvider, BridgeMessage } from '../../shared/types';
 import { AI_PROVIDERS } from '../../shared/constants';
 import { onBridgeMessage } from '../bridge/bus';
 import { AWAITING_ABSOLUTE_MAX_MS, AWAITING_MAX_MS, onProviderBootRotation, setProviderAwaiting } from '../bridge/pull';
-import { ProviderPageReloadedError } from './providerResponse';
+import { ProviderPageReloadedError, ProviderResponseTruncatedError } from './providerResponse';
 import { clearActiveTurn } from './state';
 
 export const STEP_TIMEOUT_MS = AWAITING_MAX_MS;
@@ -44,9 +44,14 @@ function handleBridgeMessage(message: BridgeMessage): void {
   if (message.transport !== 'pull' && message.transport !== 'local') return;
   for (const waiter of [...waiters.values()]) {
     if (waiter.provider !== message.provider) continue;
-    settle(waiter, 'resolve', payloadText(message.payload));
+    if (isTruncatedPayload(message.payload)) settle(waiter, 'reject', new ProviderResponseTruncatedError(waiter.provider));
+    else settle(waiter, 'resolve', payloadText(message.payload));
     return;
   }
+}
+
+function isTruncatedPayload(payload: unknown): boolean {
+  return Boolean(payload && typeof payload === 'object' && (payload as { truncated?: unknown }).truncated === true);
 }
 
 function payloadText(payload: unknown): string {
