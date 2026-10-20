@@ -1,7 +1,7 @@
-# AI-Sister artwork notice
+# AI-Sister theme images (ai-one placeholders)
 
-The six AI-Sister images in this directory were supplied by the project owner for inclusion in the Multi-AI Chat Desktop commemorative theme.
+The upstream Multi-AI Chat Desktop ships six AI-Sister character images here (`chatgpt.webp`, `claude.webp`, `gemini.webp`, `grok.webp`, `meta.webp`, `ensemble.jpg`). Upstream's notice states that this artwork (AI-Sister.com / Ted Huang) is included with permission for that project only and is not offered for reuse under the software's MIT License.
 
-The optional Meta AI portrait (`meta.webp`) is copied byte-for-byte from the private AI-Sister web app, revision `38020b18a348ed1af47c6c18472ba6bca5bf0a72`, path `web/public/avatars/venice.webp`, and renamed for the desktop provider id. Source SHA-256: `10f1fb4667edf0df43419e391626f3ec4dacb04c711f2568b57ac678abba329f`.
+ai-one does not have that permission, so the original images are not included in this repository or its history. The files in this directory are neutral placeholder images generated for ai-one, with the same file names so the optional theme code works unchanged. They contain no AI-Sister artwork.
 
-Artwork: AI-Sister.com / Ted Huang. Included and redistributed with permission for this project. The character artwork is not offered for independent reuse under the software's MIT License unless the rights holder grants separate permission.
+To use the original artwork, obtain separate permission from the rights holder first.

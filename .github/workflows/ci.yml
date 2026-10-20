@@ -73,7 +73,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        # ai-one targets Windows only. macOS/Linux entries from upstream are dropped to keep
+        # private-repo CI minutes low; restore them if those platforms become targets.
+        os: [windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

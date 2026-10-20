@@ -70,7 +70,8 @@ test('contract declares explicit trust and host-change boundaries', () => {
 });
 
 test('all localized READMEs expose the same Agent contract boundary', () => {
-  for (const file of ['README.md', 'README.zh-TW.md', 'README.ja.md', 'README.de.md']) {
+  // ai-one ships a single README; upstream's localized READMEs were not imported (see NOTICE.md).
+  for (const file of ['README.md']) {
     const source = readFileSync(path.join(root, file), 'utf8');
     assert.match(source, /agent-release\.json/);
     assert.match(source, /AGENT-READY-SOURCE-RELEASE\.md/);
