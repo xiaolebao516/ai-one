@@ -1,0 +1,1249 @@
+<title>AI 协作工作台 V1 设计稿</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Serif+SC:wght@500;600&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap">
+<style>
+/* Layout: 纵向评审文档；每个界面方案是一个按 1440×900 逻辑像素绘制、按容器宽度等比缩放的 Windows 窗口模型 */
+:root{
+  --canvas:#F5F3ED; --surface:#FBFAF7; --raised:#FFFFFF; --sunken:#EDEAE2;
+  --line:rgba(26,25,21,.10); --line-2:rgba(26,25,21,.17);
+  --ink:#1A1915; --ink-2:#5C5A53; --ink-3:#8C897F;
+  --accent:#C2603E; --accent-2:#A94F31; --accent-soft:rgba(194,96,62,.11); --on-accent:#FFFFFF;
+  --run:#2F6FDB; --tool:#178C7E; --you:#B7791F; --object:#B0457A; --ok:#2F8A55; --err:#CC3D33; --idle:#9A978E;
+  --run-soft:rgba(47,111,219,.10); --tool-soft:rgba(23,140,126,.11); --you-soft:rgba(183,121,31,.13); --object-soft:rgba(176,69,122,.10); --ok-soft:rgba(47,138,85,.11); --err-soft:rgba(204,61,51,.10);
+  --island:#151412; --island-ink:#F3F1EB; --island-ink-2:#A8A59C; --island-line:rgba(255,255,255,.11);
+  --web-bg:#FFFFFF; --web-ink:#202123; --web-ink-2:#6E6E80; --web-line:#ECECF1; --web-bubble:#F3F3F3;
+  --p-gpt:#10A37F; --p-argon:#4A7FE8; --p-claude:#D97757;
+  --hud-run:#7DB2FF; --hud-ok:#5FD39A; --hud-you:#F2C46B; --hud-object:#EE8FBC; --hud-err:#FF7A6E; --hud-me:#F0A584;
+  --shadow:0 1px 2px rgba(26,25,21,.05),0 10px 30px rgba(26,25,21,.08);
+  --f-sans:"Segoe UI Variable Text","Segoe UI","PingFang SC","Microsoft YaHei UI","Noto Sans SC",system-ui,sans-serif;
+  --f-display:"Source Serif 4","Noto Serif SC","Songti SC",Georgia,serif;
+  --f-mono:"JetBrains Mono","Cascadia Code",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --canvas:#1C1B19; --surface:#23221F; --raised:#2B2A27; --sunken:#171614;
+  --line:rgba(243,241,235,.085); --line-2:rgba(243,241,235,.15);
+  --ink:#F1EFE9; --ink-2:#B2AFA6; --ink-3:#827F77;
+  --accent:#DA7A57; --accent-2:#E8906F; --accent-soft:rgba(218,122,87,.17); --on-accent:#1C1B19;
+  --run:#6EA2FF; --tool:#3EC1AF; --you:#E9AE45; --object:#E27AAA; --ok:#55C48C; --err:#FF6F61; --idle:#827F77;
+  --run-soft:rgba(110,162,255,.14); --tool-soft:rgba(62,193,175,.14); --you-soft:rgba(233,174,69,.15); --object-soft:rgba(226,122,170,.14); --ok-soft:rgba(85,196,140,.14); --err-soft:rgba(255,111,97,.14);
+  --island:#0D0D0C; --island-line:rgba(255,255,255,.10);
+  --web-bg:#212121; --web-ink:#ECECEC; --web-ink-2:#A0A0A8; --web-line:#303030; --web-bubble:#2F2F2F;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 12px 32px rgba(0,0,0,.35);
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --canvas:#1C1B19; --surface:#23221F; --raised:#2B2A27; --sunken:#171614;
+  --line:rgba(243,241,235,.085); --line-2:rgba(243,241,235,.15);
+  --ink:#F1EFE9; --ink-2:#B2AFA6; --ink-3:#827F77;
+  --accent:#DA7A57; --accent-2:#E8906F; --accent-soft:rgba(218,122,87,.17); --on-accent:#1C1B19;
+  --run:#6EA2FF; --tool:#3EC1AF; --you:#E9AE45; --object:#E27AAA; --ok:#55C48C; --err:#FF6F61; --idle:#827F77;
+  --run-soft:rgba(110,162,255,.14); --tool-soft:rgba(62,193,175,.14); --you-soft:rgba(233,174,69,.15); --object-soft:rgba(226,122,170,.14); --ok-soft:rgba(85,196,140,.14); --err-soft:rgba(255,111,97,.14);
+  --island:#0D0D0C; --island-line:rgba(255,255,255,.10);
+  --web-bg:#212121; --web-ink:#ECECEC; --web-ink-2:#A0A0A8; --web-line:#303030; --web-bubble:#2F2F2F;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 12px 32px rgba(0,0,0,.35);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{background:var(--canvas);color:var(--ink)}
+body{font-family:var(--f-sans);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+.doc{max-width:1240px;margin:0 auto;padding-inline:clamp(16px,4vw,40px);padding-block:40px 96px}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;text-wrap:balance;letter-spacing:-.01em;margin:0}
+h1{font-size:clamp(30px,4.2vw,44px);line-height:1.15}
+h2{font-size:clamp(22px,2.6vw,28px);line-height:1.25}
+h3{font-size:18px;line-height:1.35}
+p{margin:0}
+.eyebrow{font-size:12px;letter-spacing:.08em;color:var(--ink-3);text-transform:uppercase;font-weight:600}
+.lede{max-width:68ch;color:var(--ink-2);font-size:16px}
+.muted{color:var(--ink-3)}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+a{color:var(--accent-2)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.head{display:grid;gap:14px;padding-bottom:28px;border-bottom:1px solid var(--line)}
+.head-meta{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;color:var(--ink-2)}
+.head-meta b{font-weight:600;color:var(--ink)}
+.toc{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.toc a{font-size:13px;text-decoration:none;color:var(--ink-2);padding:5px 11px;border:1px solid var(--line);border-radius:999px;background:var(--surface)}
+.toc a:hover{color:var(--ink);border-color:var(--line-2)}
+section.block{padding-top:56px;display:grid;gap:20px}
+.sec-head{display:grid;gap:8px}
+.sec-head p{max-width:72ch;color:var(--ink-2)}
+.tag-legend{display:flex;flex-wrap:wrap;gap:8px;font-size:12.5px}
+.ev{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:999px;border:1px solid var(--line-2);font-size:12px;white-space:nowrap}
+.ev::before{content:"";width:7px;height:7px;border-radius:50%}
+.ev.fact::before{background:var(--ok)}
+.ev.infer::before{background:var(--run)}
+.ev.test::before{background:transparent;border:1.5px solid var(--you)}
+
+/* 状态切换器 */
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.controls .lbl{font-size:13px;color:var(--ink-3);margin-right:4px}
+.chipbtn{font:inherit;font-size:13px;padding:6px 12px;border-radius:8px;border:1px solid var(--line-2);background:var(--raised);color:var(--ink-2);cursor:pointer}
+.chipbtn:hover{color:var(--ink)}
+.chipbtn[aria-pressed="true"]{background:var(--ink);color:var(--canvas);border-color:var(--ink)}
+.toggle{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-2);margin-left:auto}
+.state-note{font-size:14px;color:var(--ink-2);max-width:80ch;min-height:1.6em}
+
+/* 舞台：等比缩放 */
+.stage{position:relative;width:100%;overflow:hidden;border-radius:12px;box-shadow:var(--shadow);background:var(--sunken)}
+.stage>.win{position:absolute;left:0;top:0;transform-origin:0 0}
+
+/* ============ 窗口模型 ============ */
+.win{width:1440px;height:900px;display:grid;grid-template-rows:44px 1fr;background:var(--canvas);font-family:var(--f-sans);font-size:13px;line-height:1.45;color:var(--ink);border:1px solid var(--line-2);border-radius:10px;overflow:hidden}
+.win button{font:inherit;color:inherit}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.ic.sm{width:14px;height:14px}
+.tb{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding-left:12px;background:var(--surface);border-bottom:1px solid var(--line);position:relative}
+.tb-l,.tb-r{display:flex;align-items:center;gap:10px;min-width:0}
+.tb-r{justify-content:flex-end;gap:6px}
+.glyph{width:22px;height:22px;border-radius:7px;background:var(--accent);position:relative;flex:none}
+.glyph::before,.glyph::after{content:"";position:absolute;width:9px;height:9px;border-radius:50%;border:1.6px solid var(--on-accent);top:6.5px}
+.glyph::before{left:4px}.glyph::after{left:9px}
+.task-title{display:flex;align-items:center;gap:6px;border:0;background:none;padding:4px 8px;border-radius:7px;cursor:pointer;font-family:var(--f-display)!important;font-size:15px;font-weight:600;white-space:nowrap}
+.task-title:hover{background:var(--sunken)}
+.task-title .muted{font-family:var(--f-sans);font-weight:400;font-size:12.5px}
+.seg{display:inline-flex;padding:2px;border-radius:8px;background:var(--sunken);gap:2px}
+.seg button{border:0;background:none;padding:4px 11px;border-radius:6px;font-size:12.5px;color:var(--ink-2);cursor:pointer;white-space:nowrap}
+.seg button.on{background:var(--raised);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08);font-weight:600}
+.island{display:flex;align-items:center;gap:2px;height:32px;padding:0 6px 0 4px;border-radius:999px;background:var(--island);color:var(--island-ink);font-size:12px;box-shadow:0 0 0 1px var(--island-line) inset}
+.isl-seat{display:flex;align-items:center;gap:7px;padding:0 10px 0 4px;height:26px;border-radius:999px}
+.isl-sep{width:1px;height:14px;background:var(--island-line)}
+.isl-round{padding:0 10px;color:var(--island-ink-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.isl-round b{color:var(--island-ink);font-weight:600}
+.ring{--c:var(--idle);--p:0;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--c) calc(var(--p)*1%),rgba(255,255,255,.14) 0);flex:none}
+.ring>i{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-style:normal;font-size:8.5px;font-weight:700;color:#fff}
+.ring.dash{background:none;border:1.5px dashed rgba(255,255,255,.28)}
+.isl-state{color:var(--island-ink-2);white-space:nowrap;font-variant-numeric:tabular-nums}
+.isl-state b{font-weight:600}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--c,var(--idle));flex:none}
+.dot.pulse{animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--raised);font-size:12.5px;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--ink-3)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.btn.ghost{background:none;border-color:transparent;color:var(--ink-2)}
+.btn.ghost:hover{background:var(--sunken)}
+.btn.icon{width:28px;padding:0;justify-content:center}
+.btn.on{background:var(--ink);color:var(--canvas);border-color:var(--ink)}
+.btn.on .muted{color:inherit;opacity:.7}
+.caption{display:flex;margin-left:6px;align-self:stretch}
+.caption span{width:46px;display:grid;place-items:center;color:var(--ink-2)}
+.caption span:last-child:hover{background:#C42B1C;color:#fff}
+.kbd{font-family:var(--f-mono);font-size:10.5px;padding:0 4px;border:1px solid var(--line-2);border-bottom-width:2px;border-radius:4px;color:var(--ink-3)}
+
+.body{display:grid;grid-template-columns:60px 1fr 384px;min-height:0;position:relative}
+/* 任务栏 */
+.rail{display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 0;background:var(--surface);border-right:1px solid var(--line)}
+.rail .t{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;background:var(--sunken);font-weight:600;font-size:13px;color:var(--ink-2);position:relative;cursor:pointer}
+.rail .t.on{background:var(--raised);color:var(--ink);box-shadow:0 0 0 1.5px var(--accent)}
+.rail .t .b{position:absolute;right:-2px;top:-2px;width:10px;height:10px;border-radius:50%;background:var(--c);border:2px solid var(--surface)}
+.rail .t.add{background:none;border:1px dashed var(--line-2);color:var(--ink-3)}
+.rail .sep{width:24px;height:1px;background:var(--line);margin:2px 0}
+.rail .spacer{flex:1}
+.rail .ib{width:32px;height:32px;display:grid;place-items:center;color:var(--ink-3);border-radius:8px}
+/* 席位 */
+.seats{display:grid;grid-template-columns:1fr 1fr;min-width:0;min-height:0;position:relative;background:var(--line)}
+.seats.one{grid-template-columns:1fr}
+.seat{display:grid;grid-template-rows:42px 2px 1fr;min-width:0;min-height:0;background:var(--surface);position:relative}
+.seat+.seat{margin-left:1px}
+.seat-h{display:flex;align-items:center;gap:8px;padding:0 8px 0 12px;min-width:0;border-bottom:1px solid var(--line)}
+.mono-av{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:10px;font-weight:700;flex:none;letter-spacing:-.02em}
+.seat-name{font-weight:600;white-space:nowrap}
+.role{font-size:11.5px;padding:1px 7px;border-radius:5px;background:var(--sunken);color:var(--ink-2);white-space:nowrap}
+.pill{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px 0 7px;border-radius:999px;font-size:12px;white-space:nowrap;background:var(--soft,var(--sunken));color:var(--c,var(--ink-2));font-variant-numeric:tabular-nums}
+.pill .dot{--c:currentColor}
+.seat-h .grow{flex:1;min-width:0}
+.model{font-size:11.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.progress{background:transparent;position:relative;overflow:hidden}
+.progress.on::after{content:"";position:absolute;inset:0;width:40%;background:linear-gradient(90deg,transparent,var(--run),transparent);animation:sweep 1.6s linear infinite}
+@keyframes sweep{from{transform:translateX(-100%)}to{transform:translateX(260%)}}
+.seat.frame-you{box-shadow:inset 0 0 0 2px var(--you)}
+.seat.frame-you .seat-h{background:var(--you-soft)}
+.seat.frame-me{box-shadow:inset 0 0 0 2px var(--accent)}
+.seat.frame-me .seat-h{background:var(--accent-soft)}
+
+/* 原生网页（外来界面，刻意使用不同的视觉语言） */
+.web{position:relative;background:var(--web-bg);color:var(--web-ink);font-family:"Segoe UI",system-ui,sans-serif;font-size:13.5px;display:grid;grid-template-rows:30px 1fr auto;min-height:0;overflow:hidden}
+.web-url{display:flex;align-items:center;gap:6px;padding:0 12px;font-size:11px;color:var(--web-ink-2);border-bottom:1px solid var(--web-line)}
+.web-url .lock{width:6px;height:6px;border-radius:50%;background:var(--web-ink-2);opacity:.6}
+.web-body{padding:16px 22px;display:flex;flex-direction:column;gap:14px;overflow:hidden}
+.ububble{align-self:flex-end;max-width:82%;background:var(--web-bubble);border-radius:18px;padding:9px 14px;font-size:13px;line-height:1.5}
+.ububble small{display:block;color:var(--web-ink-2);font-size:11px;margin-bottom:2px}
+.atext{line-height:1.65;font-size:13.5px}
+.atext p+p{margin-top:8px}
+.atext code{font-family:var(--f-mono);font-size:12px;background:var(--web-bubble);padding:1px 5px;border-radius:4px}
+.bar{height:9px;border-radius:5px;background:var(--web-line);margin-top:8px}
+.toolcard{border:1px solid var(--web-line);border-radius:12px;padding:10px 12px;font-size:12.5px;color:var(--web-ink-2);display:flex;align-items:center;gap:8px}
+.spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--web-line);border-top-color:var(--web-ink-2);animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.web-comp{margin:0 18px 16px;border:1px solid var(--web-line);border-radius:22px;padding:11px 16px;color:var(--web-ink-2);font-size:13px;display:flex;justify-content:space-between}
+.native-dialog{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);width:300px;background:var(--web-bg);border:1px solid var(--web-line);border-radius:14px;box-shadow:0 18px 48px rgba(0,0,0,.25);padding:16px;display:grid;gap:10px;font-size:13px}
+.native-dialog .nd-b{display:flex;gap:8px;justify-content:flex-end}
+.native-dialog span.nb{padding:6px 12px;border-radius:999px;border:1px solid var(--web-line);font-size:12.5px}
+.native-dialog span.nb.p{background:var(--web-ink);color:var(--web-bg);border-color:var(--web-ink)}
+.web-tag{position:absolute;right:10px;bottom:62px;font-size:10.5px;padding:2px 8px;border-radius:999px;border:1px dashed var(--web-ink-2);color:var(--web-ink-2);background:var(--web-bg);opacity:.85}
+.web-dim{position:absolute;inset:0;background:var(--web-bg);opacity:.0;pointer-events:none}
+
+/* 右侧协作面板 */
+.panel{display:grid;grid-template-rows:auto auto 1fr auto;min-height:0;background:var(--surface);border-left:1px solid var(--line)}
+.attn{padding:12px 12px 0}
+.card{border-radius:12px;padding:12px 13px;display:grid;gap:8px;border:1px solid var(--line);background:var(--raised)}
+.card.you{border-color:color-mix(in srgb,var(--you) 45%,transparent);background:var(--you-soft)}
+.card.ok{border-color:color-mix(in srgb,var(--ok) 40%,transparent);background:var(--ok-soft)}
+.card.me{border-color:color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-soft)}
+.card.plain{background:var(--sunken);border-color:transparent}
+.card-h{display:flex;align-items:center;gap:8px;font-weight:600}
+.card-h .k{font-size:11.5px;font-weight:600;letter-spacing:.04em;color:var(--c)}
+.card-h .t{margin-left:auto;font-weight:400;font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.card p{color:var(--ink-2);font-size:12.5px}
+.card ul{margin:0;padding-left:16px;color:var(--ink-2);font-size:12.5px;display:grid;gap:3px}
+.card .acts{display:flex;gap:6px;flex-wrap:wrap}
+.card .serif{font-family:var(--f-display);font-size:15px;font-weight:600;color:var(--ink)}
+.next{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--ink-2);padding:9px 11px;border-radius:10px;background:var(--sunken)}
+.next b{color:var(--ink);font-weight:600}
+.tabs{display:flex;gap:2px;padding:10px 12px 0;border-bottom:1px solid var(--line)}
+.tabs button{border:0;background:none;padding:7px 10px 9px;font-size:12.5px;color:var(--ink-3);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;display:flex;gap:5px;align-items:center}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
+.tabs .n{font-size:11px;padding:0 5px;border-radius:999px;background:var(--sunken);color:var(--ink-2);font-weight:500}
+.tabs .n.warn{background:var(--object-soft);color:var(--object)}
+.pane{overflow:hidden;min-height:0;position:relative}
+.view{position:absolute;inset:0;overflow:auto;padding:4px 12px 16px}
+.filter{display:flex;gap:6px;padding:10px 0 6px;position:sticky;top:0;background:var(--surface);z-index:2}
+.filter span{font-size:11.5px;padding:2px 9px;border-radius:999px;border:1px solid var(--line);color:var(--ink-2)}
+.filter span.on{border-color:var(--ink);color:var(--ink)}
+.round{display:flex;align-items:center;gap:8px;padding:10px 2px 6px;font-size:11.5px;color:var(--ink-3);font-weight:600;letter-spacing:.02em}
+.round::after{content:"";flex:1;height:1px;background:var(--line)}
+.round .rt{color:var(--ink-2)}
+.round.collapsed{color:var(--ink-3)}
+.msg{display:grid;grid-template-columns:24px 1fr;gap:9px;padding:9px 6px;border-radius:10px}
+.msg:hover{background:var(--sunken)}
+.msg .mono-av{width:22px;height:22px;font-size:9px;margin-top:1px}
+.msg-h{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.msg-h .who{font-weight:600}
+.msg-h .r{font-size:11.5px;color:var(--ink-3)}
+.msg-h .time{margin-left:auto;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.stance{font-size:11px;padding:0 7px;border-radius:5px;height:18px;display:inline-flex;align-items:center;background:var(--soft);color:var(--c);font-weight:600}
+.msg-b{color:var(--ink-2);font-size:12.5px;margin-top:3px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.msg-m{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:6px;font-size:11.5px;color:var(--ink-3);align-items:center}
+.msg-m .relay{display:inline-flex;align-items:center;gap:4px}
+.msg-m .relay.ok{color:var(--ok)}
+.msg-acts{display:flex;gap:6px;margin-top:7px}
+.msg-acts .btn{height:24px;font-size:11.5px;padding:0 8px}
+.msg.user{background:var(--accent-soft)}
+.msg.user .msg-b{color:var(--ink);-webkit-line-clamp:4}
+.msg.live .msg-b{color:var(--ink)}
+.shimmer{background:linear-gradient(90deg,var(--ink-3) 0%,var(--ink) 40%,var(--ink-3) 80%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shim 2.2s linear infinite}
+@keyframes shim{to{background-position:-200% 0}}
+.sys{font-size:11.5px;color:var(--ink-3);text-align:center;padding:6px 0;display:flex;align-items:center;gap:8px}
+.sys::before,.sys::after{content:"";flex:1;height:1px;background:var(--line)}
+.jump{position:absolute;right:14px;bottom:10px;z-index:3;font-size:11.5px;padding:4px 10px;border-radius:999px;background:var(--ink);color:var(--canvas);box-shadow:var(--shadow)}
+/* 结论板 */
+.bsum{display:flex;gap:6px;flex-wrap:wrap;padding:12px 0 4px}
+.bh{font-size:11.5px;font-weight:600;color:var(--ink-3);letter-spacing:.04em;padding:12px 2px 6px;display:flex;justify-content:space-between}
+.agree{display:grid;grid-template-columns:16px 1fr;gap:8px;padding:8px 6px;border-bottom:1px solid var(--line);font-size:12.5px}
+.agree .ck{color:var(--ok);margin-top:2px}
+.agree small{display:block;color:var(--ink-3);font-size:11.5px;margin-top:2px}
+.dis{border:1px solid var(--line);border-radius:12px;background:var(--raised);padding:11px;display:grid;gap:9px;margin-bottom:8px}
+.dis-h{display:flex;gap:8px;align-items:flex-start;font-weight:600;font-size:12.5px}
+.dis-h .stance{margin-left:auto;flex:none}
+.pos{display:grid;grid-template-columns:22px 1fr;gap:8px;font-size:12px;color:var(--ink-2)}
+.pos .mono-av{width:20px;height:20px;font-size:8.5px}
+.evs{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.evchip{display:inline-flex;align-items:center;gap:4px;font-family:var(--f-mono);font-size:10.5px;padding:1px 6px;border-radius:5px;border:1px solid var(--line-2);color:var(--ink-2);background:var(--surface)}
+.evchip.v{border-color:color-mix(in srgb,var(--ok) 50%,transparent);color:var(--ok)}
+/* 证据 */
+.evrow{display:grid;grid-template-columns:50px 1fr auto;gap:8px;align-items:start;padding:9px 4px;border-bottom:1px solid var(--line);font-size:12px}
+.evtype{font-size:10px;font-weight:700;letter-spacing:.05em;padding:2px 0;border-radius:5px;text-align:center;background:var(--sunken);color:var(--ink-2)}
+.evref{font-family:var(--f-mono);font-size:11.5px;color:var(--ink);word-break:break-all}
+.evrow small{display:block;color:var(--ink-3);font-size:11.5px;margin-top:2px}
+.vstate{font-size:11px;white-space:nowrap;display:inline-flex;align-items:center;gap:5px;color:var(--ink-3)}
+.vstate::before{content:"";width:8px;height:8px;border-radius:50%;border:1.5px solid var(--ink-3)}
+.vstate.v{color:var(--ok)}
+.vstate.v::before{background:var(--ok);border-color:var(--ok)}
+/* 状态 HUD */
+.hcard{border:1px solid var(--line);border-radius:12px;background:var(--raised);padding:11px;display:grid;gap:8px;margin-top:10px}
+.hrow{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--ink-2)}
+.hrow b{color:var(--ink);font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
+.meter{height:5px;border-radius:3px;background:var(--sunken);overflow:hidden}
+.meter i{display:block;height:100%;background:var(--c)}
+.note{font-size:11.5px;color:var(--ink-3);padding:10px 2px}
+/* 输入区 */
+.comp{border-top:1px solid var(--line);padding:10px 12px 12px;display:grid;gap:8px;background:var(--surface)}
+.targets{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+.targets .tl{font-size:11.5px;color:var(--ink-3);margin-right:2px}
+.tchip{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:2px 9px 2px 4px;border-radius:999px;border:1px solid var(--line-2);color:var(--ink-2)}
+.tchip.on{border-color:var(--ink);color:var(--ink);background:var(--raised)}
+.tchip .mono-av{width:16px;height:16px;font-size:7px}
+.tchip.all{padding-left:9px}
+.ta{border:1px solid var(--line-2);border-radius:12px;background:var(--raised);padding:10px 12px;min-height:74px;color:var(--ink-3);font-size:13px;display:grid;align-content:space-between}
+.ta .typed{color:var(--ink)}
+.comp-f{display:flex;align-items:center;gap:6px}
+.comp-f .hint{font-size:11.5px;color:var(--ink-3);flex:1;min-width:0}
+/* 任务中心浮层（网页冻结为快照） */
+.parked .web>*{filter:blur(2px) grayscale(.5);opacity:.55}
+.sheet{position:absolute;left:60px;top:0;right:384px;bottom:0;display:grid;place-items:start center;padding-top:56px;z-index:5;background:color-mix(in srgb,var(--canvas) 35%,transparent)}
+.sheet-in{width:560px;background:var(--raised);border:1px solid var(--line-2);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+.sheet-search{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);color:var(--ink-3);font-size:14px}
+.sheet-search .typed{color:var(--ink)}
+.sg{padding:6px 8px 8px}
+.sg-h{font-size:11.5px;font-weight:600;color:var(--ink-3);padding:8px 8px 4px;display:flex;justify-content:space-between}
+.trow{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;padding:8px;border-radius:9px;font-size:13px}
+.trow.on{background:var(--sunken)}
+.trow .ttl{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trow .ttl small{display:block;font-weight:400;color:var(--ink-3);font-size:11.5px}
+.avs{display:flex}
+.avs .mono-av{width:18px;height:18px;font-size:7.5px;border:2px solid var(--raised);margin-left:-5px}
+.sheet-foot{display:flex;justify-content:space-between;padding:9px 14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-3)}
+.parknote{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);font-size:11.5px;color:var(--ink-2);background:var(--raised);border:1px solid var(--line);border-radius:999px;padding:4px 12px;white-space:nowrap}
+
+/* 标注 */
+.mk{position:absolute;z-index:8;width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--on-accent);font:600 12px/22px var(--f-sans);text-align:center;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
+.win.no-mk .mk,.win:not([data-state="run"]) .mk{display:none}
+.notes{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px 22px;margin:0;padding:0;list-style:none;counter-reset:n}
+.notes li{display:grid;grid-template-columns:24px 1fr;gap:10px;font-size:14px;color:var(--ink-2);min-width:0}
+.notes li::before{counter-increment:n;content:counter(n);width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--on-accent);font-size:12px;font-weight:600;display:grid;place-items:center;margin-top:1px}
+.notes b{color:var(--ink);font-weight:600}
+
+/* 方案对比（低保真线框） */
+.cmp{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:20px}
+.wf-card{display:grid;gap:12px;min-width:0}
+.wf{aspect-ratio:16/10;max-width:100%;border:1.5px solid var(--ink-3);border-radius:10px;background:var(--surface);display:grid;grid-template-rows:9% 1fr;overflow:hidden;font-size:clamp(9px,1.2vw,12px);color:var(--ink-2)}
+.wf .wtb{border-bottom:1.5px solid var(--ink-3);display:flex;align-items:center;gap:6%;padding:0 3%}
+.wf .wtb i{display:block;height:34%;border-radius:4px;background:var(--line-2)}
+.wf .wbody{display:grid;min-height:0}
+.wf .z{border-right:1.5px solid var(--ink-3);display:grid;place-items:center;text-align:center;padding:4px;position:relative}
+.wf .z:last-child{border-right:0}
+.wf .z.web{background:repeating-linear-gradient(135deg,transparent 0 7px,var(--line) 7px 8px);color:var(--ink-2);font-family:var(--f-sans);font-size:inherit;display:grid;grid-template-rows:auto}
+.wf .z.acc{background:var(--accent-soft)}
+.wf .stack{display:grid;grid-template-rows:auto 1fr auto;border-right:1.5px solid var(--ink-3);min-height:0}
+.wf .stack>div{border-bottom:1.5px dashed var(--line-2);display:grid;place-items:center;padding:4px;text-align:center}
+.wf .stack>div:last-child{border-bottom:0}
+.wf-card h3{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.badge{font-family:var(--f-sans);font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;background:var(--accent);color:var(--on-accent)}
+.badge.alt{background:var(--sunken);color:var(--ink-2)}
+.pc{display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:14px}
+.pc ul{margin:4px 0 0;padding-left:18px;color:var(--ink-2);display:grid;gap:3px}
+.pc b{font-size:12.5px;color:var(--ink-3);letter-spacing:.04em}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:14px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12.5px;color:var(--ink-3);font-weight:600;background:var(--sunken)}
+tr:last-child td{border-bottom:0}
+td.win-a{color:var(--ink)}
+
+/* 流程 */
+.flows{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr));gap:16px}
+.flow{border:1px solid var(--line);border-radius:14px;background:var(--surface);padding:16px 18px;display:grid;gap:10px;align-content:start}
+.flow h3{font-size:16px}
+.flow ol{margin:0;padding-left:20px;display:grid;gap:6px;color:var(--ink-2);font-size:14px}
+.flow ol b{color:var(--ink);font-weight:600}
+.flow .fn{font-size:13px;color:var(--ink-3);border-top:1px dashed var(--line-2);padding-top:8px}
+
+/* 新建任务 */
+.newtask{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:24px;align-items:start}
+.nt{border:1px solid var(--line-2);border-radius:16px;background:var(--raised);box-shadow:var(--shadow);overflow:hidden;font-size:13px}
+.nt-h{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line)}
+.nt-h h3{font-size:17px}
+.nt-b{padding:16px 18px;display:grid;gap:16px}
+.fl{display:grid;gap:6px}
+.fl>label,.fl>.l{font-size:12px;font-weight:600;color:var(--ink-2)}
+.inp{border:1px solid var(--line-2);border-radius:10px;padding:9px 11px;background:var(--surface);color:var(--ink);line-height:1.5}
+.tpls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.tpl{border:1px solid var(--line-2);border-radius:12px;padding:10px;display:grid;gap:4px;background:var(--surface);min-width:0}
+.tpl.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);background:var(--accent-soft)}
+.tpl b{font-size:13px}
+.tpl span{font-size:11.5px;color:var(--ink-3)}
+.phases{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-size:11.5px;color:var(--ink-2)}
+.phases i{font-style:normal;padding:1px 7px;border-radius:5px;background:var(--sunken)}
+.prow{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.prow .sel{font-size:12px;color:var(--ink-2);border:1px solid var(--line-2);border-radius:7px;padding:2px 8px;white-space:nowrap}
+.switches{display:grid;gap:7px}
+.sw{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12.5px;color:var(--ink-2)}
+.tg{width:30px;height:18px;border-radius:999px;background:var(--line-2);position:relative;flex:none}
+.tg::after{content:"";position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:50%;background:var(--raised);box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.tg.on{background:var(--accent)}
+.tg.on::after{left:14px}
+.nt-f{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid var(--line);background:var(--surface)}
+.pre{display:flex;gap:10px;font-size:12px;color:var(--ink-2);flex-wrap:wrap}
+.pre span{display:inline-flex;align-items:center;gap:5px}
+.side-notes{display:grid;gap:14px;font-size:14.5px;color:var(--ink-2)}
+.side-notes h3{color:var(--ink)}
+.side-notes ul{margin:0;padding-left:18px;display:grid;gap:6px}
+
+/* 视觉规范 */
+.spec-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr));gap:16px}
+.spec{border:1px solid var(--line);border-radius:14px;background:var(--surface);padding:16px;display:grid;gap:12px;align-content:start;min-width:0}
+.spec h3{font-size:16px}
+.sw-row{display:grid;grid-template-columns:34px 1fr auto;gap:10px;align-items:center;font-size:13px}
+.sw-chip{width:34px;height:24px;border-radius:7px;border:1px solid var(--line-2)}
+.sw-row code{color:var(--ink-3);font-size:11.5px}
+.st-row{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;font-size:13px}
+.st-row small{display:block;color:var(--ink-3);font-size:12px}
+.type-s{display:grid;gap:8px}
+.type-s div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;border-bottom:1px dashed var(--line);padding-bottom:6px}
+.type-s small{color:var(--ink-3);font-size:11.5px;white-space:nowrap}
+.radii{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
+.radii div{width:48px;height:40px;border:1.5px solid var(--ink-3);display:grid;place-items:end center;font-size:11px;color:var(--ink-3);padding-bottom:2px}
+.borrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px}
+.borrow div{border-left:2px solid var(--line-2);padding:2px 0 2px 14px;font-size:14px;color:var(--ink-2)}
+.borrow b{display:block;color:var(--ink);margin-bottom:2px}
+.borrow .no{border-left-color:var(--err)}
+
+/* 现状评估 */
+.assess{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:24px;align-items:start}
+.shot{border-radius:12px;overflow:hidden;border:1px solid var(--line-2);box-shadow:var(--shadow);background:#fff}
+.shot img{display:block;width:100%;height:auto}
+figcaption{font-size:12.5px;color:var(--ink-3);margin-top:8px}
+.issues{margin:0;padding:0;list-style:none;display:grid;gap:12px;counter-reset:is}
+.issues li{display:grid;grid-template-columns:28px 1fr;gap:10px;font-size:14px;color:var(--ink-2)}
+.issues li::before{counter-increment:is;content:counter(is);font-family:var(--f-display);font-size:20px;font-weight:600;color:var(--accent);line-height:1.1}
+.issues b{color:var(--ink)}
+.keep{border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--surface);font-size:14px;color:var(--ink-2)}
+.keep ul{margin:6px 0 0;padding-left:18px;display:grid;gap:4px}
+
+/* 范围 */
+.scope{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px}
+.scope .col{border:1px solid var(--line);border-radius:14px;background:var(--surface);padding:16px 18px;min-width:0}
+.scope .col.must{border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+.scope h3{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}
+.scope ul{margin:0;padding-left:18px;display:grid;gap:7px;font-size:14px;color:var(--ink-2)}
+.scope ul b{color:var(--ink);font-weight:600}
+.qs{display:grid;gap:10px;counter-reset:q;margin:0;padding:0;list-style:none}
+.qs li{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--surface);font-size:14px;color:var(--ink-2);display:grid;gap:4px}
+.qs li b{color:var(--ink)}
+.foot{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-3);display:grid;gap:4px}
+
+/* ===== 修订版：结果为中心 ===== */
+.body2{display:grid;grid-template-columns:60px 1fr 340px;min-height:0;position:relative}
+.center{display:grid;grid-template-rows:40px 1fr auto;min-width:0;min-height:0;background:var(--canvas)}
+.subbar{display:flex;align-items:center;gap:4px;padding:0 12px 0 16px;border-bottom:1px solid var(--line);background:var(--surface)}
+.vtab{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 12px;border-radius:7px;font-size:12.5px;color:var(--ink-2);border:0;background:none;cursor:pointer;white-space:nowrap}
+.vtab:hover{background:var(--sunken)}
+.vtab.on{background:var(--raised);color:var(--ink);font-weight:600;box-shadow:0 0 0 1px var(--line-2)}
+.vtab .mono-av{width:16px;height:16px;font-size:6.5px}
+.subbar .sp{flex:1}
+.subbar .hint{font-size:11.5px;color:var(--ink-3);margin-right:8px;white-space:nowrap}
+.cmain{position:relative;min-height:0;overflow:hidden}
+.cview{position:absolute;inset:0;overflow:hidden;padding:16px 24px;display:grid;gap:14px;align-content:start}
+.strip{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:14px;align-items:center;padding:13px 16px;border-radius:14px;border:1px solid color-mix(in srgb,var(--c) 35%,transparent);background:var(--soft)}
+.strip .si{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:var(--raised);color:var(--c)}
+.strip .si .ic{width:20px;height:20px;stroke-width:2}
+.strip h3{font-size:18px}
+.strip p{font-size:12.5px;color:var(--ink-2);margin-top:2px}
+.strip .acts{display:flex;gap:6px}
+.rgrid{display:grid;grid-template-columns:minmax(0,1fr) 322px;gap:14px;align-items:start}
+.rcol{display:grid;gap:14px;align-content:start;min-width:0}
+.rcard{background:var(--raised);border:1px solid var(--line);border-radius:14px;padding:13px 16px;display:grid;gap:10px;min-width:0}
+.rcard-h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--ink-3);letter-spacing:.03em}
+.rcard-h .r{margin-left:auto;font-weight:400;letter-spacing:0}
+.rcard .acts{display:flex;gap:6px;flex-wrap:wrap}
+.n2{font-size:11px;padding:0 6px;border-radius:999px;background:var(--object-soft);color:var(--object)}
+.concl{font-family:var(--f-display);font-size:21px;line-height:1.35;font-weight:600;color:var(--ink);text-wrap:balance}
+.pt{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;align-items:center;color:var(--ink-2)}
+.pt .who{display:flex;gap:4px;align-items:center;font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+.pt .mono-av{width:18px;height:18px;font-size:6.5px}
+.pt .who>span{display:inline-flex;gap:4px;align-items:center}
+.wrline{font-size:12px;color:var(--ink-2);display:flex;gap:8px;align-items:center;padding:8px 10px;border-radius:9px;background:var(--sunken)}
+.dis{margin-bottom:0}
+.win[data-state="decide"] #dis-1{border-color:var(--you);box-shadow:0 0 0 1px var(--you);background:color-mix(in srgb,var(--you-soft) 50%,var(--raised))}
+.dis2{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12.5px;padding:9px 11px;border:1px dashed var(--line-2);border-radius:10px;color:var(--ink-2)}
+.steps{display:grid}
+.step{display:grid;grid-template-columns:16px 1fr auto;gap:10px;padding:5px 0;font-size:12.5px;align-items:start}
+.step .sd{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--line-2);margin-top:3px;display:grid;place-items:center}
+.step.done .sd{background:var(--ok);border-color:var(--ok);color:#fff}
+.step.cur .sd{border-color:var(--run);box-shadow:0 0 0 3px var(--run-soft)}
+.step.cur .sd::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--run)}
+.step.cur{font-weight:600}
+.step small{display:block;color:var(--ink-3);font-size:11.5px;font-weight:400}
+.step .t{font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.conds{display:grid;gap:4px;padding-top:8px;border-top:1px solid var(--line)}
+.cond{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-2)}
+.cond b{font-weight:500;color:var(--ink);font-variant-numeric:tabular-nums}
+.cond b.hit{color:var(--you);font-weight:600}
+.evmini{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line);font-size:12px}
+.evmini .evref{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.ftext{font-size:13px;color:var(--ink);line-height:1.6}
+.comp2{border-top:1px solid var(--line);padding:10px 24px 12px;background:var(--surface);display:grid;gap:8px}
+.hint2{font-size:11.5px;color:var(--ink-3);margin-left:6px}
+.inrow{display:flex;gap:8px;align-items:stretch}
+.inbox{flex:1;min-width:0;border:1px solid var(--line-2);border-radius:12px;background:var(--raised);padding:0 12px;color:var(--ink-3);font-size:13px;display:flex;align-items:center;min-height:44px}
+.inbox .typed{color:var(--ink)}
+.inrow .btn{height:auto}
+/* 原始记录抽屉 */
+.logd{position:absolute;top:0;right:0;bottom:0;width:480px;background:var(--surface);border-left:1px solid var(--line-2);box-shadow:-16px 0 36px rgba(26,25,21,.10);display:grid;grid-template-rows:auto auto 1fr;z-index:4}
+.logd-h{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.logd-h b{font-family:var(--f-display);font-size:15px}
+.logbody{overflow:hidden;padding:0 14px 14px;display:grid;gap:8px;align-content:start}
+.lmsg{border:1px solid var(--line);border-radius:12px;background:var(--raised);padding:10px 12px;display:grid;gap:6px}
+.lmsg.user{background:var(--accent-soft);border-color:transparent}
+.lmsg .msg-h .mono-av{flex:none}
+.ltext{font-size:12.5px;line-height:1.6;color:var(--ink)}
+.lfoot{display:flex;gap:12px;align-items:center;font-size:11.5px;color:var(--ink-3)}
+.lfoot a{color:var(--accent-2);cursor:pointer}
+.lfoot .relay{display:inline-flex;gap:4px;align-items:center}
+.lfoot .relay.ok{color:var(--ok)}
+/* 网页视图 */
+.wview{position:absolute;inset:0;display:grid;grid-template-rows:42px auto 1fr;background:var(--surface)}
+.wview .seat-h{border-bottom:1px solid var(--line)}
+.takebar{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--accent-soft);border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent);font-size:12.5px;color:var(--ink)}
+.takebar span{flex:1}
+.takebar .ic{color:var(--accent)}
+/* 右侧 HUD（两种主题都为深色） */
+.hud{background:var(--island);color:var(--island-ink);display:grid;grid-template-rows:auto 1fr;min-height:0;font-size:12.5px;border-left:1px solid var(--island-line)}
+.hud-h{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--island-line);font-size:12px;color:var(--island-ink-2)}
+.hud-h span:first-child{color:var(--island-ink);font-weight:600}
+.hud-b{overflow:hidden;padding:2px 14px 14px;display:grid;gap:6px;align-content:start}
+.hs{padding:12px 2px 2px;font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--island-ink-2);display:flex;justify-content:space-between;align-items:center}
+.hs .cnt{min-width:18px;height:18px;padding:0 6px;border-radius:999px;background:rgba(242,196,107,.18);color:var(--hud-you);font-size:11px;display:grid;place-items:center;letter-spacing:0}
+.hrow2{display:grid;grid-template-columns:26px minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px;border-radius:10px;background:rgba(255,255,255,.045)}
+.hrow2 .ring i{font-size:7.5px}
+.hrow2 .nm{font-weight:600;min-width:0}
+.hrow2 .nm small{display:block;font-weight:400;color:var(--island-ink-2);font-size:11px}
+.hst{font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;display:inline-flex;gap:6px;align-items:center;color:var(--c)}
+.hdisc{padding:10px;border-radius:10px;background:rgba(255,255,255,.045);display:grid;gap:7px}
+.hdisc .big{font-size:15px;font-weight:600;color:var(--island-ink);font-variant-numeric:tabular-nums}
+.hst-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px;color:var(--island-ink-2)}
+.hst-row b{font-weight:600}
+.seg6{display:grid;grid-template-columns:repeat(6,1fr);gap:3px}
+.seg6 i{height:5px;border-radius:3px;background:rgba(255,255,255,.12)}
+.seg6 i.d{background:var(--hud-ok)}
+.seg6 i.c{background:var(--hud-run)}
+.win[data-state="consensus"] .seg6 i:nth-child(3),.win[data-state="consensus"] .seg6 i:nth-child(4){background:var(--hud-ok)}
+.win[data-state="decide"] .seg6 i.c{background:var(--hud-you)}
+.htag{font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:5px;background:rgba(242,196,107,.16);color:var(--hud-you);white-space:nowrap}
+.wait{border-radius:10px;background:rgba(255,255,255,.07);padding:10px;display:grid;gap:6px}
+.wait-h{display:flex;gap:8px;align-items:center}
+.wait-h .t{margin-left:auto;color:var(--island-ink-2);font-size:11px;font-variant-numeric:tabular-nums}
+.wait p{color:var(--island-ink-2);font-size:12px}
+.hbtn{height:26px;padding:0 12px;border-radius:7px;border:0;font:inherit;font-size:12px;font-weight:600;background:var(--hud-you);color:#1A1405;cursor:pointer}
+.wait-row{display:flex;gap:8px;align-items:center;padding:4px 2px;font-size:12px}
+.hempty{padding:9px 10px;border-radius:10px;border:1px dashed var(--island-line);color:var(--island-ink-2);font-size:12px;display:flex;gap:8px;align-items:center}
+.hempty .ic{color:var(--hud-ok)}
+.qrow{display:grid;grid-template-columns:8px 58px 1fr 64px;gap:8px;align-items:center;padding:5px 2px;font-size:12px}
+.qrow .qv{text-align:right;color:var(--island-ink-2);white-space:nowrap}
+.qbar{height:5px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden}
+.qbar i{display:block;height:100%;background:var(--c,transparent)}
+.hnote{font-size:11px;color:var(--island-ink-2);padding:6px 2px;line-height:1.55}
+
+@media (max-width:860px){
+  .newtask,.assess{grid-template-columns:1fr}
+  .pc{grid-template-columns:1fr}
+  .tpls{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 13V5.5a1.5 1.5 0 013 0V12M11 11V4.5a1.5 1.5 0 013 0V12M14 11.5V6a1.5 1.5 0 013 0v8a6 6 0 01-6 6h-1a6 6 0 01-4.6-2.2L3.6 14.7a1.6 1.6 0 012.4-2L8 15"/></symbol>
+  <symbol id="i-max" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3L5 13h6l-1 8 8-10h-6z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.5v.01"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/></symbol>
+  <symbol id="i-min" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+  <symbol id="i-sq" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="1"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></symbol>
+  <symbol id="i-relay" viewBox="0 0 24 24"><path d="M4 7h11l-3-3M20 17H9l3 3"/></symbol>
+  <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M10 5v14M15 5v14"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 4l8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4M4 16l8 4 8-4"/></symbol>
+  <symbol id="i-handoff" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8 8M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4"/></symbol>
+</svg>
+
+<div class="doc">
+
+<header class="head">
+  <div class="eyebrow">产品交互与 UI/UX · 评审稿修订版 · 2026-10-20</div>
+  <h1>AI 协作工作台 V1 设计稿</h1>
+  <p class="lede">让 ChatGPT、Gemini Argon 等网页版 AI 在后台自动交换完整回复、互相审计。主界面只回答三个问题：讨论得出了什么、还有什么没解决、现在要不要你操作。AI 网页保留原生界面，作为底层会话和人工接管入口，需要时再切换过去。</p>
+  <div class="head-meta">
+    <span>参考：<b>Multi-AI Chat Desktop</b> <span class="mono">6bcf904</span></span>
+    <span>视觉参考：<b>Agent HUD Open</b> <span class="mono">014524c</span></span>
+    <span>目标平台：<b>Windows 11</b>，最小窗口 1280×720</span>
+    <span>状态：<b>待与技术方案共同评审</b></span>
+  </div>
+  <div class="tag-legend"><span class="ev fact">已核实事实</span><span class="ev infer">静态推断</span><span class="ev test">待实测</span><span class="muted">本稿中的标注口径，与 <span class="mono">AGENTS.md</span> 一致</span></div>
+  <nav class="toc" aria-label="目录">
+    <a href="#main">协作主界面</a><a href="#compare">本次调整</a><a href="#flows">主要流程</a><a href="#newtask">新建任务</a><a href="#spec">视觉规范</a><a href="#assess">现状评估</a><a href="#scope">V1 范围</a><a href="#questions">待你确认</a>
+  </nav>
+</header>
+
+<!-- ================= 主界面 ================= -->
+<section class="block" id="main">
+  <div class="sec-head">
+    <div class="eyebrow">修订版 · 以结果为中心</div>
+    <h2>多 AI 协作主界面</h2>
+    <p>打开任务先看到三件事：讨论得出了什么、还有什么没解决、现在要不要你操作。AI 网页沿用 Multi-AI Chat 的切换方式，作为后台会话和人工接管入口，平时不占屏幕；原始对话收进可折叠的记录抽屉。右侧深色栏借鉴 Agent HUD，集中显示运行状态、讨论状态、待处理事项和额度。</p>
+  </div>
+  <div class="controls" role="group" aria-label="界面状态">
+    <span class="lbl">状态</span>
+    <button class="chipbtn" data-set="run" aria-pressed="true">自动讨论中</button>
+    <button class="chipbtn" data-set="decide" aria-pressed="false">需要你裁决</button>
+    <button class="chipbtn" data-set="paused" aria-pressed="false">已暂停</button>
+    <button class="chipbtn" data-set="consensus" aria-pressed="false">得出结论</button>
+    <button class="chipbtn" data-set="free" aria-pressed="false">自由聊天</button>
+    <button class="chipbtn" data-set="log" aria-pressed="false">展开原始记录</button>
+    <button class="chipbtn" data-set="webview" aria-pressed="false">切到网页接管</button>
+    <label class="toggle"><input type="checkbox" id="mk-toggle" checked> 显示标注（自动讨论中）</label>
+  </div>
+  <p class="state-note" id="state-note"></p>
+
+  <div class="stage" id="stage-main">
+  <div class="win" id="win" data-w="1440" data-h="900">
+    <!-- 标题栏 -->
+    <div class="tb">
+      <div class="tb-l">
+        <span class="glyph" aria-hidden="true"></span>
+        <button class="task-title">修复登录回归 <span class="muted">PR #128</span><svg class="ic sm"><use href="#i-down"/></svg></button>
+        <div class="seg" role="tablist" aria-label="模式">
+          <button id="m-free">自由聊天</button><button id="m-auto" class="on">自动讨论</button>
+        </div>
+      </div>
+      <div class="island" aria-label="状态岛">
+        <div class="isl-seat">
+          <span class="ring" style="--c:var(--hud-ok);--p:100"><i style="background:var(--p-gpt)">GPT</i></span>
+          <span class="isl-state" data-show="run log"><b style="color:var(--hud-ok)">已推送</b> 等审计</span>
+          <span class="isl-state" data-show="decide paused">已暂停</span>
+          <span class="isl-state" data-show="consensus"><b style="color:var(--hud-ok)">声明同意</b></span>
+          <span class="isl-state" data-show="free"><b>就绪</b></span>
+          <span class="isl-state" data-show="webview"><b style="color:var(--hud-me)">你在操作</b></span>
+        </div>
+        <span class="isl-sep"></span>
+        <div class="isl-seat">
+          <span class="ring" style="--c:var(--hud-you);--p:80"><i style="background:var(--p-argon)">Ar</i></span>
+          <span class="isl-state" data-show="run log"><b style="color:var(--hud-run)">审计中</b> 01:12</span>
+          <span class="isl-state" data-show="decide paused webview">已暂停</span>
+          <span class="isl-state" data-show="consensus"><b style="color:var(--hud-ok)">声明同意</b></span>
+          <span class="isl-state" data-show="free"><b>就绪</b></span>
+        </div>
+        <span class="isl-sep"></span>
+        <span class="isl-round" data-show="run log">第 <b>3</b> / 6 轮</span>
+        <span class="isl-round" data-show="decide"><b style="color:var(--hud-you)">等你裁决</b></span>
+        <span class="isl-round" data-show="paused"><b>已暂停</b></span>
+        <span class="isl-round" data-show="consensus"><b>已汇报</b> 第 4 轮</span>
+        <span class="isl-round" data-show="free">自由聊天</span>
+        <span class="isl-round" data-show="webview"><b style="color:var(--hud-me)">接管中</b></span>
+      </div>
+      <div class="tb-r">
+        <button class="btn" data-show="run log"><svg class="ic sm"><use href="#i-pause"/></svg>暂停 <span class="kbd">Ctrl .</span></button>
+        <button class="btn" data-show="decide"><svg class="ic sm"><use href="#i-play"/></svg>不裁决，继续讨论</button>
+        <button class="btn primary" data-show="paused"><svg class="ic sm"><use href="#i-play"/></svg>继续讨论</button>
+        <button class="btn" data-show="consensus">结束任务</button>
+        <button class="btn" data-show="free"><svg class="ic sm"><use href="#i-relay"/></svg>转为自动讨论</button>
+        <button class="btn primary" data-show="webview"><svg class="ic sm"><use href="#i-arrow"/></svg>交还协作</button>
+        <button class="btn ghost icon" title="更多"><svg class="ic"><use href="#i-more"/></svg></button>
+        <div class="caption" aria-hidden="true"><span><svg class="ic sm"><use href="#i-min"/></svg></span><span><svg class="ic sm"><use href="#i-sq"/></svg></span><span><svg class="ic sm"><use href="#i-x"/></svg></span></div>
+      </div>
+    </div>
+
+    <div class="body2">
+      <span class="mk" style="left:600px;top:8px">1</span>
+      <span class="mk" style="left:66px;top:56px">2</span>
+      <span class="mk" style="left:66px;top:160px">3</span>
+      <span class="mk" style="left:66px;top:452px">4</span>
+      <span class="mk" style="left:734px;top:150px">5</span>
+      <span class="mk" style="left:734px;top:470px">6</span>
+      <span class="mk" style="left:1092px;top:46px">7</span>
+      <span class="mk" style="left:1092px;top:384px">8</span>
+      <span class="mk" style="left:1092px;top:494px">9</span>
+      <span class="mk" style="left:30px;top:772px">10</span>
+      <!-- 任务栏 -->
+      <nav class="rail" aria-label="任务">
+        <div class="t add" title="新任务 Ctrl+N"><svg class="ic"><use href="#i-plus"/></svg></div>
+        <div class="sep"></div>
+        <div class="t on" title="修复登录回归">修<span class="b" style="--c:var(--run)" data-show="run log paused consensus free webview"></span><span class="b" style="--c:var(--you)" data-show="decide"></span></div>
+        <div class="t" title="向量库选型调研">向<span class="b" style="--c:var(--you)"></span></div>
+        <div class="t" title="发布脚本审查">发</div>
+        <div class="t" title="周报整理">周</div>
+        <div class="spacer"></div>
+        <div class="ib"><svg class="ic"><use href="#i-settings"/></svg></div>
+      </nav>
+
+      <!-- 中间：结果 / 网页 -->
+      <div class="center">
+        <div class="subbar" role="tablist" aria-label="视图">
+          <button class="vtab" id="vt-result"><svg class="ic sm"><use href="#i-layout"/></svg>结果</button>
+          <button class="vtab" id="vt-gpt"><span class="mono-av" style="background:var(--p-gpt)">GPT</span>ChatGPT 网页<span class="dot" style="--c:var(--ok)"></span></button>
+          <button class="vtab"><span class="mono-av" style="background:var(--p-argon)">Ar</span>Argon 网页<span class="dot pulse" style="--c:var(--run)" data-show="run log"></span><span class="dot" style="--c:var(--idle)" data-show="decide paused consensus free webview"></span></button>
+          <span class="sp"></span>
+          <span class="hint" data-show="run log decide paused consensus free">网页在后台运行，需要接管时再切换</span>
+          <button class="btn" id="log-btn"><svg class="ic sm"><use href="#i-layers"/></svg>原始记录 <span class="muted">14</span></button>
+        </div>
+
+        <div class="cmain">
+          <!-- 结果视图 -->
+          <div class="cview" data-show="run log decide paused consensus free">
+            <div class="strip" data-show="run log" style="--c:var(--ok);--soft:var(--ok-soft)">
+              <span class="si"><svg class="ic"><use href="#i-check"/></svg></span>
+              <div><h3>现在不需要你操作</h3><p>自动讨论第 3 轮：Argon 正在审计 GPT 推送的修复。双方一致、连续 2 轮没有进展，或出现需要你决定的分歧时，会停下来通知你。</p></div>
+              <div class="acts"><button class="btn">插话</button><button class="btn"><svg class="ic sm"><use href="#i-pause"/></svg>暂停</button></div>
+            </div>
+            <div class="strip you" data-show="decide" style="--c:var(--you);--soft:var(--you-soft)">
+              <span class="si"><svg class="ic"><use href="#i-alert"/></svg></span>
+              <div><h3>需要你裁决 1 项分歧</h3><p>是否在本 PR 回滚提交 a91c3e2。双方都给了证据，连续 2 轮立场没有变化，讨论已暂停，等你决定。</p></div>
+              <div class="acts"><button class="btn primary">去裁决 ↓</button></div>
+            </div>
+            <div class="strip" data-show="paused" style="--c:var(--ink-2);--soft:var(--sunken)">
+              <span class="si"><svg class="ic"><use href="#i-pause"/></svg></span>
+              <div><h3>已暂停 · 不需要你操作</h3><p>不会发送新消息。Argon 本轮审计已完整收下；继续时会带上你在暂停期间的插话。</p></div>
+              <div class="acts"><button class="btn primary"><svg class="ic sm"><use href="#i-play"/></svg>继续讨论</button></div>
+            </div>
+            <div class="strip ok" data-show="consensus" style="--c:var(--ok);--soft:var(--ok-soft)">
+              <span class="si"><svg class="ic"><use href="#i-check"/></svg></span>
+              <div><h3>讨论结束：得出结论，保留 1 项分歧</h3><p>第 4 轮双方声明同意主结论。保留的分歧不影响本 PR，可以另开任务处理。</p></div>
+              <div class="acts"><button class="btn">再审一轮</button><button class="btn primary">结束任务</button></div>
+            </div>
+            <div class="strip" data-show="free" style="--c:var(--ink-2);--soft:var(--sunken)">
+              <span class="si"><svg class="ic"><use href="#i-relay"/></svg></span>
+              <div><h3>自由聊天 · 不会自动讨论</h3><p>消息发给你选中的 AI。想让它们互相审阅，点回复下方的“转给对方”，或切回自动讨论。</p></div>
+              <div class="acts"><button class="btn">转为自动讨论</button></div>
+            </div>
+
+            <!-- 自由聊天：最新回复 -->
+            <div class="fgrid" data-show="free">
+              <div class="rcard">
+                <div class="rcard-h"><span class="mono-av" style="background:var(--p-gpt);width:20px;height:20px;font-size:8px">GPT</span><span style="color:var(--ink)">ChatGPT</span><span class="r">12:21 · 1,240 字</span></div>
+                <p class="ftext">iOS WKWebView 对 Lax 的跨站顶级导航同样放行，影响有限。Android 旧版 WebView（Chromium 80 以前）默认行为不同，需要单独测一次；我可以补一条 Android 模拟器上的 e2e。</p>
+                <div class="acts"><button class="btn"><svg class="ic sm"><use href="#i-relay"/></svg>转给 Argon 审计</button><button class="btn ghost">展开全文</button></div>
+              </div>
+              <div class="rcard">
+                <div class="rcard-h"><span class="mono-av" style="background:var(--p-argon);width:20px;height:20px;font-size:8px">Ar</span><span style="color:var(--ink)">Argon</span><span class="r">12:22 · 980 字</span></div>
+                <p class="ftext">同意影响有限。但 acme/mobile 的 Android 壳仍在用 WebView 79，Lax 默认值在该版本未启用，建议在发布说明里写明最低版本，而不是补测试。</p>
+                <div class="acts"><button class="btn"><svg class="ic sm"><use href="#i-relay"/></svg>转给 GPT</button><button class="btn ghost">展开全文</button></div>
+              </div>
+            </div>
+
+            <div class="rgrid">
+              <div class="rcol">
+                <!-- 当前结论 -->
+                <div class="rcard">
+                  <div class="rcard-h">当前结论
+                    <span class="pill" style="--c:var(--you);--soft:var(--you-soft)" data-show="run log decide paused free">尚未一致 · 第 3 轮</span>
+                    <span class="pill" style="--c:var(--ok);--soft:var(--ok-soft)" data-show="consensus"><svg class="ic sm"><use href="#i-check"/></svg>双方声明同意 · 第 4 轮</span>
+                    <span class="r">更新于 12:14</span></div>
+                  <div class="concl">只把 OAuth state cookie 改为 SameSite=Lax，会话 cookie 保持 Strict</div>
+                  <div class="pts">
+                    <div class="pt"><span>回归来自提交 <span class="mono">a91c3e2</span>：会话 cookie 被改为 Strict</span><span class="who"><span class="mono-av" style="background:var(--p-gpt)">GPT</span><span class="mono-av" style="background:var(--p-argon)">Ar</span>同意 · <span class="evchip v">你已核实</span></span></div>
+                    <div class="pt"><span>OAuth 回调 <span class="mono">callback.ts:118</span> 在跨站回跳时读不到 cookie</span><span class="who"><span class="mono-av" style="background:var(--p-gpt)">GPT</span><span class="mono-av" style="background:var(--p-argon)">Ar</span>同意 · 未核实</span></div>
+                    <div class="pt"><span>修复只改 state cookie，并新增 e2e「IdP 回跳保持登录」</span><span class="who"><span class="mono-av" style="background:var(--p-gpt)">GPT</span><span data-show="run log decide paused free">提出 · Argon 审计中</span><span data-show="consensus"><span class="mono-av" style="background:var(--p-argon)">Ar</span>同意 · 未核实</span></span></div>
+                  </div>
+                  <div class="wrline"><svg class="ic sm"><use href="#i-handoff"/></svg><span>GitHub 写操作由 GPT 执行：已推送 <span class="mono">3f2a1c9</span> 到 <span class="mono">fix/oauth-samesite</span>，并更新 PR #128</span><span class="muted" style="margin-left:auto;white-space:nowrap">GPT 报告 · 未核实</span></div>
+                </div>
+                <!-- 未解决 -->
+                <div class="rcard" data-show="run log decide paused consensus">
+                  <div class="rcard-h">还没解决 <span class="n2" data-show="run log decide paused">2</span><span class="n2" data-show="consensus">1</span><span class="r">按是否需要你排序</span></div>
+                  <div class="dis" id="dis-1">
+                    <div class="dis-h">是否在本 PR 回滚提交 a91c3e2？
+                      <span class="stance" style="--c:var(--object);--soft:var(--object-soft)" data-show="run log paused">讨论中 · 2 轮</span>
+                      <span class="stance" style="--c:var(--you);--soft:var(--you-soft)" data-show="decide">需要你裁决</span>
+                      <span class="stance" style="--c:var(--idle);--soft:var(--sunken)" data-show="consensus">保留 · 另开任务</span></div>
+                    <div class="pos"><span class="mono-av" style="background:var(--p-gpt)">GPT</span><div>回滚：Strict 还影响 /billing 回跳，逐个放开容易漏。<div class="evs"><span class="evchip">billing/return.ts:31</span></div></div></div>
+                    <div class="pos"><span class="mono-av" style="background:var(--p-argon)">Ar</span><div>不回滚：Strict 是安全要求，应逐个路由放开。<div class="evs"><span class="evchip">SECURITY.md#cookies</span><span class="evchip">a91c3e2</span></div></div></div>
+                    <div class="acts" style="display:flex;gap:6px;flex-wrap:wrap" data-show="decide"><button class="btn">采纳 GPT</button><button class="btn">采纳 Argon</button><button class="btn primary">写下我的决定</button><button class="btn ghost">保留分歧</button></div>
+                  </div>
+                  <div class="dis2" data-show="run log decide paused">
+                    <span>新增 e2e 是否需要覆盖 Android WebView？</span><span class="stance" style="--c:var(--idle);--soft:var(--sunken)">等 GPT 回应</span>
+                  </div>
+                </div>
+              </div>
+              <div class="rcol">
+                <!-- 进度 -->
+                <div class="rcard">
+                  <div class="rcard-h">讨论进度<span class="r">用时 21 分钟</span></div>
+                  <div class="steps">
+                    <div class="step done"><span class="sd"><svg class="ic" style="width:10px;height:10px;stroke-width:3"><use href="#i-check"/></svg></span><span>独立取证<small>GPT、Argon 各自查看仓库</small></span><span class="t">第 1 轮</span></div>
+                    <div class="step done"><span class="sd"><svg class="ic" style="width:10px;height:10px;stroke-width:3"><use href="#i-check"/></svg></span><span>交叉审计<small>Argon 指出前端修复不完整</small></span><span class="t">第 2 轮</span></div>
+                    <div class="step cur" data-show="run log decide paused free"><span class="sd"></span><span>修正与复核<small data-show="run log">Argon 审计中 · 01:12</small><small data-show="decide">停在分歧，等你裁决</small><small data-show="paused free">已暂停</small></span><span class="t">第 3 / 6 轮</span></div>
+                    <div class="step done" data-show="consensus"><span class="sd"><svg class="ic" style="width:10px;height:10px;stroke-width:3"><use href="#i-check"/></svg></span><span>修正与复核<small>GPT 修正，Argon 同意</small></span><span class="t">第 3–4 轮</span></div>
+                    <div class="step" data-show="run log decide paused free"><span class="sd"></span><span>汇报<small>满足停止条件后</small></span><span class="t"></span></div>
+                    <div class="step done" data-show="consensus"><span class="sd"><svg class="ic" style="width:10px;height:10px;stroke-width:3"><use href="#i-check"/></svg></span><span>汇报<small>12:14 已通知你</small></span><span class="t"></span></div>
+                  </div>
+                  <div class="conds">
+                    <div class="cond"><span>双方一致</span><b data-show="run log decide paused free">未满足</b><b data-show="consensus" style="color:var(--ok)">已满足</b></div>
+                    <div class="cond"><span>连续无进展</span><b data-show="run log paused free consensus">1 / 2 轮</b><b class="hit" data-show="decide">2 / 2 · 已触发</b></div>
+                    <div class="cond"><span>最多轮数</span><b>6 轮</b></div>
+                  </div>
+                </div>
+                <!-- 证据 -->
+                <div class="rcard" data-show="run log decide paused consensus">
+                  <div class="rcard-h">关键证据<span class="r">全部 6 →</span></div>
+                  <div class="evmini"><span class="evtype">提交</span><span class="evref">a91c3e2</span><span class="vstate v">你已核实</span></div>
+                  <div class="evmini"><span class="evtype">提交</span><span class="evref">3f2a1c9 · GPT 推送</span><span class="vstate">未核实</span></div>
+                  <div class="evmini"><span class="evtype">文件</span><span class="evref">auth/callback.ts:118</span><span class="vstate">未核实</span></div>
+                  <div class="evmini"><span class="evtype">测试</span><span class="evref">e2e/idp-return.spec.ts</span><span class="vstate">GPT 称通过</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 原始记录抽屉 -->
+          <div class="logd" data-show="log">
+            <div class="logd-h"><svg class="ic"><use href="#i-layers"/></svg><b>原始对话记录</b><span class="muted" style="font-size:12px">14 条 · 用于追溯与排查</span><button class="btn ghost icon" style="margin-left:auto" title="收起"><svg class="ic sm"><use href="#i-x"/></svg></button></div>
+            <div class="filter" style="padding:10px 14px 6px"><span class="on">全部</span><span>ChatGPT</span><span>Argon</span><span>我的插话</span><span>转发包</span></div>
+            <div class="logbody">
+              <div class="round collapsed">▸ 第 1–2 轮 · 9 条已收起</div>
+              <div class="round"><span class="rt">第 3 轮 · 修正与复核</span></div>
+              <div class="lmsg">
+                <div class="msg-h"><span class="mono-av" style="background:var(--p-argon);width:20px;height:20px;font-size:8px">Ar</span><span class="who">Argon</span><span class="r">审计 · 3,204 字</span><span class="time">11:58</span></div>
+                <div class="ltext"><b>审计结论：不同意当前修复。</b><br>1. 回归来自 <span class="mono">config/session.ts:42</span> 把会话 cookie 改为 SameSite=Strict（提交 a91c3e2）。<br>2. GPT 的修复只调整了前端重定向，OAuth 回调 <span class="mono">auth/callback.ts:118</span> 仍读不到 cookie。<br>3. 建议补一条 e2e：从第三方 IdP 回跳后应保持登录。</div>
+                <div class="lfoot"><span class="relay ok"><svg class="ic sm"><use href="#i-check"/></svg>已完整转发给 GPT</span><a>在网页中打开 ↗</a></div>
+              </div>
+              <div class="lmsg user">
+                <div class="msg-h"><span class="mono-av" style="background:var(--ink);width:20px;height:20px;font-size:8px">你</span><span class="who">你</span><span class="r">插话 → 全部</span><span class="time">12:00</span></div>
+                <div class="ltext">优先保证现有 e2e 不挂。除 cookie 策略外不要改别的文件。</div>
+                <div class="lfoot"><span class="relay ok"><svg class="ic sm"><use href="#i-check"/></svg>随下一次转发送达 GPT</span></div>
+              </div>
+              <div class="lmsg">
+                <div class="msg-h"><span class="mono-av" style="background:var(--p-gpt);width:20px;height:20px;font-size:8px">GPT</span><span class="who">ChatGPT</span><span class="r">执行 · 4,812 字</span><span class="time">12:09</span></div>
+                <div class="ltext">审计意见成立。我只把 OAuth state cookie 改为 Lax，会话 cookie 保持 Strict；已推送 <span class="mono">3f2a1c9</span> 到 fix/oauth-samesite，并新增 e2e「IdP 回跳保持登录」……</div>
+                <div class="lfoot"><span class="relay ok"><svg class="ic sm"><use href="#i-check"/></svg>已完整转发给 Argon</span><a>展开全文</a><a>在网页中打开 ↗</a></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 网页视图（接管） -->
+          <div class="wview" data-show="webview">
+            <div class="seat-h">
+              <span class="mono-av" style="background:var(--p-gpt)">GPT</span>
+              <span class="seat-name">ChatGPT</span><span class="role">执行 · GitHub 写操作</span>
+              <span class="pill" style="--c:var(--accent);--soft:var(--accent-soft)"><svg class="ic sm"><use href="#i-hand"/></svg>你在操作</span>
+              <span class="grow"></span>
+              <span class="model">chatgpt.com/c/68f1a9… · 会话 1/1</span>
+            </div>
+            <div class="takebar">
+              <svg class="ic sm"><use href="#i-hand"/></svg>
+              <span>你已接管 ChatGPT，自动讨论已暂停。交还时选择如何处理你在网页里的操作。</span>
+              <button class="btn primary">交还：采用最新回复</button><button class="btn">交还：忽略这段</button>
+            </div>
+            <div class="web">
+              <div class="web-url"><span class="lock"></span>chatgpt.com/c/68f1a9…</div>
+              <div class="web-body">
+                <div class="ububble"><small>由协作台转发 · 来自 Argon（审计）</small>Argon 认为回归来自 SameSite=Strict 导致 OAuth 回跳丢失 cookie。请核对 <code>auth/callback.ts</code> 后修复，并附上你实际查看的文件与行号。</div>
+                <div class="atext">
+                  <p>我已在仓库中打开 <code>auth/callback.ts</code> 和 <code>config/session.ts</code>。审计意见成立：跨站返回的请求不会携带 <code>Strict</code> 的会话 cookie。</p>
+                  <p>已推送 <code>3f2a1c9</code> 到 <code>fix/oauth-samesite</code>，只改 state cookie……</p>
+                  <div class="bar" style="width:88%"></div><div class="bar" style="width:70%"></div>
+                </div>
+                <div class="ububble"><small>你 · 直接在网页中输入</small>顺便把 /billing 回跳也检查一下，先别改。</div>
+              </div>
+              <div class="web-comp"><span>询问任何问题</span><span>⏎</span></div>
+              <span class="web-tag">原生网页 · 按钮与工具保持原样</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 输入区 -->
+        <div class="comp2">
+          <div class="targets">
+            <span class="tl">发给</span>
+            <span class="tchip all on" data-show="run log decide paused consensus webview">全部</span>
+            <span class="tchip" data-show="run log decide paused consensus webview"><span class="mono-av" style="background:var(--p-gpt)">GPT</span>GPT</span>
+            <span class="tchip" data-show="run log decide paused consensus webview"><span class="mono-av" style="background:var(--p-argon)">Ar</span>Argon</span>
+            <span class="tchip on" data-show="free"><span class="mono-av" style="background:var(--p-gpt)">GPT</span>GPT</span>
+            <span class="tchip on" data-show="free"><span class="mono-av" style="background:var(--p-argon)">Ar</span>Argon</span>
+            <span class="hint2" data-show="run log">插话会在下一次转发时附带 · Ctrl+Enter</span>
+            <span class="hint2" data-show="decide">写下决定后讨论继续 · Ctrl+Enter</span>
+            <span class="hint2" data-show="paused">发送后继续讨论</span>
+            <span class="hint2" data-show="free">发给选中的 AI · Ctrl+Enter</span>
+          </div>
+          <div class="inrow">
+            <div class="inbox"><span class="typed" data-show="run log">别动 middleware，只改 cookie 选项</span><span class="typed" data-show="decide">本 PR 不回滚。另开任务评估 /billing 是否需要单独放开。</span><span data-show="paused consensus free webview">输入消息或指令…</span></div>
+            <button class="btn" data-show="run log"><svg class="ic sm"><use href="#i-bolt"/></svg>打断并发送</button>
+            <button class="btn primary" data-show="run log"><svg class="ic sm"><use href="#i-send"/></svg>插话</button>
+            <button class="btn primary" data-show="decide"><svg class="ic sm"><use href="#i-send"/></svg>发送决定并继续</button>
+            <button class="btn primary" data-show="paused"><svg class="ic sm"><use href="#i-send"/></svg>发送并继续</button>
+            <button class="btn primary" data-show="consensus free webview"><svg class="ic sm"><use href="#i-send"/></svg>发送</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右侧 HUD -->
+      <aside class="hud" aria-label="状态面板">
+        <div class="hud-h"><span>状态</span><span>2 秒前更新</span></div>
+        <div class="hud-b">
+          <div class="hs"><span>运行</span></div>
+          <div class="hrow2">
+            <span class="ring" style="--c:var(--hud-ok);--p:100;width:26px;height:26px"><i style="background:var(--p-gpt);width:20px;height:20px">GPT</i></span>
+            <span class="nm">ChatGPT<small>执行 · GitHub 写操作</small></span>
+            <span class="hst" style="--c:var(--hud-ok)" data-show="run log">已推送 · 等审计</span>
+            <span class="hst" style="--c:var(--island-ink-2)" data-show="decide paused"><svg class="ic sm"><use href="#i-pause"/></svg>已暂停</span>
+            <span class="hst" style="--c:var(--hud-ok)" data-show="consensus">完成</span>
+            <span class="hst" style="--c:var(--hud-ok)" data-show="free">就绪</span>
+            <span class="hst" style="--c:var(--hud-me)" data-show="webview"><svg class="ic sm"><use href="#i-hand"/></svg>你在操作</span>
+          </div>
+          <div class="hrow2">
+            <span class="ring" style="--c:var(--hud-you);--p:80;width:26px;height:26px"><i style="background:var(--p-argon);width:20px;height:20px">Ar</i></span>
+            <span class="nm">Gemini Argon<small>独立审计</small></span>
+            <span class="hst" style="--c:var(--hud-run)" data-show="run log"><span class="dot pulse" style="--c:var(--hud-run)"></span>审计中 01:12</span>
+            <span class="hst" style="--c:var(--island-ink-2)" data-show="decide paused webview"><svg class="ic sm"><use href="#i-pause"/></svg>已暂停</span>
+            <span class="hst" style="--c:var(--hud-ok)" data-show="consensus">完成</span>
+            <span class="hst" style="--c:var(--hud-ok)" data-show="free">就绪</span>
+          </div>
+
+          <div class="hs"><span>讨论</span><span style="font-weight:400;letter-spacing:0">执行 + 审计</span></div>
+          <div class="hdisc">
+            <div class="hst-row"><span class="big" data-show="run log decide paused free">第 3 / 6 轮</span><span class="big" data-show="consensus">第 4 轮 · 结束</span><span class="big" data-show="webview">第 3 / 6 轮 · 暂停</span><span>修正与复核</span></div>
+            <div class="seg6"><i class="d"></i><i class="d"></i><i class="c"></i><i></i><i></i><i></i></div>
+            <div class="hst-row"><span>GPT 立场</span><b style="color:var(--hud-run)" data-show="run log paused free webview">修正</b><b style="color:var(--hud-object)" data-show="decide">坚持回滚</b><b style="color:var(--hud-ok)" data-show="consensus">同意</b></div>
+            <div class="hst-row"><span>Argon 立场</span><b style="color:var(--hud-object)" data-show="run log paused free webview">异议</b><b style="color:var(--hud-object)" data-show="decide">反对回滚</b><b style="color:var(--hud-ok)" data-show="consensus">同意</b></div>
+            <div class="hst-row"><span>结论 / 分歧</span><b data-show="run log decide paused free webview">2 / 2</b><b data-show="consensus">3 / 1 保留</b></div>
+          </div>
+
+          <div class="hs"><span>待处理</span><span class="cnt" data-show="decide">1</span><span class="cnt" data-show="consensus webview">1</span></div>
+          <div class="hempty" data-show="run log paused free"><svg class="ic sm"><use href="#i-check"/></svg>现在没有需要你处理的事</div>
+          <div class="wait" data-show="decide">
+            <div class="wait-h"><span class="htag">裁决</span><b>是否回滚 a91c3e2</b><span class="t">38 秒</span></div>
+            <p>连续 2 轮立场未变。讨论已暂停，等你决定。</p>
+            <div><button class="hbtn">去裁决</button></div>
+          </div>
+          <div class="wait" data-show="consensus">
+            <div class="wait-h"><span class="htag" style="background:rgba(95,211,154,.16);color:var(--hud-ok)">汇报</span><b>确认结论并结束</b><span class="t">12:14</span></div>
+            <p>主结论双方同意；1 项分歧保留。</p>
+          </div>
+          <div class="wait" data-show="webview">
+            <div class="wait-h"><span class="htag" style="background:rgba(240,165,132,.16);color:var(--hud-me)">接管</span><b>交还 ChatGPT</b><span class="t">2 分钟</span></div>
+            <p>交还后讨论从第 3 轮继续。</p>
+          </div>
+          <div class="wait-row" data-show="run log"><span class="htag" style="background:rgba(255,255,255,.08);color:var(--island-ink-2)">排队</span><span style="color:var(--island-ink-2)">你的插话 · 下次转发时附带</span></div>
+
+          <div class="hs"><span>额度</span><span style="font-weight:400;letter-spacing:0">来自网页提示</span></div>
+          <div class="qrow"><span class="dot" style="--c:var(--hud-ok)"></span><span>ChatGPT</span><span class="qbar"><i style="width:0"></i></span><span class="qv">未见提示</span></div>
+          <div class="qrow"><span class="dot" style="--c:var(--hud-you)"></span><span>Argon</span><span class="qbar"><i style="width:80%;--c:var(--hud-you)"></i></span><span class="qv" style="color:var(--hud-you)">接近上限</span></div>
+          <div class="hnote">Argon：11:40 页面横幅提示接近上限。没有提示时不估算剩余量；状态超过 30 秒未更新显示“未确认”。</div>
+        </div>
+      </aside>
+    </div>
+  </div>
+  </div>
+
+  <ol class="notes">
+    <li><span><b>视图切换</b>：结果 ｜ ChatGPT 网页 ｜ Argon 网页，沿用 Multi-AI Chat 一次显示一个网页的方式。网页在后台继续运行，只在需要接管或排查时切过去。</span></li>
+    <li><span><b>介入横幅</b>：第一眼回答“现在要不要我操作”。绿色不需要，琥珀色需要，灰色已暂停。</span></li>
+    <li><span><b>当前结论</b>：一句话结论 + 支撑要点，每条标明谁同意、证据是否由你核实。GPT 的 GitHub 写操作以结果形式列出，不需要逐次确认。</span></li>
+    <li><span><b>还没解决</b>：每项分歧给出双方立场和证据。需要你裁决时整张卡高亮，并给出采纳、写下决定、保留三种处理。</span></li>
+    <li><span><b>讨论进度</b>：阶段、轮次、用时，以及离停止条件还有多远，让人知道讨论什么时候会停。</span></li>
+    <li><span><b>关键证据</b>：最重要的 4 条，区分“你已核实”和 AI 自述。全部证据在独立页面查看。</span></li>
+    <li><span><b>HUD · 运行与讨论</b>：深色栏借鉴 Agent HUD。每个 AI 一行运行状态，下面是轮次进度条和双方立场。标题栏状态岛是它的压缩版。</span></li>
+    <li><span><b>HUD · 待处理</b>：像 Agent HUD 的 Waiting 列表，最急的一件展开并带操作；没有时明确写“现在没有需要你处理的事”。</span></li>
+    <li><span><b>HUD · 额度</b>：只显示网页上出现过的限额提示及其时间，颜色沿用绿、黄、红三级。</span></li>
+    <li><span><b>输入区</b>：自动讨论时是插话，需要裁决时直接写决定，自由聊天时发给选中的 AI。原始对话从右上角“原始记录”展开。</span></li>
+  </ol>
+</section>
+
+<!-- ================= 调整说明 ================= -->
+<section class="block" id="compare">
+  <div class="sec-head">
+    <div class="eyebrow">相对上一版的调整</div>
+    <h2>从“看着 AI 工作”改为“看结果、需要时介入”</h2>
+    <p>组件、视觉规范和流程大体沿用上一版，主要调整屏幕空间的分配。斜线区域代表原生网页。</p>
+  </div>
+  <div class="cmp">
+    <div class="wf-card">
+      <h3>上一版 · 并排网页 + 协作侧栏 <span class="badge alt">已替换</span></h3>
+      <div class="wf" aria-label="上一版线框">
+        <div class="wtb"><i style="width:18%"></i><i style="width:24%;background:var(--ink-3)"></i><i style="width:12%"></i></div>
+        <div class="wbody" style="grid-template-columns:5% 1fr 1fr 28%">
+          <div class="z">任务</div>
+          <div class="z web">GPT 网页</div>
+          <div class="z web">Argon 网页</div>
+          <div class="stack" style="border-right:0"><div>关注卡</div><div>讨论时间线</div><div>输入区</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="wf-card">
+      <h3>修订版 · 结果为中心 + HUD <span class="badge">当前推荐</span></h3>
+      <div class="wf" aria-label="修订版线框">
+        <div class="wtb"><i style="width:18%"></i><i style="width:24%;background:var(--ink-3)"></i><i style="width:12%"></i></div>
+        <div class="wbody" style="grid-template-columns:5% 1fr 24%">
+          <div class="z">任务</div>
+          <div class="stack"><div>结果 ｜ GPT 网页 ｜ Argon 网页</div><div style="display:grid;grid-template-columns:2fr 1fr;padding:0"><span style="display:grid;place-items:center;border-right:1.5px dashed var(--line-2);height:100%">结论 · 未解决</span><span style="display:grid;place-items:center">进度 · 证据</span></div><div>输入区</div></div>
+          <div class="z" style="background:var(--island);color:var(--island-ink)">HUD<br>运行 · 讨论<br>待处理 · 额度</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>需求</th><th>上一版</th><th>修订版</th></tr></thead>
+      <tbody>
+        <tr><td>AI 网页</td><td>2–3 个并排常驻</td><td class="win-a">一次一个，切换查看；平时在后台运行</td></tr>
+        <tr><td>主界面中心</td><td>网页</td><td class="win-a">当前结论、未解决分歧、关键证据、讨论进度、介入横幅</td></tr>
+        <tr><td>原始对话</td><td>右侧时间线常驻</td><td class="win-a">“原始记录”抽屉，默认收起</td></tr>
+        <tr><td>状态与额度</td><td>状态岛 + 面板里的“状态”页</td><td class="win-a">状态岛 + 常驻深色 HUD 栏</td></tr>
+        <tr><td>GitHub 写操作</td><td>以网页授权为默认停止条件</td><td class="win-a">GPT 直接执行，结果写入结论区；工作台不加确认</td></tr>
+        <tr><td>“每次转发前确认”</td><td>新建任务里的开关</td><td class="win-a">从 V1 移除</td></tr>
+        <tr><td>多网页并排的技术风险</td><td>需要实测</td><td class="win-a">不再需要，沿用上游单网页舞台</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= 主要流程 ================= -->
+<section class="block" id="flows">
+  <div class="sec-head">
+    <div class="eyebrow">主要操作流程</div>
+    <h2>六个高频流程</h2>
+    <p>“停下来问你”只由停止条件触发：双方一致、连续无进展、需要你裁决、网页需要登录或验证、额度用尽。GPT 的 GitHub 写操作不在其中。</p>
+  </div>
+  <div class="flows">
+    <div class="flow"><h3>开始一个协作任务</h3><ol><li>Ctrl+N 打开新任务，写目标。</li><li>选模板，默认 <b>执行 + 审计</b>：GPT 执行并负责 GitHub 写操作，Argon 独立审计。</li><li>预检每个网页：已登录、输入框可用。未通过就给出“去登录”，切到该网页完成。</li><li>开始后停在 <b>结果</b> 视图，网页在后台运行。</li></ol><div class="fn">任务与这组网页会话绑定。切回任务时，网页回到对应会话。</div></div>
+    <div class="flow"><h3>插话</h3><ol><li>在底部输入区写指令，选择发给 <b>全部</b> 或某个 AI。</li><li>按 <b>插话</b>：排队，在下一次转发时附带；HUD 待处理里显示“排队”。</li><li>按 <b>打断并发送</b>：先停止正在生成的 AI，再立即发送。</li></ol><div class="fn">插话记录在原始记录里，结论区只体现它带来的变化。</div></div>
+    <div class="flow"><h3>暂停与继续</h3><ol><li>按 <b>暂停</b> 或 Ctrl+.：不再发起新的发送或转发，正在生成的回复完整收下。</li><li>介入横幅变灰：“已暂停 · 不需要你操作”。</li><li>暂停期间可以插话、改停止条件、看原始记录。</li><li>按 <b>继续讨论</b>：从下一步接着跑，附带暂停期间的指令。</li></ol><div class="fn">“立即停止”放在更多菜单里，会点击网页中的停止按钮，回复记为中断。</div></div>
+    <div class="flow"><h3>裁决分歧</h3><ol><li>分歧连续 2 轮没有进展，或 AI 标明需要用户决定时，讨论暂停。</li><li>介入横幅、HUD 待处理、分歧卡同时变为琥珀色。</li><li>选择 <b>采纳 GPT</b>、<b>采纳 Argon</b>、<b>写下我的决定</b> 或 <b>保留分歧</b>。</li><li>决定作为插话发给双方，讨论继续。</li></ol><div class="fn">也可以“不裁决，继续讨论”，再给它们一轮。</div></div>
+    <div class="flow"><h3>切到网页与接管</h3><ol><li>点 <b>ChatGPT 网页</b> 标签只是查看，讨论继续。</li><li>点 <b>接管</b>（或 Ctrl+1 / Ctrl+2）：讨论暂停，标签和 HUD 显示“你在操作”。</li><li>在网页里自由操作，包括处理登录、验证码。</li><li>按 <b>交还协作</b>：采用该 AI 的最新回复作为本轮发言，或忽略这段。</li></ol><div class="fn">检测到“你在网页里打字”自动暂停，需技术实测后再决定 <span class="ev test">待实测</span>。</div></div>
+    <div class="flow"><h3>得出结论与会话交接</h3><ol><li>满足停止条件时，介入横幅显示结果；窗口不在前台时发 Windows 通知。</li><li>可以 <b>结束任务</b>、<b>再审一轮</b>，或把保留分歧另开任务。</li><li>网页会话过长时，HUD 提示“会话较长”；更多菜单 → <b>交接到新会话</b>，用模板拼接目标、结论、分歧和最近 2 轮原文。</li></ol><div class="fn">V1 用固定模板拼接，不做智能压缩。</div></div>
+  </div>
+</section>
+
+<!-- ================= 新建任务 ================= -->
+<section class="block" id="newtask">
+  <div class="sec-head">
+    <div class="eyebrow">自定义参与者、角色和模板</div>
+    <h2>新建任务</h2>
+    <p>一个面板完成全部设置。模板是一串阶段，不是节点画布；常用参数直接露出，其余收进“高级”。</p>
+  </div>
+  <div class="newtask">
+    <div class="nt" aria-label="新建任务面板示意">
+      <div class="nt-h"><h3>新任务</h3><span class="kbd">Esc</span></div>
+      <div class="nt-b">
+        <div class="fl"><span class="l">目标</span><div class="inp">修复 PR #128 引入的登录回归：第三方 IdP 回跳后丢失登录态。仓库 acme/web。</div></div>
+        <div class="fl"><span class="l">模板</span>
+          <div class="tpls">
+            <div class="tpl"><b>自由对话</b><span>手动发送，一键转发</span></div>
+            <div class="tpl on"><b>执行 + 审计</b><span>GPT 动手，Argon 独立审计</span></div>
+            <div class="tpl"><b>独立调研</b><span>各自取证，再交叉质询</span></div>
+          </div>
+          <div class="phases"><i>独立取证</i>→<i>交叉审计</i>→<i>修正 ⇄ 复核，最多 6 轮</i>→<i>汇报</i></div>
+        </div>
+        <div class="fl"><span class="l">参与者</span>
+          <div class="prow"><span class="mono-av" style="background:var(--p-gpt)">GPT</span><span><b>ChatGPT</b> <span class="muted">· 新会话</span></span><span class="sel">执行 · GitHub 写操作 ▾</span><span class="pill" style="--c:var(--ok);--soft:var(--ok-soft)"><span class="dot"></span>就绪</span></div>
+          <div class="prow"><span class="mono-av" style="background:var(--p-argon)">Ar</span><span><b>Gemini Argon</b> <span class="muted">· 新会话</span></span><span class="sel">独立审计 ▾</span><span class="pill" style="--c:var(--ok);--soft:var(--ok-soft)"><span class="dot"></span>就绪</span></div>
+          <div class="prow" style="border-style:dashed"><span class="mono-av" style="background:var(--p-claude)">Cl</span><span><b>Claude</b> <span class="muted">· 未加入</span></span><span class="sel">+ 加入</span><span class="pill" style="--c:var(--you);--soft:var(--you-soft)">需要登录</span></div>
+        </div>
+        <div class="fl"><span class="l">什么时候停下来问我</span>
+          <div class="switches">
+            <div class="sw">双方声明同意<span class="tg on"></span></div>
+            <div class="sw">连续 2 轮没有新进展<span class="tg on"></span></div>
+            <div class="sw">有分歧需要我决定<span class="tg on"></span></div>
+            <div class="sw">网页需要登录、验证或额度用尽<span class="tg on"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="nt-f"><div class="pre"><span><span class="dot" style="--c:var(--ok)"></span>2 / 2 参与者可用</span><span class="muted">高级：角色提示词、轮数</span></div><button class="btn primary">开始协作</button></div>
+    </div>
+    <div class="side-notes">
+      <h3>设计取舍</h3>
+      <ul>
+        <li>V1 只内置三个模板。原项目的 6 个预设里，Coding 是 8 个固定步骤，Roundtable 是 20 次发言，配置和等待都偏重。</li>
+        <li>默认分工：GPT 执行并负责 GitHub 写操作，Argon 独立审计。写操作由 GPT 在自己的网页里直接完成，工作台不加确认步骤，只把推送结果写进结论区，交给 Argon 审计。</li>
+        <li>角色就是一段可编辑的说明（执行、审计、调研员、主持），同一 AI 只能占一个席位。</li>
+        <li>参与者可以“绑定当前网页会话”，从你已经在聊的那条对话开始，不必新开。</li>
+        <li>“另存为模板”保存参与者、角色和停止条件。阶段的增删和提示词编辑器放到后续版本。</li>
+        <li>预检沿用原项目的原则：某个 AI 不可用时明确指出并让你处理，不悄悄换成别的 AI。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 视觉规范 ================= -->
+<section class="block" id="spec">
+  <div class="sec-head">
+    <div class="eyebrow">视觉风格、布局与组件</div>
+    <h2>温暖的纸面，克制的精度</h2>
+    <p>主色调取自 Claude 的暖白与陶土色，结构与节奏参照苹果：发丝线分隔、少阴影、数字等宽、颜色只用来表达状态。右侧 HUD 栏和标题栏状态岛是仅有的深色元素，直接来自 Agent HUD。下方色块随页面主题切换，浅色和深色都已定义。</p>
+  </div>
+  <div class="spec-grid">
+    <div class="spec">
+      <h3>基础色</h3>
+      <div class="sw-row"><span class="sw-chip" style="background:var(--canvas)"></span>画布 · 窗口底色<code>--canvas</code></div>
+      <div class="sw-row"><span class="sw-chip" style="background:var(--surface)"></span>面板 · 标题栏、侧栏<code>--surface</code></div>
+      <div class="sw-row"><span class="sw-chip" style="background:var(--raised)"></span>浮起 · 卡片、输入框<code>--raised</code></div>
+      <div class="sw-row"><span class="sw-chip" style="background:var(--sunken)"></span>下沉 · 分段控件、轨道<code>--sunken</code></div>
+      <div class="sw-row"><span class="sw-chip" style="background:var(--ink)"></span>主文字<code>--ink</code></div>
+      <div class="sw-row"><span class="sw-chip" style="background:var(--accent)"></span>陶土色 · 主按钮、焦点、接管<code>--accent</code></div>
+      <div class="sw-row"><span class="sw-chip" style="background:var(--island)"></span>状态岛 · 两种主题都为深色<code>--island</code></div>
+    </div>
+    <div class="spec">
+      <h3>状态色（与强调色分离）</h3>
+      <div class="st-row"><span class="pill" style="--c:var(--run);--soft:var(--run-soft)"><span class="dot pulse"></span>生成中</span><span>网页正在输出<small>蓝色，唯一会动的状态</small></span></div>
+      <div class="st-row"><span class="pill" style="--c:var(--tool);--soft:var(--tool-soft)"><span class="dot"></span>用工具</span><span>连接器、浏览、代码<small>能可靠识别时才显示 <span class="ev test">待实测</span></small></span></div>
+      <div class="st-row"><span class="pill" style="--c:var(--you);--soft:var(--you-soft)"><svg class="ic sm"><use href="#i-alert"/></svg>需要你</span><span>裁决、登录、验证、额度用尽<small>琥珀色，最高优先级</small></span></div>
+      <div class="st-row"><span class="stance" style="--c:var(--object);--soft:var(--object-soft)">异议</span><span>回复中的立场<small>玫红色，是内容标记，不是运行状态</small></span></div>
+      <div class="st-row"><span class="pill" style="--c:var(--ok);--soft:var(--ok-soft)"><svg class="ic sm"><use href="#i-check"/></svg>完成</span><span>回复完整收到<small>绿色</small></span></div>
+      <div class="st-row"><span class="pill" style="--c:var(--err);--soft:var(--err-soft)"><svg class="ic sm"><use href="#i-x"/></svg>卡住</span><span>超时、页面改版、出错<small>红色，附重试 / 跳过 / 取消</small></span></div>
+      <div class="st-row"><span class="pill"><svg class="ic sm"><use href="#i-pause"/></svg>已暂停</span><span>暂停、排队、未确认<small>灰色</small></span></div>
+    </div>
+    <div class="spec">
+      <h3>字体与字号</h3>
+      <div class="type-s">
+        <div><span style="font-family:var(--f-display);font-size:20px;font-weight:600">修复登录回归</span><small>衬线 20 · 任务标题、汇报</small></div>
+        <div><span style="font-size:15px;font-weight:600">席位与面板标题</span><small>无衬线 15 / 600</small></div>
+        <div><span style="font-size:14px">阅读正文：展开后的回复</span><small>14 / 1.6</small></div>
+        <div><span style="font-size:13px">界面默认：按钮、列表、时间线</span><small>13 / 1.45</small></div>
+        <div><span style="font-size:12px;color:var(--ink-3)">元信息：时间、字数、来源</span><small>12 / 11.5</small></div>
+        <div><span class="mono" style="font-size:12px">auth/callback.ts:118</span><small>等宽 12 · 证据</small></div>
+      </div>
+      <p class="muted" style="font-size:13px">应用内：Segoe UI Variable + 微软雅黑 UI；衬线用思源宋体，仅用于任务标题和汇报卡；等宽用 Cascadia Code。数字一律等宽对齐。</p>
+    </div>
+    <div class="spec">
+      <h3>间距、圆角与层级</h3>
+      <div class="radii"><div style="border-radius:5px">5</div><div style="border-radius:7px">7</div><div style="border-radius:10px">10</div><div style="border-radius:12px">12</div><div style="border-radius:999px;width:64px">胶囊</div></div>
+      <ul style="margin:0;padding-left:18px;font-size:13.5px;color:var(--ink-2);display:grid;gap:4px">
+        <li>4px 网格；面板内边距 12，卡片 12–13，行高 32–42</li>
+        <li>5：标签与立场；7：按钮；10–12：卡片和面板；胶囊：状态、目标选择</li>
+        <li>分区靠 1px 发丝线和底色差，阴影只给浮层与汇报卡</li>
+        <li>标题栏 44，视图标签栏 40，HUD 栏 340；结果区左栏自适应、右栏 322</li>
+        <li>动效 120–200ms 缓出；只有“生成中”持续动画；尊重减少动态效果设置</li>
+      </ul>
+    </div>
+  </div>
+  <div class="sec-head" style="margin-top:12px"><h3>从 Agent HUD Open 借鉴什么</h3></div>
+  <div class="borrow">
+    <div><b>深色 HUD</b>所有 AI 的运行、讨论、待处理和额度集中在一栏，颜色只表达等级。它的额度阈值是 70% 黄、90% 红，我们沿用这个分级，但只在有页面提示时才着色。</div>
+    <div><b>“等待你”排在最前</b>它的面板把等待批准的会话放在第一位，展开一条、其余折叠。我们的 HUD“待处理”同样把最急的一件展开，并配合顶部介入横幅。</div>
+    <div><b>一键回到现场</b>它的提醒卡有“回到会话”。我们的待处理条目一键跳到裁决卡或对应网页，不在工作台里复刻网页按钮。</div>
+    <div><b>证据会过期</b>它有 unverified 状态：状态太久没有新证据就不再担保。我们的状态超过 30 秒未更新显示“未确认”。</div>
+    <div><b>工具类型标签</b>EDIT、BASH、MCP 这类带底色的小标签，对应我们的证据类型：提交、文件、测试、链接。</div>
+    <div><b>排版纪律</b>系统字体、等宽数字、白色 8–14% 的发丝线、6–10 的圆角、分段控件。</div>
+    <div class="no"><b>不照搬</b>刘海与菜单栏位置、Liquid Glass 材质、会动的表情机器人、悬停自动展开。Windows 上改用 Mica 标题栏和固定位置的面板。</div>
+  </div>
+</section>
+
+<!-- ================= 现状评估 ================= -->
+<section class="block" id="assess">
+  <div class="sec-head">
+    <div class="eyebrow">Multi-AI Chat Desktop v1.9.6 · 提交 6bcf904</div>
+    <h2>现有界面最值得改造的地方</h2>
+    <p>下图是在隔离目录中用模拟的桌面接口渲染的真实控制面板（四个网页已连接，Claude 思考中，Grok 未登录）。网页本身是原生图层，截图中不会出现。</p>
+  </div>
+  <div class="assess">
+    <figure style="margin:0">
+      <div class="shot"><img src="assets/upstream-control-pane-1366x768.png" alt="Multi-AI Chat Desktop 控制面板：左侧会话列表，中间预设网格、目标芯片、单个 AI 舞台和连接卡片，右侧对话记录与输入框"></div>
+      <figcaption>1366×768 · 左：会话 · 中：6 个预设、目标芯片、单网页舞台、连接卡 · 右：记录与输入 <span class="ev fact">已核实</span></figcaption>
+    </figure>
+    <ol class="issues">
+      <li><span><b>同一时间只看到一个网页。</b>中间只有一个舞台，看另一个 AI 要切换，无法同时盯住执行者和审查者。</span></li>
+      <li><span><b>配置常驻占位。</b>6 个预设卡片、目标芯片固定在中栏顶部（最高占 42% 高度），运行时也不收起。</span></li>
+      <li><span><b>同一状态显示三遍。</b>预设徽标“已就绪 3/4”、目标芯片“就绪 已选”、连接卡“就绪”，却没有“需要你”“用工具”“异议”。</span></li>
+      <li><span><b>记录是平铺的气泡。</b>不分轮次、看不到谁转发给了谁、没有分歧与共识，长任务很快变成一面墙。</span></li>
+      <li><span><b>运行中只能停止。</b>没有暂停、继续、插话和交还；逐步确认是左栏里的一个文本框。</span></li>
+      <li><span><b>会话不等于任务。</b>侧栏只是最近 30 条对话，网页会话不和任务绑定，多个任务容易串线。</span></li>
+      <li><span><b>视觉层级弱。</b>默认 Tailwind 方框、处处描边、按钮文字被截断（“开启 Ch…”）。</span></li>
+    </ol>
+  </div>
+  <div class="keep"><b>值得保留</b><ul>
+    <li>基于证据的连接状态：网页已加载、页面就绪、登录、桥接、适配器分开判断。</li>
+    <li>预检不悄悄替换 AI；超时给出重试、跳过、取消。</li>
+    <li>浮层出现时把网页隐藏或冻结的做法（overlay guard），这是我们“控件不盖网页”规则的技术基础。</li>
+    <li>每个 AI 独立的本地登录配置；诊断报告先预览、不含页面文字。</li>
+  </ul></div>
+</section>
+
+<!-- ================= 范围 ================= -->
+<section class="block" id="scope">
+  <div class="sec-head">
+    <div class="eyebrow">分期</div>
+    <h2>V1 必须实现与后续优化</h2>
+  </div>
+  <div class="scope">
+    <div class="col must"><h3>V1 必须 <span class="badge">核心闭环</span></h3><ul>
+      <li><b>结果视图</b>：介入横幅、当前结论、还没解决的分歧、关键证据、讨论进度。</li>
+      <li><b>网页切换</b>：结果 ｜ 各 AI 网页，一次显示一个，沿用 Multi-AI Chat；网页在后台运行。</li>
+      <li><b>原始记录抽屉</b>：按轮次的完整回复、插话、转发状态，默认收起。</li>
+      <li><b>HUD 栏与状态岛</b>：运行状态、讨论状态、待处理事项、额度（只显示网页提示）。</li>
+      <li><b>任务 = 一组绑定的网页会话</b>；任务栏、Ctrl+K 任务中心；同一时间只运行一个任务。</li>
+      <li><b>自由聊天</b>：多选发送，最新回复并列，一键转给另一个 AI。</li>
+      <li><b>自动讨论</b>：执行 + 审计（默认）、独立调研 + 交叉质询；可设参与者、角色、最大轮数、停止条件。</li>
+      <li><b>控制</b>：暂停、继续讨论、立即停止、插话、打断并发送、接管与交还。</li>
+      <li><b>裁决分歧</b>：采纳一方、写下决定、保留；Windows 通知。</li>
+      <li><b>手动会话交接</b>（模板拼接）；浅色与深色主题；基础快捷键。</li>
+    </ul></div>
+    <div class="col"><h3>后续优化 <span class="badge alt">V1.x 以后</span></h3><ul>
+      <li>需要时并排查看两个网页（排查用）。</li>
+      <li>模板编辑器：增删阶段、编辑提示词、导入导出。</li>
+      <li>置顶迷你 HUD 与托盘图标，离开窗口也能看到状态。</li>
+      <li>检测到你在网页中输入时自动暂停 <span class="ev test">待实测</span>。</li>
+      <li>“用工具”细分状态（浏览、连接器、代码） <span class="ev test">待实测</span>。</li>
+      <li>证据自动校验：提交是否存在、链接是否可达、文件行号是否匹配。</li>
+      <li>多个任务并行运行（每个 AI 多个网页实例）。</li>
+      <li>讨论全文搜索、导出 Markdown 报告、回放。</li>
+      <li>由某个 AI 担任主持人，自动归纳分歧。</li>
+      <li>不在 V1：Bridge、CLI Agent、远程控制、智能历史压缩。</li>
+    </ul></div>
+  </div>
+</section>
+
+<!-- ================= 问题 ================= -->
+<section class="block" id="questions">
+  <div class="sec-head">
+    <div class="eyebrow">需要你确认</div>
+    <h2>会影响设计的几个问题</h2>
+    <p>以下按当前默认值设计，答复后再调整。</p>
+  </div>
+  <ol class="qs">
+    <li><b>主要屏幕尺寸？</b>按 1920×1080、125% 缩放（约 1536×864 可用）设计，最低 1280×720。网页不再并排后，尺寸对布局的影响已经小很多。</li>
+    <li><b>浅色还是深色为默认？</b>当前浅色为主、深色完整支持；HUD 栏和状态岛两种主题都保持深色。</li>
+    <li><b>“Gemini Argon”指的是 gemini.google.com 上的某个模型，还是独立入口？</b>这决定预检和登录引导走哪个网址。</li>
+    <li><b>同一时间只运行一个任务是否可以接受？</b>每个 AI 只有一个网页实例时，并行运行会让网页来回切换会话。</li>
+    <li><b>裁决的默认触发是“连续 2 轮无进展”，是否合适？</b>调低会更常打扰你，调高会让讨论更久才停。</li>
+  </ol>
+</section>
+
+<footer class="foot">
+  <span>配套文字稿：<span class="mono">docs/design/v1-ux-design.md</span></span>
+  <span>上游代码只在仓库外的临时目录中阅读与渲染；本稿不包含正式前端代码。</span>
+</footer>
+</div>
+
+<script>
+(function(){
+  var win=document.getElementById('win');
+  var notes={
+    run:'自动讨论中：介入横幅是绿色“现在不需要你操作”。结论、未解决的分歧和进度随讨论更新；Argon 网页在后台审计，不需要打开。',
+    decide:'需要你裁决：分歧连续 2 轮没有进展，讨论暂停。横幅、分歧卡和 HUD 待处理同时变为琥珀色，输入区直接写决定。',
+    paused:'已暂停：横幅变灰，明确写出“不需要你操作”。继续时附带暂停期间的插话。',
+    consensus:'得出结论：主结论双方声明同意，1 项分歧保留。窗口不在前台时同时发 Windows 通知。',
+    free:'自由聊天：不自动讨论。中间显示两个 AI 的最新回复，可一键转给对方；上一次讨论的结论仍保留在下方。',
+    log:'原始对话记录：从右上角展开的抽屉，按轮次列出完整回复、插话和转发状态，用于追溯和排查，平时收起。',
+    webview:'切到网页接管：像 Multi-AI Chat 一样一次显示一个网页。接管后讨论暂停，交还时选择是否采用这段时间的最新回复。'
+  };
+  function setState(s){
+    win.dataset.state=s;
+    win.querySelectorAll('[data-show]').forEach(function(el){
+      el.hidden=el.getAttribute('data-show').split(' ').indexOf(s)<0;
+    });
+    document.querySelectorAll('[data-set]').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.set===s));});
+    document.getElementById('m-free').classList.toggle('on',s==='free');
+    document.getElementById('m-auto').classList.toggle('on',s!=='free');
+    document.getElementById('vt-result').classList.toggle('on',s!=='webview');
+    document.getElementById('vt-gpt').classList.toggle('on',s==='webview');
+    document.getElementById('log-btn').classList.toggle('on',s==='log');
+    document.getElementById('state-note').textContent=notes[s]||'';
+  }
+  document.querySelectorAll('[data-set]').forEach(function(b){b.addEventListener('click',function(){setState(b.dataset.set);});});
+  document.getElementById('vt-result').addEventListener('click',function(){setState('run');});
+  document.getElementById('vt-gpt').addEventListener('click',function(){setState('webview');});
+  document.getElementById('log-btn').addEventListener('click',function(){setState(win.dataset.state==='log'?'run':'log');});
+  document.getElementById('mk-toggle').addEventListener('change',function(e){win.classList.toggle('no-mk',!e.target.checked);});
+  function fit(){
+    document.querySelectorAll('.stage').forEach(function(st){
+      var f=st.firstElementChild,w=+f.dataset.w,h=+f.dataset.h,s=Math.min(1,st.clientWidth/w);
+      f.style.transform='scale('+s+')';st.style.height=(h*s)+'px';
+    });
+  }
+  window.addEventListener('resize',fit);
+  if(window.ResizeObserver){new ResizeObserver(fit).observe(document.getElementById('stage-main'));}
+  var h=(location.hash||'').replace('#state-','');setState(notes[h]?h:'run');fit();
+})();
+</script>
