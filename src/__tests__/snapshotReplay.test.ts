@@ -1,0 +1,732 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AIProvider, BridgeMessage, ProviderState } from '../../shared/types';
+import {
+  DEFAULT_CODING_ROLES,
+  DEFAULT_DEBATE_ROLES,
+  DEFAULT_FREE_TARGET_PROVIDERS,
+  DEFAULT_ROUNDTABLE_ROLES,
+  PROMPTS,
+} from '../../shared/constants';
+import { onBridgeMessage, publishBridgeMessage, resetBusForTests } from '../bridge/bus';
+import { resetBridgePullForTests } from '../bridge/pull';
+import { host } from '../host';
+import { resetCancelState } from '../workflow/cancel';
+import { executeGraph, workflowGraphs } from '../workflow/graph';
+import { resetWorkflowRuntimeForTests } from '../workflow/runtime';
+import { createResponseLanguagePolicy, prependResponseLanguagePolicy } from '../workflow/responseLanguage';
+import { flushSessionCheckpointForTests, resetSessionCheckpointForTests } from '../workflow/sessionCheckpoint';
+import { getLastSnapshot, resetSnapshotRecorderForTests } from '../workflow/snapshot/recorder';
+import {
+  parseStoredSnapshot,
+  planReplay,
+  replaySnapshot,
+  SnapshotReplayError,
+} from '../workflow/snapshot/replay';
+import type { AIProviderV2, ExecutionSnapshot, RedactedValueRef, SnapshotRedactionTier } from '../workflow/snapshot/types';
+import { resetWorkflowStateForTests } from '../workflow/state';
+import { resetStepTimeoutForTests } from '../workflow/stepTimeout';
+import { resetWaitForResponseForTests } from '../workflow/waitForResponse';
+
+vi.mock('../host', () => ({
+  host: {
+    app: {
+      version: vi.fn(),
+    },
+    provider: {
+      send: vi.fn(),
+      eval: vi.fn(),
+      evalWithCallback: vi.fn(),
+      stop: vi.fn(() => Promise.resolve()),
+    },
+    connections: {
+      get: vi.fn(),
+    },
+    bridge: {
+      subscribeTitle: vi.fn(),
+    },
+    snapshot: {
+      save: vi.fn(),
+      list: vi.fn(),
+      load: vi.fn(),
+      delete: vi.fn(),
+    },
+    sessionCheckpoint: {
+      save: vi.fn(),
+      load: vi.fn(),
+      clear: vi.fn(),
+    },
+  },
+}));
+
+vi.mock('../workflow/graph', async () => {
+  const actual = await vi.importActual<typeof import('../workflow/graph')>('../workflow/graph');
+  return {
+    ...actual,
+    executeGraph: vi.fn(actual.executeGraph),
+  };
+});
+
+const providers: AIProvider[] = ['chatgpt', 'claude', 'gemini', 'grok'];
+const HASH = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+function state(provider: AIProvider, sendable = true): ProviderState {
+  return {
+    provider,
+    webview: sendable ? 'loaded' : 'none',
+    dom: sendable ? 'ready' : 'unknown',
+    login: sendable ? 'logged_in' : 'unknown',
+    thinking: false,
+    lastStatusAt: 1,
+  };
+}
+
+function done(provider: AIProvider, payload = `${provider}-answer`): BridgeMessage {
+  return { v: 1, action: 'RESPONSE_DONE', provider, payload, transport: 'pull' };
+}
+
+describe('snapshot replay', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetBusForTests();
+    resetBridgePullForTests();
+    resetWorkflowStateForTests();
+    resetWaitForResponseForTests();
+    resetWorkflowRuntimeForTests();
+    resetCancelState();
+    resetStepTimeoutForTests();
+    resetSnapshotRecorderForTests();
+    resetSessionCheckpointForTests();
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider));
+    });
+    vi.mocked(host.provider.eval).mockResolvedValue(undefined);
+    vi.mocked(host.provider.evalWithCallback).mockResolvedValue(JSON.stringify([]));
+    vi.mocked(host.connections.get).mockResolvedValue(providers.map((provider) => state(provider)));
+    vi.mocked(host.snapshot.load).mockResolvedValue(null);
+    vi.mocked(host.app.version).mockResolvedValue('');
+    vi.mocked(host.sessionCheckpoint.save).mockResolvedValue(undefined);
+    vi.mocked(host.sessionCheckpoint.clear).mockResolvedValue(undefined);
+  });
+
+  afterEach(async () => {
+    await flushSessionCheckpointForTests();
+    await Promise.resolve();
+    resetBusForTests();
+    resetBridgePullForTests();
+    resetWorkflowStateForTests();
+    resetWaitForResponseForTests();
+    resetWorkflowRuntimeForTests();
+    resetCancelState();
+    resetStepTimeoutForTests();
+    resetSnapshotRecorderForTests();
+    resetSessionCheckpointForTests();
+  });
+
+  it('plans a version-matched snapshot and derives free replay targets', () => {
+    const snapshot = buildSnapshot({
+      graphId: 'free',
+      graphVersion: 2,
+      roleMap: {},
+      userQuestion: inlineRef('free question'),
+      steps: [
+        step('fanout:0', { provider: 'chatgpt', input: inlineRef('free question'), output: inlineRef('one') }),
+        step('fanout:1', { provider: 'gemini', input: inlineRef('free question'), output: inlineRef('two') }),
+        step('fanout:2', { provider: 'chatgpt', input: inlineRef('free question'), output: inlineRef('three') }),
+      ],
+    });
+
+    const plan = planReplay(snapshot);
+
+    expect(plan.blocked).toBeUndefined();
+    expect(plan.graph).toBe(workflowGraphs.free);
+    expect(plan.roles).toEqual({});
+    expect(plan.targets).toEqual(['chatgpt', 'gemini']);
+    expect(plan.question).toBe('free question');
+    expect(plan.needsQuestion).toBe(false);
+    expect(plan.textComparable).toBe(true);
+  });
+
+  it('replays Brainstorm snapshots with the fixed four-seat rotation', () => {
+    const snapshot = buildSnapshot({
+      graphId: 'brainstorm',
+      graphVersion: 4,
+      roleMap: { ...DEFAULT_ROUNDTABLE_ROLES },
+      userQuestion: inlineRef('brainstorm question'),
+      steps: [
+        step('round1_first', { provider: 'claude', input: inlineRef('brainstorm prompt'), output: inlineRef('one') }),
+        step('round1_second', { provider: 'gemini', input: inlineRef('brainstorm prompt'), output: inlineRef('two') }),
+      ],
+    });
+
+    const plan = planReplay(snapshot);
+
+    expect(plan.blocked).toBeUndefined();
+    expect(plan.graph).toBe(workflowGraphs.brainstorm);
+    expect(plan.graph?.mode).toBe('free');
+    expect(plan.roles).toEqual(DEFAULT_ROUNDTABLE_ROLES);
+    expect(plan.targets).toBeUndefined();
+    expect(plan.question).toBe('brainstorm question');
+  });
+
+  it('blocks pre-recovery Brainstorm snapshots unless the caller opts into graph v4', () => {
+    const snapshot = buildSnapshot({
+      graphId: 'brainstorm',
+      graphVersion: 3,
+      roleMap: { ...DEFAULT_ROUNDTABLE_ROLES },
+      userQuestion: inlineRef('legacy brainstorm question'),
+    });
+
+    expect(planReplay(snapshot)).toMatchObject({
+      blocked: 'graph-version-mismatch',
+      detail: { snapshotVersion: 3, currentVersion: 4 },
+    });
+
+    const currentPlan = planReplay(snapshot, { replayWithCurrentGraph: true });
+    expect(currentPlan.blocked).toBeUndefined();
+    expect(currentPlan.graph).toBe(workflowGraphs.brainstorm);
+  });
+
+  it.each([
+    ['debate', 4, 5],
+    ['coding', 4, 5],
+    ['roundtable', 4, 5],
+    ['consult', 5, 6],
+  ] as const)('blocks interim %s snapshots after terminal error semantics are restored', (graphId, snapshotVersion, currentVersion) => {
+    const snapshot = buildSnapshot({ graphId, graphVersion: snapshotVersion });
+
+    expect(planReplay(snapshot)).toMatchObject({
+      blocked: 'graph-version-mismatch',
+      detail: { snapshotVersion, currentVersion },
+    });
+  });
+
+  it('blocks graph version mismatches unless the caller opts into the current graph', async () => {
+    const snapshot = buildSnapshot({ graphVersion: 4 });
+
+    expect(planReplay(snapshot)).toMatchObject({
+      blocked: 'graph-version-mismatch',
+      detail: { snapshotVersion: 4, currentVersion: 5 },
+    });
+
+    await expect(replaySnapshot({ snapshot }, {})).resolves.toEqual({
+      ok: false,
+      blocked: 'graph-version-mismatch',
+      detail: { snapshotVersion: 4, currentVersion: 5 },
+    });
+    expect(executeGraph).not.toHaveBeenCalled();
+
+    await expect(replaySnapshot({ snapshot }, { replayWithCurrentGraph: true })).resolves.toMatchObject({ ok: true });
+    expect(executeGraph).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks unknown graph ids and does not execute', async () => {
+    const snapshot = buildSnapshot({ graphId: 'missing-graph' });
+
+    expect(planReplay(snapshot)).toMatchObject({
+      blocked: 'unknown-graph',
+      detail: { graphId: 'missing-graph' },
+    });
+    await expect(replaySnapshot({ snapshot }, {})).resolves.toEqual({
+      ok: false,
+      blocked: 'unknown-graph',
+      detail: { graphId: 'missing-graph' },
+    });
+    expect(executeGraph).not.toHaveBeenCalled();
+  });
+
+  it('requires a caller question for metadata-only snapshots and does not execute', async () => {
+    const snapshot = buildSnapshot({
+      redactionTier: 'metadata-only',
+      steps: [step('pro', { input: omittedRef('metadata-only'), output: omittedRef('metadata-only') })],
+    });
+
+    expect(planReplay(snapshot)).toMatchObject({
+      needsQuestion: true,
+      textComparable: false,
+    });
+    await expect(replaySnapshot({ snapshot }, {})).resolves.toEqual({ ok: false, blocked: 'question-required' });
+    expect(executeGraph).not.toHaveBeenCalled();
+  });
+
+  it('uses the raw prompt-text userQuestion instead of rendered step inputs', () => {
+    const snapshot = buildSnapshot({
+      graphId: 'consult',
+      graphVersion: 6,
+      redactionTier: 'prompt-text',
+      roleMap: { first: 'chatgpt', second: 'grok', reviewer: 'claude', summary: 'gemini' },
+      userQuestion: inlineRef('prompt text question', 'prompt-text'),
+      steps: [
+        step('first', {
+          provider: 'chatgpt',
+          input: inlineRef(PROMPTS.consult.first('prompt text question'), 'prompt-text'),
+          output: hashRef(HASH, 'prompt-text'),
+        }),
+        step('reviewer', { provider: 'claude', input: inlineRef('review prompt', 'prompt-text'), output: hashRef(HASH, 'prompt-text') }),
+      ],
+    });
+
+    expect(planReplay(snapshot)).toMatchObject({
+      question: 'prompt text question',
+      needsQuestion: false,
+      textComparable: true,
+    });
+  });
+
+  it('applies the current response-language policy when replaying without changing the snapshot schema', async () => {
+    const currentPolicy = createResponseLanguagePolicy('auto', 'en');
+    const snapshot = buildSnapshot();
+
+    await expect(replaySnapshot({ snapshot }, { responseLanguagePolicy: currentPolicy })).resolves.toMatchObject({ ok: true });
+
+    expect(executeGraph).toHaveBeenCalledWith(
+      workflowGraphs.debate,
+      {
+        text: 'clean replay question',
+        roles: DEFAULT_DEBATE_ROLES,
+        targets: undefined,
+        responseLanguagePolicy: currentPolicy,
+      },
+      { onSnapshotComplete: undefined },
+    );
+  });
+
+  it('restores a retained prompt policy before falling back to the current replay setting', async () => {
+    const retainedPolicy = createResponseLanguagePolicy('auto', 'ja');
+    const currentPolicy = createResponseLanguagePolicy('auto', 'en');
+    const snapshot = buildSnapshot({
+      steps: [
+        step('pro', {
+          input: inlineRef(prependResponseLanguagePolicy(PROMPTS.debate.pro('clean replay question'), retainedPolicy)),
+        }),
+      ],
+    });
+
+    expect(planReplay(snapshot).responseLanguagePolicy).toEqual(retainedPolicy);
+    await expect(replaySnapshot({ snapshot }, { responseLanguagePolicy: currentPolicy })).resolves.toMatchObject({ ok: true });
+
+    expect(executeGraph).toHaveBeenCalledWith(
+      workflowGraphs.debate,
+      {
+        text: 'clean replay question',
+        roles: DEFAULT_DEBATE_ROLES,
+        targets: undefined,
+        responseLanguagePolicy: retainedPolicy,
+      },
+      { onSnapshotComplete: undefined },
+    );
+  });
+
+  it('accepts caller-supplied questions for metadata-only snapshots and executes with derived roles', async () => {
+    const snapshot = buildSnapshot({
+      redactionTier: 'metadata-only',
+      steps: [step('pro', { input: omittedRef('metadata-only'), output: omittedRef('metadata-only') })],
+    });
+
+    await expect(replaySnapshot({ snapshot, question: 'caller metadata question' }, {})).resolves.toMatchObject({ ok: true });
+
+    expect(executeGraph).toHaveBeenCalledWith(
+      workflowGraphs.debate,
+      { text: 'caller metadata question', roles: DEFAULT_DEBATE_ROLES, targets: undefined },
+      { onSnapshotComplete: undefined },
+    );
+  });
+
+  it('accepts caller-supplied questions for hashes snapshots and executes with derived free targets', async () => {
+    const snapshot = buildSnapshot({
+      graphId: 'free',
+      graphVersion: 2,
+      redactionTier: 'hashes',
+      roleMap: {},
+      steps: [
+        step('fanout:0', { provider: 'chatgpt', input: hashRef(HASH), output: hashRef(HASH) }),
+        step('fanout:1', { provider: 'gemini', input: hashRef(HASH), output: hashRef(HASH) }),
+      ],
+    });
+
+    await expect(replaySnapshot({ snapshot, question: 'caller hashes question' }, {})).resolves.toMatchObject({ ok: true });
+
+    expect(executeGraph).toHaveBeenCalledWith(
+      workflowGraphs.free,
+      { text: 'caller hashes question', roles: {}, targets: ['chatgpt', 'gemini'] },
+      { onSnapshotComplete: undefined },
+    );
+  });
+
+  it('falls back to the four shipped free targets when a free snapshot has no derived targets', async () => {
+    vi.mocked(host.connections.get).mockResolvedValue(providers.map((provider) => state(provider)));
+    const snapshot = buildSnapshot({
+      graphId: 'free',
+      graphVersion: 2,
+      roleMap: {},
+      userQuestion: inlineRef('legacy free replay'),
+      steps: [],
+    });
+
+    await expect(replaySnapshot({ snapshot }, {})).resolves.toMatchObject({ ok: true });
+
+    expect(planReplay(snapshot).targets).toBeUndefined();
+    expect(executeGraph).toHaveBeenCalledWith(
+      workflowGraphs.free,
+      { text: 'legacy free replay', roles: {}, targets: [...DEFAULT_FREE_TARGET_PROVIDERS] },
+      { onSnapshotComplete: undefined },
+    );
+  });
+
+  it('uses the current four-provider lineup when Meta AI is active during replay', async () => {
+    const activeProviders: AIProvider[] = ['chatgpt', 'claude', 'gemini', 'meta'];
+    vi.mocked(host.connections.get).mockResolvedValue([
+      ...activeProviders.map((provider) => state(provider)),
+      state('grok', false),
+    ]);
+    const snapshot = buildSnapshot({
+      graphId: 'free',
+      graphVersion: 2,
+      roleMap: {},
+      userQuestion: inlineRef('meta replay'),
+      steps: [],
+    });
+
+    await expect(replaySnapshot({ snapshot }, { activeProviders })).resolves.toMatchObject({ ok: true });
+
+    expect(executeGraph).toHaveBeenCalledWith(
+      workflowGraphs.free,
+      { text: 'meta replay', roles: {}, targets: activeProviders },
+      { onSnapshotComplete: undefined },
+    );
+  });
+
+  it('drops a historical free target that is now the standby provider', async () => {
+    const activeProviders: AIProvider[] = ['chatgpt', 'claude', 'gemini', 'meta'];
+    vi.mocked(host.connections.get).mockResolvedValue([
+      ...activeProviders.map((provider) => state(provider)),
+      state('grok'),
+    ]);
+    const snapshot = buildSnapshot({
+      graphId: 'free',
+      graphVersion: 2,
+      roleMap: {},
+      userQuestion: inlineRef('historical targets'),
+      steps: [
+        step('chatgpt-answer', { provider: 'chatgpt' }),
+        step('old-grok-answer', { provider: 'grok' }),
+        step('meta-answer', { provider: 'meta' }),
+      ],
+    });
+
+    await expect(replaySnapshot({ snapshot }, { activeProviders })).resolves.toMatchObject({ ok: true });
+
+    expect(planReplay(snapshot).targets).toEqual(['chatgpt', 'grok', 'meta']);
+    expect(executeGraph).toHaveBeenCalledWith(
+      workflowGraphs.free,
+      { text: 'historical targets', roles: {}, targets: ['chatgpt', 'meta'] },
+      { onSnapshotComplete: undefined },
+    );
+  });
+
+  it('blocks a historical debate standby role even when its last connection state is Ready', async () => {
+    const snapshot = buildSnapshot();
+    const originalRoleMap = { ...snapshot.roleMap };
+    await expect(replaySnapshot({ snapshot }, {
+      activeProviders: ['chatgpt', 'claude', 'gemini', 'meta'],
+    })).resolves.toEqual({
+      ok: false,
+      blocked: 'preflight',
+      preflight: { ok: false, unavailable: ['grok'], aliased: [] },
+    });
+    expect(snapshot.roleMap).toEqual(originalRoleMap);
+    expect(planReplay(snapshot).roles).toEqual(originalRoleMap);
+    expect(executeGraph).not.toHaveBeenCalled();
+    expect(host.provider.send).not.toHaveBeenCalled();
+  });
+
+  it.each(providers)('replays recorded Meta debate roles unchanged after replacing %s', async (standbyProvider) => {
+    const activeProviders = [...providers.filter((provider) => provider !== standbyProvider), 'meta' as const];
+    const roleMap = Object.fromEntries(Object.entries(DEFAULT_DEBATE_ROLES).map(([role, provider]) =>
+      [role, provider === standbyProvider ? 'meta' : provider],
+    )) as Record<string, AIProvider>;
+    const snapshot = buildSnapshot({ roleMap });
+    vi.mocked(host.connections.get).mockResolvedValue([...providers, 'meta' as const].map((provider) => state(provider)));
+
+    await expect(replaySnapshot({ snapshot }, { activeProviders })).resolves.toMatchObject({ ok: true, plan: { roles: roleMap } });
+
+    expect(vi.mocked(host.provider.send).mock.calls.map(([provider]) => provider)).toEqual(Object.values(roleMap));
+    expect(getLastSnapshot()?.roleMap).toEqual(roleMap);
+    expect(snapshot.roleMap).toEqual(roleMap);
+
+    vi.mocked(host.provider.send).mockClear();
+    await expect(replaySnapshot({ snapshot }, { activeProviders: providers })).resolves.toEqual({
+      ok: false,
+      blocked: 'preflight',
+      preflight: { ok: false, unavailable: ['meta'], aliased: [] },
+    });
+    expect(host.provider.send).not.toHaveBeenCalled();
+    expect(planReplay(snapshot).roles).toEqual(roleMap);
+  });
+
+  it('exposes full-local prior outputs for comparison', () => {
+    const snapshot = buildSnapshot({
+      steps: [
+        step('pro', { output: inlineRef('prior pro output') }),
+        step('con', { provider: 'claude', input: inlineRef('con prompt'), output: inlineRef('prior con output') }),
+      ],
+    });
+
+    expect(planReplay(snapshot).priorOutputs).toEqual({
+      pro: 'prior pro output',
+      con: 'prior con output',
+    });
+  });
+
+  it('exposes prior output hashes for hashes-tier snapshots', () => {
+    const snapshot = buildSnapshot({
+      redactionTier: 'hashes',
+      steps: [step('pro', { input: hashRef(HASH), output: hashRef(HASH) })],
+    });
+
+    expect(planReplay(snapshot)).toMatchObject({
+      priorHashes: { pro: HASH },
+      needsQuestion: true,
+      textComparable: false,
+    });
+  });
+
+  it('reports parse and schema errors for untrusted stored JSON', () => {
+    expect(() => parseStoredSnapshot('{bad')).toThrow(SnapshotReplayError);
+    expect(captureReplayError(() => parseStoredSnapshot('{bad'))?.kind).toBe('parse');
+
+    const badSchema = JSON.stringify({
+      snapshotId: 'snapshot-bad',
+      graphId: 'debate',
+      graphVersion: 1,
+      redactionTier: 'full-local',
+      roleMap: { pro: 1 },
+      steps: [],
+    });
+    expect(captureReplayError(() => parseStoredSnapshot(badSchema))?.kind).toBe('schema');
+
+    const badStepSchema = JSON.stringify({
+      snapshotId: 'snapshot-bad-step',
+      graphId: 'debate',
+      graphVersion: 1,
+      redactionTier: 'full-local',
+      userQuestion: inlineRef('stored question'),
+      roleMap: DEFAULT_DEBATE_ROLES,
+      steps: [{}],
+    });
+    expect(captureReplayError(() => parseStoredSnapshot(badStepSchema))?.kind).toBe('schema');
+  });
+
+  it.each(['retired-provider', 'toString', 'constructor'])('rejects recorded role provider %s instead of substituting a default', async (provider) => {
+    const snapshot = buildSnapshot({
+      roleMap: { ...DEFAULT_DEBATE_ROLES, pro: provider as AIProvider },
+    });
+
+    expect(captureReplayError(() => parseStoredSnapshot(JSON.stringify(snapshot)))?.kind).toBe('schema');
+    expect(captureReplayError(() => planReplay(snapshot))?.kind).toBe('schema');
+    await expect(replaySnapshot({ snapshot })).rejects.toMatchObject({ kind: 'schema' });
+    expect(executeGraph).not.toHaveBeenCalled();
+    expect(host.provider.send).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown recorded free target instead of falling back to all active providers', async () => {
+    const snapshot = buildSnapshot({
+      graphId: 'free',
+      graphVersion: 2,
+      roleMap: {},
+      steps: [step('fanout:0', { provider: 'retired-provider' as AIProvider })],
+    });
+
+    expect(captureReplayError(() => parseStoredSnapshot(JSON.stringify(snapshot)))?.kind).toBe('schema');
+    await expect(replaySnapshot({ snapshot })).rejects.toMatchObject({ kind: 'schema' });
+    expect(executeGraph).not.toHaveBeenCalled();
+    expect(host.provider.send).not.toHaveBeenCalled();
+  });
+
+  it('returns not-found when durable snapshot load misses and does not execute', async () => {
+    vi.mocked(host.snapshot.load).mockResolvedValue(null);
+
+    await expect(replaySnapshot({ snapshotId: 'snapshot-missing' }, {})).resolves.toEqual({ ok: false, blocked: 'not-found' });
+    expect(executeGraph).not.toHaveBeenCalled();
+  });
+
+  it('blocks on serial preflight with current unavailable sessions and does not execute', async () => {
+    vi.mocked(host.connections.get).mockResolvedValue([state('chatgpt'), state('claude', false), state('gemini'), state('grok')]);
+
+    await expect(replaySnapshot({ snapshot: buildSnapshot() }, {})).resolves.toEqual({
+      ok: false,
+      blocked: 'preflight',
+      preflight: { ok: false, unavailable: ['claude'], aliased: [] },
+    });
+    expect(executeGraph).not.toHaveBeenCalled();
+  });
+
+  it('loads, plans, preflights, and executes through the normal graph path', async () => {
+    const snapshot = buildSnapshot({ snapshotId: 'snapshot-source' });
+    vi.mocked(host.snapshot.load).mockResolvedValue(JSON.stringify(snapshot));
+    const onSnapshotComplete = vi.fn();
+    vi.mocked(host.app.version).mockResolvedValue('1.0.2-test');
+    const messages: BridgeMessage[] = [];
+    const unsubscribe = onBridgeMessage((message) => messages.push(message));
+
+    const result = await replaySnapshot({ snapshotId: 'snapshot-source' }, { onSnapshotComplete, locale: 'ja' });
+
+    unsubscribe();
+    expect(result).toMatchObject({ ok: true });
+    expect(result.ok && result.newSnapshotId).toMatch(/^snapshot-[0-9a-f-]{36}$/);
+    expect(result.ok && result.newSnapshotId).not.toBe('snapshot-source');
+    expect(getLastSnapshot()?.snapshotId).toBe(result.ok ? result.newSnapshotId : undefined);
+    expect(onSnapshotComplete).toHaveBeenCalledTimes(1);
+    expect(executeGraph).toHaveBeenCalledTimes(1);
+    expect(executeGraph).toHaveBeenCalledWith(
+      workflowGraphs.debate,
+      { text: 'clean replay question', roles: DEFAULT_DEBATE_ROLES, targets: undefined, locale: 'ja' },
+      { onSnapshotComplete, appVersion: '1.0.2-test' },
+    );
+    expect(getLastSnapshot()?.appVersion).toBe('1.0.2-test');
+    expect(messages.some((message) => message.action === 'WORKFLOW_STATUS')).toBe(true);
+    expect(messages.some((message) => message.action === 'ROLE_ASSIGNMENT')).toBe(true);
+  });
+
+  it('replays coding snapshots with the raw question, not the wrapped planner prompt', async () => {
+    const snapshot = buildSnapshot({
+      graphId: 'coding',
+      roleMap: { ...DEFAULT_CODING_ROLES },
+      userQuestion: inlineRef('clean coding replay question'),
+      steps: [
+        step('plannerSpec', {
+          provider: DEFAULT_CODING_ROLES.planner,
+          input: inlineRef(PROMPTS.coding.plannerSpec('clean coding replay question')),
+          output: inlineRef('prior spec'),
+        }),
+      ],
+    });
+
+    await expect(replaySnapshot({ snapshot }, {})).resolves.toMatchObject({ ok: true });
+
+    expect(executeGraph).toHaveBeenCalledWith(
+      workflowGraphs.coding,
+      { text: 'clean coding replay question', roles: DEFAULT_CODING_ROLES, targets: undefined },
+      { onSnapshotComplete: undefined },
+    );
+  });
+
+  it('drops free replay targets that are no longer sendable', async () => {
+    vi.mocked(host.connections.get).mockResolvedValue([state('chatgpt'), state('claude', false), state('gemini'), state('grok')]);
+    const snapshot = buildSnapshot({
+      graphId: 'free',
+      graphVersion: 2,
+      roleMap: {},
+      userQuestion: inlineRef('free replay sendability'),
+      steps: [
+        step('fanout:0', { provider: 'chatgpt', input: inlineRef('free replay sendability'), output: inlineRef('one') }),
+        step('fanout:1', { provider: 'claude', input: inlineRef('free replay sendability'), output: inlineRef('two') }),
+      ],
+    });
+
+    await expect(replaySnapshot({ snapshot }, {})).resolves.toMatchObject({ ok: true });
+
+    expect(executeGraph).toHaveBeenCalledWith(
+      workflowGraphs.free,
+      { text: 'free replay sendability', roles: {}, targets: ['chatgpt'] },
+      { onSnapshotComplete: undefined },
+    );
+    expect(host.provider.send).toHaveBeenCalledTimes(1);
+    expect(host.provider.send).toHaveBeenCalledWith('chatgpt', 'free replay sendability');
+  });
+
+  it('honors CANCEL_WORKFLOW during replay before any prior workflow run', async () => {
+    resetWorkflowRuntimeForTests();
+    vi.mocked(host.provider.send).mockResolvedValue(undefined);
+    const snapshot = buildSnapshot();
+
+    const run = replaySnapshot({ snapshot }, {});
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(1));
+
+    publishBridgeMessage({ v: 1, action: 'CANCEL_WORKFLOW', transport: 'local' });
+
+    await expect(run).rejects.toThrow('Workflow cancelled by user');
+    await vi.waitFor(() => expect(host.provider.stop).toHaveBeenCalledWith(DEFAULT_DEBATE_ROLES.pro));
+    const sendCount = vi.mocked(host.provider.send).mock.calls.length;
+    publishBridgeMessage(done(DEFAULT_DEBATE_ROLES.pro, 'late cancelled'));
+    expect(vi.mocked(host.provider.send).mock.calls.length).toBe(sendCount);
+  });
+});
+
+function buildSnapshot(overrides: Partial<ExecutionSnapshot> = {}): ExecutionSnapshot {
+  const redactionTier = overrides.redactionTier ?? 'full-local';
+  const userQuestion = overrides.userQuestion ?? questionRefForTier('clean replay question', redactionTier);
+  return {
+    snapshotId: 'snapshot-source',
+    graphId: 'debate',
+    graphVersion: 5,
+    appVersion: '0.0.0-test',
+    createdAt: '2026-07-06T00:00:00.000Z',
+    completedAt: '2026-07-06T00:01:00.000Z',
+    adapterVersions: {},
+    roleMap: { ...DEFAULT_DEBATE_ROLES },
+    redactionTier,
+    userQuestion,
+    steps: [step('pro', { input: inlineRef(PROMPTS.debate.pro('clean replay question'), redactionTier) })],
+    humanEdits: [],
+    ...overrides,
+  };
+}
+
+function step(
+  nodeId: string,
+  overrides: {
+    provider?: AIProviderV2;
+    input?: RedactedValueRef;
+    output?: RedactedValueRef;
+  } = {},
+): ExecutionSnapshot['steps'][number] {
+  return {
+    nodeId,
+    provider: overrides.provider ?? 'chatgpt',
+    inputRef: overrides.input ?? inlineRef('clean replay question'),
+    outputRef: overrides.output ?? inlineRef('prior output'),
+    status: 'done',
+    startedAt: '2026-07-06T00:00:01.000Z',
+    completedAt: '2026-07-06T00:00:02.000Z',
+  };
+}
+
+function inlineRef(text: string, tier: SnapshotRedactionTier = 'full-local'): RedactedValueRef {
+  return {
+    tier,
+    kind: 'inline',
+    text,
+    byteLength: new TextEncoder().encode(text).byteLength,
+  };
+}
+
+function questionRefForTier(text: string, tier: SnapshotRedactionTier): RedactedValueRef {
+  if (tier === 'metadata-only') return omittedRef(tier);
+  if (tier === 'hashes') return hashRef(HASH, tier);
+  return inlineRef(text, tier);
+}
+
+function hashRef(sha256: string, tier: SnapshotRedactionTier = 'hashes'): RedactedValueRef {
+  return {
+    tier,
+    kind: 'hash',
+    sha256,
+    byteLength: 32,
+  };
+}
+
+function omittedRef(tier: SnapshotRedactionTier): RedactedValueRef {
+  return {
+    tier,
+    kind: 'omitted',
+  };
+}
+
+function captureReplayError(fn: () => unknown): SnapshotReplayError | undefined {
+  try {
+    fn();
+    return undefined;
+  } catch (error) {
+    return error instanceof SnapshotReplayError ? error : undefined;
+  }
+}

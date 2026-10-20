@@ -1,0 +1,34 @@
+fn main() {
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
+        tauri_build::AppManifest::new().commands(&[
+            "provider_open",
+            "provider_close",
+            "provider_show",
+            "provider_hide",
+            "provider_set_bounds",
+            "provider_eval",
+            "provider_eval_with_callback",
+            "provider_open_login",
+            "provider_open_login_external",
+            "provider_reload",
+            "provider_new_session",
+            "connections_get",
+            "dev_log",
+            "adapter_push",
+            "report_broken",
+            "open_adapter_issue",
+            "settings_get",
+            "settings_set",
+            "export_markdown",
+            "open_external_url",
+            "snapshot_save",
+            "snapshot_list",
+            "snapshot_load",
+            "snapshot_delete",
+            "session_checkpoint_save",
+            "session_checkpoint_load",
+            "session_checkpoint_clear",
+        ]),
+    ))
+    .expect("failed to run tauri build script");
+}
