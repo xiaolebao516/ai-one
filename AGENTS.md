@@ -18,9 +18,11 @@
 ## Issue、PR 与 Handoff
 
 - Issue 是任务事实源：写明目标、范围、验收、依赖、Owner 与 Reviewer。范围或验收变化时先更新 Issue。
+- 启动或恢复项目任务时，先取得明确的 Issue 入口（链接或仓库 + 编号），读取本文件、相关已有 Spec（若适用）、Issue 正文和最新一条 Handoff，并按需核对 PR、提交及测试证据。若 Handoff 记录的 HEAD 与分支实际 HEAD 不一致，或其后有新的提交或 Review，以 GitHub 实际状态为准并说明差异。用简短状态说明确认执行位置和下一步，不要求用户重述旧对话；缺权限或入口不明确时不猜测进度。
+- 新 Chat、跨模型或跨 Agent 接手时，以已核实的仓库 / Issue / PR 状态为准，不让旧会话记忆覆盖工程事实；普通研究与临时聊天不强制创建 Issue。
 - 一个 Issue 对应一个范围明确的分支和一个 PR。分支命名为 `<类型>/<Issue 号>-<简述>`，例如 `docs/9-issue-pr-handoff`、`feat/5-run-control`。
 - PR 指向 `main`，正文用 `Closes #N` 关联 Issue，按 `.github/pull_request_template.md` 记录改动、验证、已知限制与 Handoff。
-- Handoff 只用 Issue 或 PR 评论，只写：当前分支、HEAD SHA、验证结果、阻塞、下一执行者与下一步。不另建交接文档。
+- Handoff 只用 Issue 或 PR 评论，写明：已完成事项、当前分支与 HEAD SHA、实际验证结果与未验证项、阻塞、下一执行者与可执行的下一步；有 PR 时附 PR 链接与 Review 状态。不另建交接文档，不复制完整聊天、秘密或大段日志。
 - 标签只用 `needs-review`（等待审查）、`blocked`（被依赖或外部条件阻塞）、`needs-user`（需要用户决定、授权或真实账号操作）。Owner 写在 Issue 正文，不建身份标签。
 - Reviewer 在 PR 中给出审查意见；Owner 修改后在评论中注明新的 HEAD SHA。用户确认后才合并。
 
