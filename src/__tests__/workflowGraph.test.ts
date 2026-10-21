@@ -360,6 +360,7 @@ describe('workflow graph foundation', () => {
     expect(prompts[2].text).toContain('independent response from chatgpt');
     expect(prompts[2].text).toContain('independent response from gemini');
     expect(prompts[3].text).toContain(agreement);
+    expect(prompts[3].text).not.toContain('independent response from gemini');
     expect(system).toHaveLength(1);
     expect(system[0]).toContain('CONVERGED (round 1)');
   });
@@ -386,7 +387,16 @@ describe('workflow graph foundation', () => {
     expect(prompts.map((item) => item.provider)).toEqual([
       'chatgpt', 'gemini', 'chatgpt', 'gemini', 'chatgpt', 'gemini', 'chatgpt', 'gemini',
     ]);
+    expect(prompts[2].text).toContain('independent gemini');
+    expect(prompts[3].text).toContain('independent chatgpt');
+    // After round 1 each native page already holds both initial answers.
+    // Later prompts relay only NEW other-side responses, never full history.
+    expect(prompts[4].text).toContain('Evidence is still missing');
+    expect(prompts[4].text).not.toContain('independent gemini');
+    expect(prompts[5].text).not.toContain('independent chatgpt');
     expect(prompts[6].text).toContain('Evidence is still missing');
+    expect(prompts[6].text).not.toContain('independent gemini');
+    expect(prompts[6].text).not.toContain('independent chatgpt');
     expect(system).toHaveLength(1);
     expect(system[0]).toContain('UNRESOLVED (MAX_ROUNDS=3');
     expect(system[0]).toContain('Evidence is still missing');

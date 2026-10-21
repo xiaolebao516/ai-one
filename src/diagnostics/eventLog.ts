@@ -279,6 +279,8 @@ function statusEvent(message: BridgeMessage): EventLogInput | undefined {
   const payload = recordPayload(message.payload);
   const fillEvent = composerFillEvent(provider, message, payload);
   if (fillEvent) return fillEvent;
+  const sendEvent = sendDiagnosticEvent(provider, message, payload);
+  if (sendEvent) return sendEvent;
   const parts: string[] = [];
   const dom = optionalStatus(payload, 'dom', normalizeDomStatus);
   const login = optionalStatus(payload, 'login', normalizeLoginStatus);
@@ -337,6 +339,41 @@ function composerFillEvent(
       fill,
       fillChars,
       ...(fill === 'done' && fillMs !== undefined ? { fillMs } : {}),
+    },
+  };
+}
+
+function sendDiagnosticEvent(
+  provider: AIProvider,
+  message: BridgeMessage,
+  payload: Record<string, unknown> | undefined,
+): EventLogInput | undefined {
+  const stage = stringProp(payload, 'sendDiagnostic');
+  if (stage !== 'activated' && stage !== 'confirmed' && stage !== 'unconfirmed') return undefined;
+  const rawPath = stringProp(payload, 'sendPath');
+  const path = rawPath === 'button-click' || rawPath === 'enter-key' || rawPath === 'unknown' ? rawPath : 'unknown';
+  const rawState = stringProp(payload, 'composerState');
+  const composerState = rawState === 'cleared' || rawState === 'changed' || rawState === 'disappeared' ? rawState : null;
+  const rawEvidence = stringProp(payload, 'sendEvidence');
+  const evidence = rawEvidence === 'reply' || rawEvidence === 'user-turn' ? rawEvidence : null;
+  const promptChars = nonNegativeNumber(payload, 'promptChars');
+  const activationOk = booleanProp(payload, 'activationOk');
+  const userTurnObserved = booleanProp(payload, 'userTurnObserved');
+  const generationObserved = booleanProp(payload, 'generationObserved');
+  return {
+    provider,
+    kind: 'provider-state',
+    summary: `${providerName(provider)} send ${stage} via ${path}${composerState ? ` (composer ${composerState})` : ''}`,
+    detail: {
+      ...commonMessageDetail(message),
+      sendDiagnostic: stage,
+      sendPath: path,
+      promptChars: promptChars ?? null,
+      activationOk: activationOk ?? null,
+      composerState,
+      sendEvidence: evidence,
+      userTurnObserved: userTurnObserved ?? null,
+      generationObserved: generationObserved ?? null,
     },
   };
 }

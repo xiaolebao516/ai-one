@@ -15,7 +15,6 @@ function roundNode(round: number, role: 'first' | 'second'): StepNode {
     prompt: {
       builder: 'deliberation.reply',
       args: [
-        { kind: 'input', name: 'question' },
         { kind: 'literal', value: round },
         { kind: 'history', name: 'deliberation' },
       ],

@@ -1,5 +1,6 @@
 import { AI_PROVIDERS, brainstormPhaseForRound, PROMPTS } from '../../../shared/constants';
 import { hasDeliberationConsensus } from './deliberationConsensus';
+import { newDeliberationReplies } from './deliberationRelay';
 import type { AIProvider } from '../../../shared/types';
 import type { I18nKey } from '../../i18n/keys';
 import type { Locale } from '../../i18n/resolve';
@@ -143,19 +144,20 @@ export const promptBuilders: Record<string, PromptBuilder> = {
     'Original question:\n' + arg(args, 0),
   ].join('\n\n'),
   'deliberation.reply': (args, context) => {
-    const entries = historyArg(args, 2);
-    const transcript = entries.map((item) => {
+    const round = numberArg(args, 0);
+    const updates = newDeliberationReplies(historyArg(args, 1), providerName(context.provider), round);
+    const transcript = updates.map((item) => {
       const heading = item.round ? 'Round ' + item.round + ' · ' + item.name : 'Independent answer · ' + item.name;
       return heading + '\n' + item.text;
     }).join('\n\n---\n\n');
     return [
-      'Continue a read-only, evidence-based discussion with another AI.',
-      'You are ' + providerName(context.provider) + '. Discussion round ' + numberArg(args, 1) + ' of 3.',
-      'Original question:\n' + arg(args, 0),
-      'The full discussion so far (chronological, including your earlier responses):\n' + transcript,
-      'Address specific disagreements and new evidence. Do not restart original research without reason. Revise your position when evidence warrants it. Never claim agreement merely to finish.',
-      'The LAST three lines of your answer must be contiguous, WITHOUT blank lines or code fences. Here is the format (replace every ... placeholder with your own content):\n[[AI_ONE_DECISION:REVISE]]\n[[AI_ONE_PROPOSAL:...]]\n[[AI_ONE_OPEN_ISSUES:...]]',
-      'Replace REVISE with AGREE only when you endorse the exact proposal with no unresolved blockers, and replace open issues with NONE. Otherwise retain REVISE and name the unresolved disagreement. State a concrete canonical proposal of 12-240 characters; do not copy the placeholder text. Only matching explicit approvals from BOTH parties can end this discussion.',
+      'Continue the same read-only discussion in THIS existing AI chat session.',
+      'You are ' + providerName(context.provider) + '. Discussion round ' + round + ' of 3.',
+      'The original question, your past answers, and any earlier relayed replies are already visible in this chat. Use that existing context; do not restart the research.',
+      'These are the complete NEW replies from the other AI which your chat has not received yet:\n' + transcript,
+      'Respond specifically to these arguments, cite evidence where relevant, and revise your position if justified. Never claim agreement merely to finish. Do not perform external write operations.',
+      'The LAST three lines of your answer must be contiguous, WITHOUT blank lines or code fences. Replace the placeholders with your own content:\n[[AI_ONE_DECISION:REVISE]]\n[[AI_ONE_PROPOSAL:...]]\n[[AI_ONE_OPEN_ISSUES:...]]',
+      'Use AGREE only when you endorse the exact proposal with no unresolved blockers, then set open issues to NONE. Otherwise use REVISE and name the unresolved disagreement. State a concrete common proposal of 12-240 characters. Both AIs must independently agree to the same proposal for convergence.',
     ].join('\n\n');
   },
   'deliberation.label': (args) => 'Discussion round ' + numberArg(args, 0),
