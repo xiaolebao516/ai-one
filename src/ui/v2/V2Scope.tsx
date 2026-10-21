@@ -1,11 +1,12 @@
 import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
 import { cx } from './cx';
+import { useV2Skin } from './skinPreference';
 import { resolveV2Mode, useDocumentDarkClass } from './themeMode';
-import { V2_DEFAULT_SKIN, v2CssVariables, type V2ModePreference, type V2SkinId } from './tokens';
+import { v2CssVariables, type V2ModePreference, type V2SkinId } from './tokens';
 import './v2.css';
 
 export interface V2ScopeProps extends HTMLAttributes<HTMLDivElement> {
-  /** Visual scheme; every skin defines the same semantic tokens. */
+  /** Pin a visual scheme. Omit it to follow the shared skin preference (setV2Skin), which is how every v2 surface switches together. */
   skin?: V2SkinId;
   /** `auto` follows the app theme (`html.dark`); `light` / `dark` pin the scope. */
   mode?: V2ModePreference;
@@ -17,7 +18,9 @@ export interface V2ScopeProps extends HTMLAttributes<HTMLDivElement> {
  * element, so v2 styling exists only inside the scope and two scopes can show different skins
  * side by side. Nested scopes override their parent.
  */
-export function V2Scope({ skin = V2_DEFAULT_SKIN, mode = 'auto', className, style, children, ...rest }: V2ScopeProps) {
+export function V2Scope({ skin: pinnedSkin, mode = 'auto', className, style, children, ...rest }: V2ScopeProps) {
+  const preferredSkin = useV2Skin();
+  const skin = pinnedSkin ?? preferredSkin;
   const documentDark = useDocumentDarkClass();
   const resolved = resolveV2Mode(mode, documentDark);
   const scopeStyle = { ...v2CssVariables(skin, resolved), colorScheme: resolved, ...style } as CSSProperties;
