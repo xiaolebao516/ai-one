@@ -106,7 +106,9 @@ function pickSections(masked: string, inline: boolean): SectionMatch[] | undefin
 
 /**
  * Line headings may leave sections that the audit wrote inline (e.g. "A. Shared conclusions: B.").
- * Look for each missing one only in the gap between its found neighbours: one candidate fills it,
+ * Look for each missing one only in the gap between its found neighbours, and only on the same line
+ * as the previous heading when that heading is itself followed by text ("Heading: text"); a heading
+ * name mentioned in prose under a standalone heading stays prose. One candidate fills the section,
  * several make the structure ambiguous, none leaves it genuinely missing.
  */
 function fillInlineGaps(masked: string, found: SectionMatch[]): SectionMatch[] | undefined {
@@ -116,10 +118,12 @@ function fillInlineGaps(masked: string, found: SectionMatch[]): SectionMatch[] |
     if (result.some((match) => match.label === section.label)) continue;
     const before = result.filter((match) => order(match.label) < index).at(-1);
     const after = result.find((match) => order(match.label) > index);
-    const low = before?.end ?? 0;
-    const high = after?.start ?? masked.length;
+    if (!before) continue;
+    const lineEnd = masked.indexOf('\n', before.end);
+    const inlineRunEnd = Math.min(lineEnd < 0 ? masked.length : lineEnd, after?.start ?? masked.length);
+    if (!masked.slice(before.end, inlineRunEnd).trim()) continue;
     const candidates = [...masked.matchAll(sectionHeading(section.pattern, true))]
-      .filter((match) => match.index >= low && match.index + match[0].length <= high);
+      .filter((match) => match.index >= before.end && match.index + match[0].length <= inlineRunEnd);
     if (candidates.length > 1) return undefined;
     if (candidates.length === 1) {
       const start = candidates[0].index;

@@ -177,6 +177,26 @@ describe('deliberation final report', () => {
     expect(report).not.toContain('not provided by the auditor');
   });
 
+  it('does not promote a heading name in prose when that section is genuinely missing', () => {
+    const report = reportFor([
+      '## Evidence-backed findings', 'A is supported.',
+      '## Shared conclusions', 'Both teams agree. Disagreements: no disputes about sampling.',
+      '## Evidence gaps', 'D.', '## Next steps', 'E.',
+    ].join('\n') + footer);
+    expect(sectionOf(report, '### Shared conclusions')).toBe('Both teams agree. Disagreements: no disputes about sampling.');
+    expect(sectionOf(report, '### Remaining disagreements')).toBe('(not provided by the auditor)');
+  });
+
+  it('fills a chain of inline sections that continue the same line', () => {
+    const report = reportFor([
+      'Evidence-backed findings: A. Shared conclusions: B. Disagreements: C.',
+      '## Evidence gaps', 'D.', '## Next steps', 'E.',
+    ].join('\n') + footer);
+    expect(sectionOf(report, '### Evidence-backed findings')).toBe('A.');
+    expect(sectionOf(report, '### Shared conclusions')).toBe('B.');
+    expect(sectionOf(report, '### Remaining disagreements')).toBe('C.');
+  });
+
   it('falls back when a missing section has more than one inline candidate in its gap', () => {
     const report = reportFor([
       'Evidence-backed findings: A. Shared conclusions: B. Shared conclusions: B2.',
