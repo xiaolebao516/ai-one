@@ -3,7 +3,7 @@
 ## 项目与范围
 
 - 产品目标是复用用户已有的 AI 网页订阅与原生工具，让多个 AI 独立取证并自动交换完整回复，支持暂停、人工接管、恢复及会话交接。
-- **当前产品方向与阶段优先级以 [Spec #32](https://github.com/xiaolebao516/ai-one/issues/32)（xiaolebao516/ai-one#32）为准**；旧 V1 Epic（#1）及其子任务、`docs/design/` 中的 V1 设计是历史参考，不再单独作为现行需求。实现范围以各 Task Issue 为准：Bridge、CLI Agent、远程控制、智能历史压缩等能力是后续阶段，未经对应 Task 不实现，但不是永久禁止。
+- **当前产品方向与阶段优先级以 [Spec #32](https://github.com/xiaolebao516/ai-one/issues/32)（xiaolebao516/ai-one#32）为准**；旧 V1 Epic（#1）及其子任务、`docs/design/` 中的 V1 设计是历史参考，不再单独作为现行需求。实现范围以各 Task Issue 为准。旧 V1 曾把 Bridge、CLI Agent、远程控制、智能历史压缩列为不做；这不是永久禁止，是否及何时实施由 #32 与对应 Task 决定，未经对应 Task 不实现。
 - UI/UX 的当前依据是 #32 及其后续设计 Task（如 #33）；`docs/design/` 的 V1 文件仅作历史参考。技术依据为 `TECHNICAL-RESEARCH-V1.md` 与 `research-evidence/`。这些文件只在对应 Issue 的范围内修改。Agent HUD Open 仅作视觉参考。
 - 上游仓库克隆、依赖安装和验证放在仓库外的独立临时目录，记录上游提交 SHA 与验证记录。
 - AGENTS.md 只保存稳定工程规则；需求、结论和任务进展记录在 Issue 与 PR 中，不维护 `progress.md`、`state.md` 等重复文档。
@@ -13,7 +13,7 @@
 - 用户：确定方向、裁决分歧、执行或授权真实账号操作、确认合并。
 - Opus（本地 Claude Code）：主导本地代码开发、UI/UX、桌面运行与实际测试，也可负责技术实现。
 - GPT（ChatGPT + GitHub 连接器）：主导技术方案与任务分解、GitHub Issue、代码审查、PR 交叉验收，以及必要的远程代码修改。
-- Task Issue 写明执行 Owner 和独立 Reviewer；Spec Issue 写明需求负责人和整体验收人。角色随任务调整，作者不能把自审当成独立 Review。
+- Task Issue 写明执行 Owner 和独立 Reviewer；Spec Issue 写明需求负责人和整体验收人。角色随任务调整，作者不能把自审当成独立 Review。近期由 Claude Code 作为协调入口（#32）；上述模型分工只是常见默认，不固定绑定，也不得硬编码身份或假报实际模型 / 档位。
 
 ## Issue-first：Spec、Task、PR 与 Handoff
 

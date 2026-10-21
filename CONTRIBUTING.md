@@ -19,7 +19,7 @@ For selector updates:
 
 New providers are not adapter-only in v1. The catalog contains `chatgpt`, `claude`, `gemini`, `grok`, and `meta`; exactly four are active, with Meta AI as the default standby. Adding another provider or changing the four-active invariant requires coordinated adapter, host, UI, test, and security-review changes.
 
-Open adapter changes as a `[Task]` Issue and a PR that follows [`.github/pull_request_template.md`](./.github/pull_request_template.md) so reports remain reproducible and privacy-safe. The app's "Report adapter problem" button currently opens the upstream project's Issue page (see `README.md`), which is not ai-one's tracker. Vulnerabilities must not go through a public adapter issue; see the security note at the top of this file.
+Open adapter changes as a `[Task]` Issue and a PR that follows [`.github/pull_request_template.md`](./.github/pull_request_template.md) so reports remain reproducible and privacy-safe. The app's broken-adapter report flow currently opens the upstream project's Issue page (see `README.md`), which is not ai-one's tracker. Vulnerabilities must not go through a public adapter issue; see the security note at the top of this file.
 
 ## Agent Source Contract SOP
 
