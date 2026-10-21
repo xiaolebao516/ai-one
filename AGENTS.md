@@ -19,7 +19,7 @@
 
 - **两种 Issue**：`[Spec]` 负责需求的目标、行为、约束、非目标与**整体验收**；`[Task]` 负责一个可独立执行、独立审查的交付增量及**局部验收**。简单明确的需求直接使用独立 Task，不必创建父 Spec 或额外 Markdown 文件；复杂需求使用 Spec 父 Issue 和可验收的 Task 子 Issue，避免在每个子任务复制完整需求。
 - **待设计是合法状态**：Spec 使用 `.github/ISSUE_TEMPLATE/spec.md`，写明负责人、`Spec Revision: v1`、阶段与可检查的交付标准。阶段 `DESIGN_PENDING` 允许暂时没有实施方案、没有子 Issue，但不允许假称可直接执行。复杂需求进入实施阶段前，先拆为可验收的 Task。只有真实 GitHub Sub-issues 关系才算建立了父子结构；仅在正文引用 `#N` 不算。工具不能建立原生关系时应报告待关联，不能伪报完成。
-- **Task 应小而完整**：Task 使用 `.github/ISSUE_TEMPLATE/task.md`，说明本次交付、范围/非目标、依赖、可核验验收及验证手段、Owner、Reviewer、`Complexity: ROUTINE | DEEP`；如有父 Spec，记录其 Issue 和已检查的 `Spec Revision`。粒度以“一次独立 Review 能确认的交付”为准，不按文件或 commit 机械拆分。代码 Task 原则上一个工作分支和一个主要 PR；非代码 Task 可以用可核实成果完成。
+- **Task 应小而完整**：Task 使用 `.github/ISSUE_TEMPLATE/task.md`，说明本次交付、范围/非目标、依赖、可核验验收及验证手段、Owner、Reviewer、`Complexity: ROUTINE | DEEP`；如有父 Spec，记录其 Issue 和已检查的 `Spec Revision`。粒度以“一次独立 Review 能确认的交付”为准，不按文件或 commit 机械拆分。代码 Task 原则上一个工作分支和一个主要 PR，分支沿用 `<类型>/<Issue号>-<简述>` 命名，例如 `ai/29-issue-first-workflow`；非代码 Task 可以用可核实成果完成。临时研究/聊天不强制创建 Issue。
 - **变更与重审**：Spec 目标、边界、验收发生实质变化时，负责人先将 `Spec Revision` 递增，并以评论记录改动、原因和影响；所有关联的未完成 Task（含已开 PR）都必须重审，并记录核对的新版本及影响结论。在核对完成前暂停受影响的实施及验收；无影响可继续、范围变化应更新 Task 并复审 PR、失效任务可拆分或取消。排版错字无需升级版本。新 Spec Issue 不得静默覆盖已有 `docs/SPEC.md`、`docs/PLAN.md` 和现有安全/架构基线；冲突由用户先裁决。
 - **完成与及时清理**：每种 Issue 都必须有交付标准。代码 Task 在局部验收、必要验证和 PR 合并（或明确认可的等价交付）后才能以 Completed 关闭；Draft PR 或 CI 绿不代表任务交付。Spec 必须整体验收通过、全部必要子任务妥善处理后才可关闭；不能因子 Issue 全关就自动宣称 Spec Done。尚未实施的 Spec 可保持 Open / DESIGN_PENDING。取消、重复或不实施的任务说明原因，以 GitHub 相应关闭原因结束，保留历史，不删评论/PR。
 - **恢复与交接**：接手 Task 读取本文件、Task 正文、父 Spec 最新正文和修订记录（如有）、最新 Handoff、当前分支/PR HEAD、Review、CI。Handoff 只是线索，不是事实；遇到 Spec 版本未重审、HEAD 不匹配或其他冲突先说明并停止危险写入。不要求用户重述聊天。同一 Task 默认只允许一个活动写入者，这是协作规则而非技术锁；接力继续原分支和 PR，不重复创建。
