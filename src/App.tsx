@@ -432,7 +432,7 @@ export default function App() {
   const centerTextFinal = latestCenterBubble?.final === true;
 
   const overlayGuardOpen =
-    (Boolean(preflight) && !preflightLoginPending) || Boolean(stepTimeout?.timedOut) || settingsOpen || Boolean(reportPreview) || processTraceDetailOpen || messagesMaximized;
+    (Boolean(preflight) && !preflightLoginPending) || settingsOpen || Boolean(reportPreview) || processTraceDetailOpen || messagesMaximized;
   const manualFocusIdlePaused = Boolean(checkpoint) || Boolean(stepTimeout);
   overlayGuardOpenRef.current = overlayGuardOpen;
 
@@ -2183,6 +2183,7 @@ export default function App() {
             {import.meta.env.DEV ? <EchoPanel /> : null}
           </div>
           <div className="ai-sister-conversation-composer shrink-0 border-t border-zinc-200 pt-2 dark:border-zinc-800">
+            {stepTimeout?.timedOut ? <StepTimeoutDialog event={stepTimeout} onClose={() => setStepTimeout(undefined)} locale={locale} /> : null}
             {import.meta.env.DEV && presetId === 'deliberation' ? <DevDeliberationFaultControl disabled={isProcessing} /> : null}
             <InputBar
               onSend={send}
@@ -2215,7 +2216,6 @@ export default function App() {
           locale={locale}
         />
       ) : null}
-      {stepTimeout?.timedOut ? <StepTimeoutDialog event={stepTimeout} onClose={() => setStepTimeout(undefined)} locale={locale} /> : null}
       <SettingsModal
         open={settingsOpen}
         openProviders={openProviders}

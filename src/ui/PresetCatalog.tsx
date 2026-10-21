@@ -34,7 +34,9 @@ export function PresetCatalog({
   const visiblePresets = PRESET_CATALOG.slice(0, visiblePresetCount);
   const quickMode = visiblePresetCount < PRESET_CATALOG.length;
   const activePresetId = selectedPresetId ?? mode;
-  const detailPreset = PRESET_CATALOG.find((preset) => preset.id === detailsPresetId);
+  // The active deliberation preset always explains the independent audit and final report.
+  const resolvedDetailsId = activePresetId === 'deliberation' ? activePresetId : detailsPresetId;
+  const detailPreset = PRESET_CATALOG.find((preset) => preset.id === resolvedDetailsId);
   return (
     <section aria-label={t('preset.catalog.aria', locale)} className="space-y-2">
       {renderPresetGrid({

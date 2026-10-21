@@ -89,6 +89,18 @@ describe('N4 preset catalog', () => {
     expect(PRESET_CATALOG.find((preset) => preset.id === 'deliberation')?.requiredProviders).toEqual(['chatgpt', 'gemini', 'claude']);
   });
 
+  it.each(['en', 'zh-TW', 'ja', 'de'] as const)('explains independent third-party audit when deliberation is selected in %s', (locale) => {
+    const html = renderToStaticMarkup(<PresetCatalog
+      mode="consult"
+      selectedPresetId="deliberation"
+      locale={locale}
+      onSelectPreset={vi.fn()}
+    />);
+    expect(html).toContain(t('preset.deliberation.description', locale));
+    expect(html).toContain(t('preset.deliberation.costLabel', locale));
+    expect(t('preset.deliberation.description', locale).toLowerCase()).not.toContain('same proposal');
+  });
+
   it('selects the clicked mode and exposes default roles for preset selection', () => {
     const onSelectPreset = vi.fn();
     const tree = PresetCatalog({

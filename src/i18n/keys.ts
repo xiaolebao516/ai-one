@@ -192,6 +192,7 @@ export const I18N_KEYS = [
   'stepTimeout.description',
   'stepTimeout.providerErrorTitle',
   'stepTimeout.providerErrorDescription',
+  'stepTimeout.recoveryState',
   'stepTimeout.retry',
   'stepTimeout.retryResendWarning',
   'stepTimeout.skip',
