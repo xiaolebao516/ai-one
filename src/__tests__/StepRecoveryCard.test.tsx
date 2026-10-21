@@ -30,7 +30,7 @@ describe('inline step recovery', () => {
       expect(html).toContain(t('stepTimeout.recoveryState', locale));
       expect(html).toContain(t('stepTimeout.skip', locale));
       expect(html).toContain(t('stepTimeout.retry', locale));
-      expect(html).toContain(t('stepTimeout.retryResendWarning', locale).replaceAll('{provider}', 'chatgpt'));
+      expect(html).toContain(t('stepTimeout.retryResendWarning', locale).replace(/\{provider\}/g, 'chatgpt'));
     }
   });
 
