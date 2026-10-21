@@ -30,7 +30,7 @@ import {
 import { isInactiveStandbyProvider } from '../workflow/graph/preflight';
 import { flushSessionCheckpointForTests, resetSessionCheckpointForTests } from '../workflow/sessionCheckpoint';
 import { resetWorkflowStateForTests } from '../workflow/state';
-import { resetStepTimeoutForTests } from '../workflow/stepTimeout';
+import { chooseStepTimeoutAction, onStepTimeoutEvent, resetStepTimeoutForTests } from '../workflow/stepTimeout';
 import { resetWaitForResponseForTests } from '../workflow/waitForResponse';
 
 vi.mock('../host', () => ({
@@ -39,6 +39,7 @@ vi.mock('../host', () => ({
       send: vi.fn(),
       eval: vi.fn(),
       evalWithCallback: vi.fn(),
+      stop: vi.fn(),
     },
     connections: {
       get: vi.fn(),
@@ -88,6 +89,7 @@ describe('workflow graph foundation', () => {
     resetStepTimeoutForTests();
     resetSessionCheckpointForTests();
     vi.mocked(host.provider.send).mockResolvedValue(undefined);
+    vi.mocked(host.provider.stop).mockResolvedValue({ outcome: 'clicked' });
     vi.mocked(host.provider.eval).mockResolvedValue(undefined);
     vi.mocked(host.provider.evalWithCallback).mockResolvedValue(JSON.stringify([]));
     vi.mocked(host.connections.get).mockResolvedValue(providers.map((provider) => state(provider)));
@@ -388,6 +390,46 @@ describe('workflow graph foundation', () => {
     expect(system).toHaveLength(1);
     expect(system[0]).toContain('COMPLETE_WITH_DISAGREEMENTS');
     expect(system[0]).toContain('round budget exhausted');
+  });
+
+  it('deliberation retries a provider error at the failed step without restarting completed rounds', async () => {
+    const sends: AIProvider[] = [];
+    const failures: string[] = [];
+    const reports: string[] = [];
+    let geminiRoundAttempts = 0;
+    const offTimeout = onStepTimeoutEvent((event) => {
+      if (!event.timedOut) return;
+      failures.push(event.failureKind ?? 'unknown');
+      expect(event.provider).toBe('gemini');
+      expect(chooseStepTimeoutAction('retry', event.requestId)).toBe(true);
+    });
+    const offBridge = onBridgeMessage((event) => {
+      if (event.provider === ('system' as AIProvider) && event.action === 'RESPONSE_DONE') reports.push(String(event.payload));
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      sends.push(provider);
+      let response = 'independent or discussion response from ' + provider;
+      if (provider === 'gemini') {
+        geminiRoundAttempts += 1;
+        if (geminiRoundAttempts === 2) response = '[Error: temporary model failure]';
+      }
+      if (provider === 'claude') {
+        response = 'Evidence-backed findings: Evidence reviewed. Shared conclusions: Both agree. Disagreements: NONE. Evidence gaps: NONE. Next steps: Verify source.\\n' +
+          '[[AI_ONE_AUDIT_DECISION:FINISH]]\\n[[AI_ONE_AUDIT_RESULT:AGREED]]\\n[[AI_ONE_AUDIT_QUESTION:NONE]]';
+      }
+      publishBridgeMessage(done(provider, response));
+    });
+    await expect(executeGraph(deliberationGraph, {
+      text: 'Resume on a temporary error',
+      roles: { first: 'chatgpt', second: 'gemini', auditor: 'claude' },
+    })).resolves.toBeUndefined();
+    offTimeout();
+    offBridge();
+    expect(failures).toEqual(['provider-error']);
+    expect(sends).toEqual(['chatgpt', 'gemini', 'chatgpt', 'gemini', 'gemini', 'claude']);
+    expect(vi.mocked(host.provider.stop)).toHaveBeenCalledWith('gemini');
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toContain('COMPLETE_AGREED');
   });
 
   it('deliberation requires an available distinct auditor and validates the graph', async () => {
