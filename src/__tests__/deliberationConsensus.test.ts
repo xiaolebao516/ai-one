@@ -30,7 +30,7 @@ describe('deliberation consensus is fail-closed', () => {
   it('rejects missing tags, code-fenced tags, embedded tags, and ambiguous state', () => {
     expect(parseDeliberationDecision('The final answer has no tags')).toBeUndefined();
     expect(parseDeliberationDecision(verdict('AGREE', proposal) + '\nMore words')).toBeUndefined();
-    expect(parseDeliberationDecision('\`\`\`\n' + verdict('AGREE', proposal) + '\n\`\`\`')).toBeUndefined();
+    expect(parseDeliberationDecision('```\n' + verdict('AGREE', proposal) + '\n```')).toBeUndefined();
     expect(hasDeliberationConsensus('', verdict('AGREE', proposal))).toBe(false);
     expect(hasDeliberationConsensus('[Error: timeout]', verdict('AGREE', proposal))).toBe(false);
   });
