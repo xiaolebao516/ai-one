@@ -245,7 +245,8 @@ describe('isolation and token discipline', () => {
       .filter((selector) => selector && !selector.startsWith('@'));
     expect(selectors.length).toBeGreaterThan(10);
     for (const group of selectors) {
-      for (const selector of group.split(',')) expect(selector.trim().startsWith('.v2-scope'), selector).toBe(true);
+      // Split selector lists on top-level commas only (commas inside :is(...) belong to one selector).
+      for (const selector of group.split(/,(?![^(]*\))/)) expect(selector.trim().startsWith('.v2-scope'), selector).toBe(true);
     }
   });
 
