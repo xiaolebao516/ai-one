@@ -37,6 +37,7 @@ export function MyV2Page() {
 - **状态只用 tone**：`run`（进行中）、`rework`（返工）、`you`（需要你：决定 / 验收）、`block`（阻塞 / 失败）、`done`、`paused`、`unknown`。不要在页面里写 `text-v2-you` 之类的状态色类，用 `StatusIndicator` / `Badge` / `Notice` / `Card accent`。外部数据里的未知值用 `toV2StatusTone()` 降级为 `unknown`。
 - **状态不只靠颜色**：`StatusIndicator` 同时给形状和文字；`label` 是必填的。
 - **琥珀色（`you`）只表示“和人有关”**；`attention` 按钮只用于回答决定 / 验收的那一个操作。
+- **带 `tabIndex` 的元素不要直接放字号 / 字重类**：应用全局样式 `src/styles.css` 有 `[tabindex] { font: inherit; }`，与 Tailwind 工具类同优先级且排在后面，会把 `text-v2-*` 字号和 `font-semibold` 覆盖掉（Windows Tauri 实测发现）。把这些类放在内部的 `<span>` 上；共享组件已这样处理，`v2-components.test.tsx` 有检查。
 - **不可用的操作**：用 `disabled` + `disabledReason` 写明原因（悬停提示 + 读屏），不要放一个点了没反应的按钮。
 
 ## 组件
