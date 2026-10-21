@@ -118,6 +118,8 @@ import {
   type FreeTargetSelection,
 } from './ui/targets';
 import { useOverlayGuard } from './ui/useOverlayGuard';
+import { TaskHud } from './ui/TaskHud';
+import { TaskHudEntry } from './ui/TaskHudEntry';
 import { buildMarkdown, exportFilename, matchingSnapshotForConversation } from './ui/exportMarkdown';
 import { formatReportBody, type AdapterNotice, type ReportDigest } from './ui/reportBroken';
 import { persistSnapshotIfEnabled } from './workflow/snapshot/persistence';
@@ -317,6 +319,7 @@ export default function App() {
   const [preflight, setPreflight] = useState<{ mode: PreflightSubject; result: PreflightResult } | undefined>();
   const [stepTimeout, setStepTimeout] = useState<StepTimeoutDialogState | undefined>();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [taskHudOpen, setTaskHudOpen] = useState(false);
   const [shareNotice, setShareNotice] = useState<{ kind: 'ok' | 'error'; text: string } | undefined>();
   const [sessionCheckpointNotice, setSessionCheckpointNotice] = useState<StartupSessionCheckpointNotice | undefined>();
   const [sessionCheckpointReplayBusy, setSessionCheckpointReplayBusy] = useState(false);
@@ -436,6 +439,10 @@ export default function App() {
     (Boolean(preflight) && !preflightLoginPending) || Boolean(stepTimeout?.timedOut) || settingsOpen || Boolean(reportPreview) || processTraceDetailOpen || messagesMaximized;
   const manualFocusIdlePaused = Boolean(checkpoint) || Boolean(stepTimeout);
   overlayGuardOpenRef.current = overlayGuardOpen;
+  // The task HUD (#40) covers the whole window: guard it like the modal overlays so native provider
+  // webviews stay hidden and the bounds sync does not push them back over the HUD.
+  const viewGuardOpen = overlayGuardOpen || taskHudOpen;
+  overlayGuardOpenRef.current = viewGuardOpen;
 
   const setCenterSurfaceMode = useCallback((surface: CenterSurface) => {
     centerSurfaceRef.current = surface;
@@ -452,7 +459,7 @@ export default function App() {
     setCenterSurfaceMode('text');
   }, [centeredProvider, setCenterSurfaceMode]);
 
-  useOverlayGuard(overlayGuardOpen, loadedModalProviders);
+  useOverlayGuard(viewGuardOpen, loadedModalProviders);
 
   useEffect(() => {
     const guard = makeFileDragGuard();
@@ -1441,9 +1448,9 @@ export default function App() {
 
   // overlay 關閉後立即把置中的 webview 推回舞台，不等 2.5 秒的定時同步。
   useEffect(() => {
-    if (overlayGuardOpen) return;
+    if (viewGuardOpen) return;
     if (centeredProvider && centerSurfaceRef.current === 'native') void driveCenteredProviderToStage(centeredProvider);
-  }, [overlayGuardOpen, centeredProvider, driveCenteredProviderToStage]);
+  }, [viewGuardOpen, centeredProvider, driveCenteredProviderToStage]);
 
   const executeSend = async (trimmed: string, preparedWorkflowTargets?: AIProvider[]) => {
     if (!trimmed) return;
@@ -1918,6 +1925,7 @@ export default function App() {
     <main className="app-shell h-screen overflow-hidden bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       <div
         ref={gridRef}
+        {...(taskHudOpen ? TASK_HUD_HIDDEN_CHAT : undefined)}
         className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)]"
         style={{ gridTemplateColumns: messagesMaximized ? '0px 0px minmax(0,1fr)' : focusGridTemplateColumns(focusPaneWidth) }}
       >
@@ -2114,6 +2122,7 @@ export default function App() {
                     </svg>
                   )}
                 </button>
+                <TaskHudEntry locale={locale} onOpen={() => setTaskHudOpen(true)} />
                 <button type="button" className="border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800" onClick={() => setSettingsOpen(true)}>
                   {translate('header.settings')}
                 </button>
@@ -2187,6 +2196,7 @@ export default function App() {
           </div>
         </section>
       </div>
+      {taskHudOpen ? <TaskHud locale={locale} onClose={() => setTaskHudOpen(false)} /> : null}
       {preflight ? (
         <PreflightDialog
           model={buildPreflightDialogModel(preflight.mode, preflight.result, states, locale)}
@@ -2230,6 +2240,10 @@ export default function App() {
     </main>
   );
 }
+
+// The chat stays mounted under the task HUD (state, drafts and webviews survive); it is only taken
+// out of focus order and the accessibility tree while the HUD is open.
+const TASK_HUD_HIDDEN_CHAT = { inert: '', 'aria-hidden': true } as Record<string, unknown>;
 
 function adapterNoticeClass(kind: string): string {
   if (kind === 'updated' || kind === 'downgraded') return 'border-emerald-300 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200';
