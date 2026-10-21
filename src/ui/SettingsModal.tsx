@@ -36,16 +36,9 @@ import { useEventLog } from './useEventLog';
 import { ModalDialog } from './ModalDialog';
 import { createSettingsPersistence } from './settingsPersistence';
 import { createTrailingDebounce, type TrailingDebounce } from './trailingDebounce';
+import { SettingsUpdateRow, type UpdateCheckState } from './SettingsUpdateRow';
 
 const PROVIDERS = Object.keys(AI_PROVIDERS) as AIProvider[];
-
-type UpdateCheckState =
-  | { status: 'idle' }
-  | { status: 'checking' }
-  | { status: 'up-to-date'; version: string }
-  | { status: 'available'; tagName: string; htmlUrl: string }
-  | { status: 'unavailable' }
-  | { status: 'error'; message: string };
 
 interface SettingsError {
   messageKey: 'settings.loadFailed' | 'settings.saveFailed';
@@ -601,31 +594,19 @@ export function SettingsModal({
             {!draft.portable ? (
               <section className="space-y-3 border-t border-zinc-200 dark:border-zinc-800 pt-4">
                 <span className="block text-xs text-zinc-600 dark:text-zinc-400">{t('settings.updates')}</span>
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    className="border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
-                    onClick={() => void checkForUpdates()}
-                    disabled={updateCheck.status === 'checking'}
-                  >
-                    {updateCheck.status === 'checking' ? t('settings.checking') : t('settings.checkForUpdates')}
-                  </button>
-                  {updateCheck.status === 'up-to-date' ? (
-                    <span className="text-xs text-zinc-600 dark:text-zinc-400">{t('settings.upToDate').replace('{version}', updateCheck.version)}</span>
-                  ) : null}
-                  {updateCheck.status === 'available' ? (
-                    <span className="text-xs text-sky-700 dark:text-sky-300">
-                      {t('settings.newVersionAvailable').replace('{version}', updateCheck.tagName)} {'->'}{' '}
-                      <DownloadPageLink key={updateCheck.htmlUrl} url={updateCheck.htmlUrl} />
-                    </span>
-                  ) : null}
-                  {updateCheck.status === 'unavailable' ? (
-                    <span className="text-xs text-amber-700 dark:text-amber-300">{t('settings.releasesUnavailable')}</span>
-                  ) : null}
-                  {updateCheck.status === 'error' ? (
-                    <span className="text-xs text-red-700 dark:text-red-300">{t('settings.updateCheckFailed')} {updateCheck.message}</span>
-                  ) : null}
-                </div>
+                <SettingsUpdateRow
+                  state={updateCheck}
+                  onCheck={() => void checkForUpdates()}
+                  labels={{
+                    checkForUpdates: t('settings.checkForUpdates'),
+                    checking: t('settings.checking'),
+                    upToDate: t('settings.upToDate'),
+                    newVersionAvailable: t('settings.newVersionAvailable'),
+                    releasesUnavailable: t('settings.releasesUnavailable'),
+                    updateCheckFailed: t('settings.updateCheckFailed'),
+                  }}
+                  downloadLink={updateCheck.status === 'available' ? <DownloadPageLink key={updateCheck.htmlUrl} url={updateCheck.htmlUrl} /> : null}
+                />
               </section>
             ) : null}
 
