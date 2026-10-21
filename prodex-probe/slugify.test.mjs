@@ -16,6 +16,12 @@ test('preserves combining marks inside Unicode words after NFC normalization', (
   assert.equal(slugify('re\u0301sume\u0301'), 'résumé');
 });
 
+test('treats isolated combining marks as separators', () => {
+  assert.equal(slugify('\u0301'), 'untitled');
+  assert.equal(slugify('-\u0301-'), 'untitled');
+  assert.equal(slugify('alpha-\u0301-beta'), 'alpha-beta');
+});
+
 test('never leaves a leading or trailing hyphen', () => {
   assert.equal(slugify('--- Hello ---'), 'hello');
 });
