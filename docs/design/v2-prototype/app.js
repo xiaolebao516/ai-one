@@ -1,5 +1,9 @@
 /* ai-one v2 交互原型。纯静态 HTML/CSS/JS，不是正式 React 组件；所有数据来自 data.js 的模拟数据。 */
+/* 经典 <script>：界面里的 onclick 直接调用本文件的函数，文件末尾统一挂到 window。 */
+/* global window, document, location, setTimeout, clearTimeout, structuredClone, URLSearchParams */
 'use strict';
+
+const { IMPL_LABEL, RES_SEED, BRIDGE, STAGE_LIB, FLOW_LIB, TASK_SEED, GRILL_SCRIPT, CHAT_SEED, DETAIL } = window.AIONE_DATA;
 
 /* ================= 基础 ================= */
 const I = {
@@ -67,13 +71,13 @@ const REPOS = ['ai-one', 'notes-sync', 'home-lab'];
 
 /* 每个任务中参与者的角色与当前状态（模拟） */
 const ROLE = {
-  t42: { gpt: ['调度 · 审计', '等 Codex 返工后复审'], argon: ['想需求', '已完成'], codex: ['执行', '返工中 · 03:12'] },
-  t39: { gpt: ['汇总 · 审计', '已完成'], argon: ['想需求 · 定方案', '已完成'], opus: ['把关 · 终审', '终审通过'], codex: ['执行', '已完成'] },
-  t12: { gpt: ['讨论', '第 2 轮已发言'], argon: ['讨论', '登录失效'], opus: ['把关', '第 2 轮已发言'] },
-  t7: { opus: ['设计 · 终审', '等待终审'], gpt: ['拆分 · 执行③ · 审计①②', '③ 已完成'], codex: ['执行①', '开发中 · 05:40'], cc: ['执行②', '开发中 · 12:03'] },
-  t45: { gpt: ['调度 · 审计', '等你决定'], codex: ['执行', '已暂停返工'] },
-  t15: { gpt: ['调度 · 执行', '你在接管'] },
-  t36: { gpt: ['调度 · 执行', '已完成'], argon: ['审计', '已完成'] },
+  t42: { cc: ['协调 · 本机验证', '等返工结果'], gpt: ['执行（会话 A）· 审计（会话 B）', '执行会话返工中 · 03:12'], argon: ['想需求', '已完成'] },
+  t39: { cc: ['协调 · 验证 · 汇总', '等你验收'], gpt: ['执行 · 独立审计', '审计 PASS'], argon: ['想需求 · 定方案', '已完成'], opus: ['终审', '终审 PASS'] },
+  t12: { gpt: ['讨论', '第 2 轮已发言'], argon: ['讨论', '登录失效'], cc: ['把关', '第 2 轮已发言'] },
+  t7: { cc: ['设计 · 拆分 · 执行②', '开发中 · 12:03'], gpt: ['执行③ · 审计①②', '③ 已完成'], codex: ['执行① · 审计③', '开发中 · 05:40'], opus: ['终审', '等待终审'] },
+  t45: { cc: ['协调 · 执行', '已暂停返工'], gpt: ['独立审计（会话 B）', '等你决定'] },
+  t15: { cc: ['协调', '等你交还'], gpt: ['执行', '你在接管'] },
+  t36: { cc: ['协调', '已完成'], gpt: ['执行 · 独立审计', '已完成'] },
   d1: { gpt: ['讨论', '已完成'], argon: ['讨论', '已完成'] },
 };
 
@@ -121,7 +125,7 @@ function quota(r, big = false) {
   const q = r.quota;
   const lv = q.level === 'warn' ? 'warn' : q.level === 'bad' ? 'bad' : q.level === 'none' ? 'none' : '';
   const typ = { known: '已知', hint: '网页提示', estimate: '估算', unknown: '未知' }[q.type];
-  let vis = '';
+  let vis;
   if (q.type === 'known') vis = `<span class="qbar"><b style="width:${q.pct}%"></b></span>`;
   else if (q.type === 'estimate') vis = `<span class="qbar est"><b style="width:${q.pct}%"></b></span>`;
   else if (q.type === 'unknown') vis = '<span class="qbar unk"></span>';
@@ -153,7 +157,7 @@ function titlebar() {
       <button onclick="go('home')" title="需要你处理的事" class="you"><span class="dot" style="background:#F6C46E"></span><span class="n">${nNeed}</span><span class="lbl">需要你</span></button>
     </div>
     <span class="sp"></span>
-    <button class="hudbtn" onclick="toggle('hud')" title="资源与额度（HUD）">${['gpt', 'argon', 'opus', 'codex', 'cc'].map(resDot).join('')}</button>
+    <button class="hudbtn" onclick="toggle('hud')" title="资源与额度（HUD）">${['cc', 'gpt', 'argon', 'opus', 'codex'].map(resDot).join('')}</button>
     <div class="winctl"><span>${ico('min', 's')}</span><span>${ico('max', 's')}</span><span>${ico('x', 's')}</span></div>
   </div>`;
 }
@@ -192,13 +196,13 @@ function composer() {
   const modes = [
     ['chat', '聊天', ''],
     ['stage', st.name, st.cmd],
-    ['lead', '交给 GPT 调度', '/lead'],
+    ['lead', '交给 CC', '/lead'],
     ['flow', '流程：' + FLOW_LIB.find((f) => f.id === c.flow).name, ''],
   ];
   const ph = {
     chat: '直接问点什么，同时发给选中的 AI，回答并排比较…',
     stage: c.stage === 'grill' ? '说一个想法或问题。GPT 和 Argon 会先各自思考，再交换意见，最后给你一份汇总…' : `描述要${st.name}的内容…`,
-    lead: '描述要做的事。GPT 会自己调查、决定交给谁、何时审计和返工，只在需要你时停下…',
+    lead: '描述要做的事。CC 会自己调查、经 Prodex 派 GPT 执行或审计、安排返工复审，只在需要你时停下…',
     flow: '描述需求，按所选流程从头推进…',
   }[c.mode];
   const team = teamFor(c);
@@ -232,7 +236,7 @@ function teamFor(c) {
     const extra = c.stage === 'grill' ? ' · Opus 审计（可选）' : '';
     return { ids: c.stage === 'grill' ? [...ids, 'opus'] : ids, text: ids.map((i) => R[i].name).join(' + ') + ' ' + STAGE[c.stage].pattern + extra, cost: '订阅内资源 · 约 6–10 分钟' };
   }
-  if (c.mode === 'lead') return { ids: ['gpt', 'argon', 'opus', 'codex', 'cc'], text: 'GPT 调度，可委派 Argon、Opus、Codex、Claude Code', cost: '优先便宜资源，Opus 只在必要时使用', lead: true };
+  if (c.mode === 'lead') return { ids: ['cc', 'gpt', 'argon', 'opus'], text: 'CC 协调，经 Prodex 派 GPT 执行或独立审计，需要时请 Argon、Opus', cost: '优先用有余量的 ChatGPT，Opus 网页只在必要时', lead: true };
   const f = FLOW_LIB.find((x) => x.id === c.flow);
   const ids = sub([...new Set(f.stages.flatMap((s) => s.team.map((m) => m[0])))]);
   return { ids, text: f.stages.map((s) => STAGE[s.s].name).join(' → '), cost: `${f.stages.length} 个阶段` };
@@ -241,7 +245,7 @@ function preflight(team) {
   const bad = team.ids.filter((id) => R[id].login !== 'ok');
   if (!bad.length) return { html: `<span class="faint" style="margin-left:auto;display:inline-flex;align-items:center;gap:5px">${ico('check', 'xs')}参与者均已就绪</span>` };
   const id = bad[0];
-  if (team.lead) return { html: `<span class="warn" style="margin-left:auto">${ico('alert', 's')}${R[id].name} 登录失效，调度时不会派给它</span><button class="lnk" onclick="relogin('${id}')">重新登录</button>` };
+  if (team.lead) return { html: `<span class="warn" style="margin-left:auto">${ico('alert', 's')}${R[id].name} 登录失效，CC 派工时会避开它并告诉你</span><button class="lnk" onclick="relogin('${id}')">重新登录</button>` };
   return {
     block: true,
     html: `<span class="warn" style="margin-left:auto">${ico('alert', 's')}${R[id].name} 登录已失效</span><button class="btn s" onclick="relogin('${id}')">打开网页登录</button><button class="btn s ghost" onclick="setComp('sub','opus')">本次用 Opus 代替</button>`,
@@ -250,7 +254,7 @@ function preflight(team) {
 function slashMenu() {
   const q = S.comp.text.slice(1).toLowerCase();
   const items = [...STAGE_LIB.map((s) => [s.cmd, s.name, s.desc.slice(0, 18) + '…', `setComp('stage','${s.id}')`]),
-    ['/lead', '交给 GPT 调度', '由它决定下一步', "setComp('mode','lead')"],
+    ['/lead', '交给 CC 协调', 'CC 经 Prodex 派工', "setComp('mode','lead')"],
     ['/chat', '聊天', '直接对话，不启动流程', "setComp('mode','chat')"]].filter((i) => i[0].includes(q) || i[1].includes(q));
   if (!items.length) return '';
   return `<div class="slash">${items.map((i, n) => `<button class="it ${n === 0 ? 'on' : ''}" onclick="${i[3]};S.comp.text='';S.slash=false;render()"><span class="mono">${i[0]}</span>${i[1]}<span class="d">${i[2]}</span></button>`).join('')}</div>`;
@@ -313,7 +317,7 @@ function home() {
         <div class="card rescard"${impl('plan', '额度')}>${Object.keys(R).map((id) => resRow(id)).join('')}</div>
         <div class="sec-h"><h3>已自动处理</h3><span class="cnt">今天 · 没有打扰你</span></div>
         <div class="card" style="padding:6px 14px"${impl('plan')}>
-          ${[['rework', 'ai-one #42 审计未通过，已打回 Codex 返工', '10:36'], ['check', 'home-lab #7 子任务 ③ 完成，进入审计队列', '09:58'], ['handoff', 'ai-one #39 GPT 会话过长，已交接到新会话', '09:31'], ['refresh', 'Codex 测试偶发超时，自动重试 1 次后通过', '09:12']]
+          ${[['rework', 'ai-one #42 独立审计 REVISE，CC 已派回 GPT 执行会话返工', '10:36'], ['refresh', 'Prodex 一次请求超时、结果不明：CC 用 request_id 恢复了回复，没有重复派工', '10:19'], ['check', 'home-lab #7 子任务 ③ 完成，进入交叉审计', '09:58'], ['handoff', 'ai-one #39 GPT 会话过长，已交接到新会话', '09:31']]
             .map(([i, tx, tm]) => `<div style="display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px" class="ar">${ico(i === 'refresh' ? 'rework' : i, 's')}<span style="flex:1;color:var(--ink-2)">${tx}</span><span class="faint">${tm}</span></div>`).join('').replace('border-top:1px solid var(--line);', '')}
         </div>
       </div>
@@ -365,7 +369,7 @@ function taskView(t) {
         <div class="ws-body">
           ${nowCard(t)}
           ${needBlock(t)}
-          ${disc ? discBody(t) : t.stages.map((s) => stageSection(t, s)).join('') + (t.lead === 'gpt' && !['done', 'accept'].includes(t.state) ? `<div class="stsec"><div class="stsec-h" style="cursor:default"><span class="sg idle"></span><span class="faint">之后的阶段由 GPT 根据结果决定</span></div></div>` : '')}
+          ${disc ? discBody(t) : t.stages.map((s) => stageSection(t, s)).join('') + (t.lead === 'cc' && !['done', 'accept'].includes(t.state) ? `<div class="stsec"><div class="stsec-h" style="cursor:default"><span class="sg idle"></span><span class="faint">之后的阶段由 CC 根据结果决定</span></div></div>` : '')}
         </div>
       </div>
       ${t.state !== 'done' || disc ? dockComposer(t) : ''}
@@ -379,19 +383,19 @@ function taskMenu(t) {
     ${members.map((id) => `<button onclick="S.menu=null;openWeb('${id}')">${av(id, 's')}${R[id].kind === 'agent' ? '查看' : '查看 / 接管'} ${R[id].name}${R[id].kind === 'agent' ? ' 终端' : ' 网页'}</button>`).join('')}
     <hr>
     <button onclick="handoff('${t.id}')">${ico('handoff', 's')}交接到新会话<span class="d">会话过长时</span></button>
-    <button onclick="S.menu=null;toast('（模拟）调度者改为 Opus：GPT 生成交接简报后移交')">${ico('users', 's')}更换调度者…</button>
+    <button onclick="S.menu=null;toast('（模拟）用 Prodex 的 request_id 恢复超时请求，不重复派工')">${ico('rework', 's')}恢复派工结果<span class="d">Prodex</span></button>
     <button onclick="S.menu=null;toast('（模拟）导出本任务的 Markdown 报告')">${ico('doc', 's')}导出报告</button>
     <hr>
     <button onclick="stopTask('${t.id}')" style="color:var(--block)">${ico('x', 's')}停止任务</button>
   </div>`;
 }
 function rail(t) {
-  const lead = t.lead === 'gpt' ? `<div class="lead">${av('gpt', 's')}<span><b>GPT</b> 调度</span></div>` : `<div class="lead">${ico('flow', 's')}<span><b>${FLOW_LIB.find((f) => f.id === t.flow)?.name || '流程'}</b></span></div>`;
+  const lead = t.lead === 'cc' ? `<div class="lead">${av('cc', 's')}<span><b>CC</b> 协调<br><span class="faint">经 Prodex 派工</span></span></div>` : `<div class="lead">${ico('flow', 's')}<span><b>${FLOW_LIB.find((f) => f.id === t.flow)?.name || '流程'}</b><br><span class="faint">CC 协调</span></span></div>`;
   return `<div class="rail">${lead}${t.stages.map((s) => {
     const cls = s.st === 'active' ? `active ${t.state === 'rework' ? 'rework' : ''}` : s.st;
-    const ds = s.st === 'skip' ? '已跳过' : s.st === 'todo' ? (t.lead === 'gpt' ? '预计' : '未开始') : s.st === 'done' ? (s.dur || '完成') : s.round ? (/^[\d/]+$/.test(s.round) ? '第 ' + s.round + ' 轮' : s.round) : STATE[t.state]?.[0];
+    const ds = s.st === 'skip' ? '已跳过' : s.st === 'todo' ? (t.lead === 'cc' ? '预计' : '未开始') : s.st === 'done' ? (s.dur || '完成') : s.round ? (/^[\d/]+$/.test(s.round) ? '第 ' + s.round + ' 轮' : s.round) : STATE[t.state]?.[0];
     return `<button class="st ${cls} ${S.open[t.id + s.id] ? 'sel' : ''}" onclick="openStage('${t.id}','${s.id}')"><div class="bar"></div><div class="nm">${STAGE[s.id].name}${s.team.length ? avs(s.team) : ''}</div><div class="ds">${s.st === 'done' ? ico('check', 'xs') : ''}${esc(ds)}</div></button>`;
-  }).join('')}${t.lead === 'gpt' && t.dyn ? '<button class="st dyn todo"><div class="bar"></div><div class="nm">…</div><div class="ds">由 GPT 决定</div></button>' : ''}</div>`;
+  }).join('')}${t.lead === 'cc' && t.dyn ? '<button class="st dyn todo"><div class="bar"></div><div class="nm">…</div><div class="ds">由 CC 决定</div></button>' : ''}</div>`;
 }
 function nowCard(t) {
   return `<div class="now"><span class="ring ${t.state}">${ico(STATE[t.state][1], 'l')}</span>
@@ -406,7 +410,7 @@ function needBlock(t) {
     <div class="h">${ico(block ? 'lock' : 'flag', 's')}${esc(n.title)}</div>
     ${n.desc ? `<div class="d">${esc(n.desc)}</div>` : ''}
     ${n.sides ? `<div class="sides">${n.sides.map(([id, who, tx]) => `<div class="side-op"><div class="who">${av(id, 's')}${who}</div><div>${esc(tx)}</div></div>`).join('')}</div>` : ''}
-    ${S.writing === t.id ? `<textarea data-k="write" placeholder="写下你的决定，会同时发给 GPT 与 Codex，作为后续返工的依据…"></textarea>` : ''}
+    ${S.writing === t.id ? `<textarea data-k="write" placeholder="写下你的决定，CC 会把它同时交给执行方和审计会话，作为后续返工的依据…"></textarea>` : ''}
     <div class="acts">${S.writing === t.id
       ? `<button class="btn s you" onclick="needAct('${t.id}','writeok')">发送决定并继续</button><button class="btn s ghost" onclick="S.writing=null;render()">取消</button>`
       : n.actions.map(([k, l, a], i) => `<button class="btn s ${k === 'primary' ? 'you' : k}" onclick="needAct('${t.id}','${a}',${i})">${esc(l)}</button>`).join('')}
@@ -452,7 +456,7 @@ function stageSection(t, s) {
   </div>`;
 }
 function evRow(t, e) {
-  const tag = { decide: '调度决定', fail: '审计未通过', result: '结果', block: '阻塞', you: '你', sys: '自动' }[e.k] || '';
+  const tag = { decide: '协调决定', fail: '审计未通过', result: '结果', block: '阻塞', you: '你', sys: '自动' }[e.k] || '';
   let who;
   if (e.k === 'you') who = `<span class="ico you">${ico('hand', 'xs')}</span>`;
   else if (e.k === 'sys') who = `<span class="ico">${ico('rework', 'xs')}</span>`;
@@ -526,7 +530,7 @@ function discBody(t) {
 }
 function dockComposer(t) {
   const disc = t.kind === 'discussion';
-  const to = disc ? 'GPT 和 Argon' : t.lead === 'gpt' ? 'GPT（调度）' : '当前阶段的参与者';
+  const to = disc ? 'GPT 和 Argon' : 'CC（协调）';
   return `<div class="composer dock"${impl('plan', '插话 · 打断')}>
     <textarea data-k="dock" rows="1" placeholder="对 ${to} 说…  插话会在下一步生效" oninput="S.dock=this.value" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();sendDock('${t.id}',false)}">${esc(S.dock)}</textarea>
     <div class="crow" style="margin-top:2px"><button class="sel">${ico('send', 's')}发给：${to}${ico('chevd', 'xs')}</button><span class="sp"></span>
@@ -554,7 +558,8 @@ function facts(t) {
         return `<div class="member" onclick="openWeb('${id}')">${av(id, 'l')}<div class="nm">${R[id].name}<span class="rl">${esc(role)}</span></div><div class="stt"><span class="sg ${sc}" style="width:10px;height:10px"></span>${esc(st)}</div></div>`;
       }).join('')}
     </div>
-    ${t.lead === 'gpt' ? `<div class="fsec"><h5>调度简报<span class="sp"></span><button class="lnk" style="font-weight:400" onclick="S.flow.sel='lead';go('flows')">编辑</button></h5><div class="brief">“${esc(FLOW_LIB[0].brief)}”</div></div>` : ''}
+    ${t.repo ? `<div class="fsec impl-in"${impl('ext', 'ai-one 内接线规划')}><h5>派工通道</h5><div class="frow">${ico('fwd', 's')}<span class="k">${BRIDGE.name} → ChatGPT</span><span class="chip ok">${ico('check', 'xs')}可用</span></div><div class="faint" style="font-size:11.5px">执行会话 A · 审计会话 B · request_id 保存在本机，超时先恢复再决定是否重发</div></div>` : ''}
+    ${t.lead === 'cc' ? `<div class="fsec"><h5>协调简报<span class="sp"></span><button class="lnk" style="font-weight:400" onclick="S.flow.sel='lead';go('flows')">编辑</button></h5><div class="brief">“${esc(FLOW_LIB[0].brief)}”</div></div>` : ''}
     ${t.rules?.length ? `<div class="fsec"><h5>规则</h5><ul class="rules">${t.rules.map((r) => `<li>${esc(r)}</li>`).join('')}</ul></div>` : ''}
     <div class="fsec"><h5>消耗<span class="sp"></span><span class="qtype">估算</span></h5><div class="faint" style="font-size:12px">${members.map((id) => `${R[id].name} ${R[id].kind === 'agent' ? Math.round(id.length * 4.5) + ' 分钟' : id.length * 3 + ' 条'}`).join(' · ')}</div></div>
   </aside>`;
@@ -576,15 +581,18 @@ function webView(t) {
   if (r.login === 'expired') page = `<div class="wp login"><div class="bx"><div style="font-size:20px;font-weight:600;margin-bottom:6px">登录 Google</div><div style="color:#777;margin-bottom:18px">（这里是 Gemini 的原生登录页，由你自己完成）</div><button class="btn primary" onclick="relogin('${id}')">模拟：我已完成登录</button></div></div>`;
   else if (agent) page = `<div class="wp" style="font-family:var(--mono);font-size:12.5px;line-height:1.75;max-width:none;padding:24px 28px;background:#0F0F0E;color:#D6D3CB;min-height:100%">
       <div style="color:#8D8A82">D:\\wt\\${t?.repo || 'ai-one'}-${t?.issue || 42} (feat/${t?.issue || 42}-home-needs-you)</div>
-      <div>$ ${id === 'codex' ? 'codex' : 'claude'} --resume ai-one:${t?.issue || 42}</div>
-      <div style="color:#78A6FF">● 读取审计意见：2 个问题</div>
-      <div>· NeedsYouSection.tsx:41 — 空数组时不再回退为 1</div>
-      <div>· 新增 needsYou.repoFilter.test.tsx</div>
-      <div>$ pnpm vitest run src/home</div>
-      <div style="color:#62D196">✓ 114 passed (2 new)</div>
-      <div style="color:#8D8A82">正在提交… ▍</div></div>`;
-  else page = `<div class="wp"><div class="u">【ai-one 转发 · 来自 Codex】请审计提交 a1c93e0（ai-one #42）。只看真实 Diff，给出 PASS / REVISE 与证据。</div>
-      <div class="a">REVISE。\n\n1. NeedsYouSection.tsx 第 41 行：items 为空时 count 取了 fallback 1，空列表会显示“1 件事等你”。\n2. 按仓库筛选没有测试覆盖。\n\n其余实现与现有组件风格一致。修正后请推送新提交，我会针对新 HEAD 复审。</div>
+      ${id === 'cc' ? `<div style="color:#78A6FF">● CC：审计会话返回 REVISE（2 个问题），转给执行会话 A</div>
+      <div>$ prodex ask --continue-task &lt;执行会话&gt; "按审计意见返工，推送后报告完整 HEAD"</div>
+      <div style="color:#8D8A82">  request_id 已保存 · 等待回复…</div>
+      <div>$ gh pr view 43 --json headRefOid</div>
+      <div style="color:#8D8A82">  （推送后 CC 回读 HEAD，再本机运行 pnpm verify）</div>`
+        : `<div>$ codex --resume ${t?.repo || 'ai-one'}:${t?.issue || 42}</div>
+      <div style="color:#78A6FF">● 实现子任务 ①</div>
+      <div>$ pnpm vitest run</div>
+      <div style="color:#62D196">✓ 38 passed</div>`}
+      <div style="color:#8D8A82">▍</div></div>`;
+  else page = `<div class="wp"><div class="u">【经 Prodex · CC 派工】你是 ai-one#42 的 Reviewer（独立会话，不带执行上下文）。先读 Issue 验收、PR #43 当前 Diff 与 HEAD a1c93e0、CI，给出 PASS / REVISE / BLOCKED 与证据；评论以所审完整 HEAD 开头。</div>
+      <div class="a">REVISE。\n\n1. NeedsYouSection.tsx 第 41 行：items 为空时 count 取了 fallback 1，空列表会显示“1 件事等你”。\n2. 按仓库筛选没有测试覆盖。\n\n其余实现与现有组件风格一致。修正后请推送新提交，我会针对新 HEAD 重新审查，不沿用本次结论。</div>
       <div class="inp">${take ? '你可以在这里直接输入…' : '询问任何问题'}</div></div>`;
   return `<div class="ws-main" style="flex:1">${bar}<div class="webpage">${page}<span class="layer">模拟 · 原生 WebView 图层，ai-one 不在网页上覆盖任何控件</span></div></div>`;
 }
@@ -664,10 +672,10 @@ function flowsView() {
   return `<div class="flows">
     <div class="flist">
       <div class="sidesec" style="margin-top:2px">流程</div>
-      ${FLOW_LIB.map((f) => `<button class="fitem ${sel === f.id ? 'on' : ''}" onclick="S.flow.sel='${f.id}';S.flow.pop=null;render()">${ico(f.kind === 'conductor' ? 'users' : 'flow', 's')}<span class="nm">${f.name}</span><span class="mt">${f.uses} 次</span></button>`).join('')}
+      ${FLOW_LIB.map((f) => `<button class="fitem ${sel === f.id ? 'on' : ''}" style="${f.future ? 'opacity:.6' : ''}" onclick="S.flow.sel='${f.id}';S.flow.pop=null;render()">${ico(f.kind === 'conductor' ? 'users' : 'flow', 's')}<span class="nm">${f.name}</span><span class="mt">${f.future ? '远期' : f.uses + ' 次'}</span></button>`).join('')}
       <div class="sidesec">阶段</div>
       ${STAGE_LIB.map((s) => `<button class="fitem ${sel === s.id ? 'on' : ''}" onclick="S.flow.sel='${s.id}';S.flow.pop=null;render()">${ico('spark', 's')}<span class="nm">${s.name}</span><span class="mt mono">${s.cmd}</span></button>`).join('')}
-      <div class="hint" style="margin:14px 4px 0;font-size:12px">${ico('layers', 's')}<span>阶段是可复用的工作单元；流程是阶段的有序组合；调度是让一个 AI 动态挑选阶段。</span></div>
+      <div class="hint" style="margin:14px 4px 0;font-size:12px">${ico('layers', 's')}<span>阶段是可复用的工作单元；流程是阶段的有序组合；协调是让 CC 根据结果动态挑选阶段。三种方式都由 CC 经 Prodex 派工。</span></div>
     </div>
     <div class="fedit scroll" data-k="flow">${flow ? (flow.kind === 'conductor' ? conductorEditor(flow) : flowEditor(flow)) : stageEditor(stage)}</div>
   </div>`;
@@ -677,7 +685,7 @@ function flowEditor(f) {
   return `<div class="impl-left"${impl('plan', '阶段组合')}>
     <div class="fhead"><div style="flex:1"><h2>${f.name}</h2><div class="muted" style="margin-top:4px">${f.desc}</div></div>
       <button class="btn" onclick="toast('（模拟）已另存为新流程')">另存为…</button><button class="btn primary" onclick="S.comp.mode='flow';S.comp.flow='${f.id}';go('home')">${ico('play', 's')}用它开始</button></div>
-    <div class="crow" style="margin-top:14px"><span class="faint">推进方式</span><div class="seg"><button class="on">按顺序推进</button><button onclick="S.flow.sel='lead';render()">交给调度 AI</button></div>
+    <div class="crow" style="margin-top:14px"><span class="faint">推进方式</span><div class="seg"><button class="on">按顺序推进</button><button onclick="S.flow.sel='lead';render()">交给 CC 动态决定</button></div>
       <span class="toggle on"><i></i>合并前需要我验收（始终开启）</span></div>
     <div class="stagecards">${f.stages.map((s, i) => stageCard(f, s, i)).join('')}</div>
     <div style="margin:14px 0 0 34px;display:flex;gap:8px;flex-wrap:wrap">
@@ -695,7 +703,7 @@ function stageCard(f, s, i) {
     <div class="scb">
       <span class="k">参与者</span><div class="memwrap" style="position:relative">${s.team.map((m, j) => `<button class="mem" onclick="S.flow.pop=S.flow.pop==='${i}:${j}'?null:'${i}:${j}';render()">${av(m[0], 's')}${R[m[0]].name}<span class="rl">${m[1]}</span><span class="dp">${m[2]}</span></button>`).join('')}<button class="mem add" onclick="toast('（模拟）添加参与者：任何网页 AI 或本地 Agent')">${ico('plus', 's')}</button>${S.flow.pop?.startsWith(i + ':') ? memPop(s.team[+S.flow.pop.split(':')[1]]) : ''}</div>
       <span class="k">结束条件</span><div>${esc(s.exit)}${s.fail ? ` <span class="faint">· 超限时：${esc(s.fail)}</span>` : ''}</div>
-      <span class="k">选项</span><div style="display:flex;gap:16px;flex-wrap:wrap"><span class="toggle ${s.skip ? 'on' : ''}"><i></i>调度可跳过</span><span class="toggle ${s.confirm ? 'on' : ''}"><i></i>完成后先给我看</span></div>
+      <span class="k">选项</span><div style="display:flex;gap:16px;flex-wrap:wrap"><span class="toggle ${s.skip ? 'on' : ''}"><i></i>CC 可跳过</span><span class="toggle ${s.confirm ? 'on' : ''}"><i></i>完成后先给我看</span></div>
     </div>
   </div>`;
 }
@@ -711,21 +719,33 @@ function memPop(m) {
   </div>`;
 }
 function conductorEditor(f) {
+  if (f.future) {
+    return `<div class="impl-left"${impl('plan', '远期可选')}>
+    <div class="fhead"><div style="flex:1"><h2>${f.name} <span class="pill ghost">远期 · 未启用</span></h2><div class="muted" style="margin-top:4px">${f.desc}</div></div></div>
+    <div class="hint">${ico('alert', 's')}<span>当前产品方向（Spec #32 v1）：近期由 CC 担任唯一实际使用的协调者，不另造默认调度 Agent。网页 AI 担任协调者需要 Chat → ai-one → 本地 CC/Agent 的反向派工，排在 CC + Prodex 闭环做好之后。</span></div>
+    <div style="margin-top:14px"><button class="btn" onclick="S.flow.sel='lead';render()">${ico('arrow', 's')}查看当前的 CC 协调设置</button></div>
+  </div>`;
+  }
   const brief = S.flow.brief ?? f.brief;
-  return `<div class="impl-left"${impl('plan', '调度')}>
+  return `<div class="impl-left"${impl('ext', '链路在工作台外已验证，界面为规划')}>
     <div class="fhead"><div style="flex:1"><h2>${f.name}</h2><div class="muted" style="margin-top:4px">${f.desc}</div></div>
       <button class="btn primary" onclick="S.comp.mode='lead';go('home')">${ico('play', 's')}用它开始</button></div>
-    <div class="sec-h"><h3>调度者</h3></div>
-    <div class="memwrap"><button class="mem">${av('gpt', 's')}GPT<span class="rl">调度</span><span class="dp">Thinking · 标准</span></button><span class="faint" style="align-self:center;font-size:12px">可换成任何网页 AI；额度不足时会建议交接给其他调度者</span></div>
-    <div class="sec-h"><h3>调度简报</h3><span class="cnt">你的原话，会作为调度者的长期指令</span></div>
-    <textarea style="width:100%;min-height:86px;border:0;border-radius:12px;padding:12px 14px;background:var(--card);box-shadow:0 0 0 1px var(--line-2);outline:0;line-height:1.6" oninput="S.flow.brief=this.value">${esc(brief)}</textarea>
-    <div class="sec-h"><h3>可调度的资源</h3><span class="cnt">调度者能看到它们的状态、额度和你的标注</span></div>
-    <div class="memwrap">${['argon', 'opus', 'codex', 'cc', 'grok'].map((id) => `<button class="mem" style="${R[id].login !== 'ok' ? 'opacity:.55' : ''}">${av(id, 's')}${R[id].name}<span class="rl">${R[id].tags.slice(0, 2).join(' · ')}</span><span class="dp">${R[id].login === 'ok' ? R[id].cost : R[id].login === 'expired' ? '登录失效' : '未登录'}</span></button>`).join('')}</div>
-    <div class="sec-h"><h3>边界</h3><span class="cnt">调度者不能越过这些规则</span></div>
-    <div class="card" style="padding:6px 16px">
-      ${[['可以自行跳过或重复阶段', true], ['可以委派本地 Agent（在独立 worktree 中工作）', true], ['审计不通过自动返工，最多 3 轮；之后停下来问我', true], ['稀缺资源（Opus）只用于设计、把关、终审', true], ['合并 PR、关闭 Issue 只能由我确认', true, true], ['作者不能审计自己的提交', true, true]].map(([l, on, lock]) => `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)"><span style="flex:1">${l}</span>${lock ? `<span class="faint" style="font-size:12px;display:inline-flex;gap:4px;align-items:center">${ico('lock', 'xs')}固定</span>` : ''}<span class="toggle ${on ? 'on' : ''}"><i></i></span></div>`).join('').replace('border-top:1px solid var(--line)', '')}
+    <div class="sec-h"><h3>协调者</h3></div>
+    <div class="memwrap"><button class="mem">${av('cc', 's')}Claude Code<span class="rl">协调 · 架构 · 前端 · 收尾</span><span class="dp">Opus · 本机</span></button><span class="faint" style="align-self:center;font-size:12px">近期唯一实际使用的协调者（#32）。网页 AI 担任协调者是远期可选。</span></div>
+    <div class="sec-h"><h3>派工通道</h3><span class="cnt">${BRIDGE.desc}</span></div>
+    <div class="card" style="padding:12px 16px;display:grid;grid-template-columns:auto 1fr auto;gap:4px 12px;align-items:center">
+      <span class="av l" style="--c:#3B3A36">Px</span><div><b>${BRIDGE.name} → ChatGPT</b><div class="faint" style="font-size:12px">${BRIDGE.text} · ${BRIDGE.src}</div></div><span class="chip ok">${ico('check', 'xs')}可用</span>
+      <span></span><div style="grid-column:2/4;font-size:12.5px;color:var(--ink-2)"><span class="tag-i done" style="margin-right:6px">外部已验证</span>${BRIDGE.proof}<br><span class="tag-i plan" style="margin-right:6px">规划</span>${BRIDGE.gap}</div>
     </div>
-    <div class="hint">${ico('spark', 's')}<span>调度者通过 ai-one 注入的协作协议发出“委派单”。ai-one 负责转发、收回结果、回读 GitHub 状态并记录证据；调度者看不到的东西（真实 CI、真实 HEAD）以 ai-one 回读为准。</span></div>
+    <div class="sec-h"><h3>协调简报</h3><span class="cnt">你的原话，CC 每次派工都会遵守</span></div>
+    <textarea style="width:100%;min-height:86px;border:0;border-radius:12px;padding:12px 14px;background:var(--card);box-shadow:0 0 0 1px var(--line-2);outline:0;line-height:1.6" oninput="S.flow.brief=this.value">${esc(brief)}</textarea>
+    <div class="sec-h"><h3>可派工的资源</h3><span class="cnt">CC 能看到它们的状态、额度和你的标注</span></div>
+    <div class="memwrap">${['gpt', 'argon', 'opus', 'codex', 'grok'].map((id) => `<button class="mem" style="${R[id].login !== 'ok' ? 'opacity:.55' : ''}">${av(id, 's')}${R[id].name}<span class="rl">${R[id].tags.slice(0, 2).join(' · ')}</span><span class="dp">${R[id].login === 'ok' ? R[id].cost : R[id].login === 'expired' ? '登录失效' : '未登录'}</span></button>`).join('')}</div>
+    <div class="sec-h"><h3>边界</h3><span class="cnt">CC 不能越过这些规则</span></div>
+    <div class="card" style="padding:6px 16px">
+      ${[['可以自行跳过或重复阶段', true], ['执行和审计使用不同会话，审计会话不带执行上下文', true], ['审计不通过自动返工，最多 3 轮；之后停下来问我', true], ['稀缺资源（Opus 网页）只用于把关、终审、裁决', true], ['Prodex 请求结果不明时先用 request_id 恢复，不重复派工或重复写 GitHub', true, true], ['审计结论必须针对当前完整 HEAD，HEAD 变了就重审', true, true], ['合并 PR、关闭 Issue 只能由我确认', true, true]].map(([l, on, lock]) => `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)"><span style="flex:1">${l}</span>${lock ? `<span class="faint" style="font-size:12px;display:inline-flex;gap:4px;align-items:center">${ico('lock', 'xs')}固定</span>` : ''}<span class="toggle ${on ? 'on' : ''}"><i></i></span></div>`).join('').replace('border-top:1px solid var(--line)', '')}
+    </div>
+    <div class="hint">${ico('spark', 's')}<span>CC 按《协作协议 v0.2》模板 B 拼出派工首条消息，经 Prodex 发给 ChatGPT。ai-one 要做的是把这条已经在用的链路<b>看得见</b>：派工回执、会话、GitHub 回读的 HEAD / CI / 审查、CC 的本机验证、需要你的事。程序自动解析 REVISE 并派工是之后的事。</span></div>
   </div>`;
 }
 function stageEditor(s) {
@@ -763,11 +783,18 @@ function resView() {
       <div><b><span class="qbar est" style="width:40px"><b style="width:60%"></b></span>估算</b>按使用量推算，带“~”，可能不准</div>
       <div><b><span class="qbar unk" style="width:40px"></span>未知</b>没有任何可靠来源</div>
     </div>
+    <div class="sec-h"${impl('plan')}><h3>协调者与本地 Agent</h3><span class="cnt">在本机运行，由你授权；CC 是近期唯一的协调者</span></div>
+    <div class="rgrid">${['cc', 'codex'].map(card).join('')}</div>
+    <div class="sec-h"${impl('ext', 'ai-one 内显示为规划')}><h3>派工通道</h3><span class="cnt">CC 经它给 ChatGPT 派工</span></div>
+    <div class="rcard"><span class="av xl" style="--c:#3B3A36">Px</span>
+      <div><div class="nm">${BRIDGE.name}<span class="pill done" style="height:20px;font-size:11px">可用</span></div><div class="pl">${BRIDGE.desc}</div></div>
+      <div class="qbig"><div class="t"><span class="qdot"></span>${BRIDGE.text}</div><div class="s">${BRIDGE.src}</div></div>
+      <div style="font-size:12px;color:var(--ink-2)">${BRIDGE.proof}<div class="faint" style="margin-top:4px">${BRIDGE.gap}</div></div>
+      <div><button class="btn s" onclick="toast('（模拟）运行 prodex pro browser check')">检查</button></div>
+    </div>
     <div class="sec-h"${impl('done', '登录与连接状态')}><h3>网页 Chat</h3><span class="cnt">在 ai-one 内的原生网页中登录，ai-one 不保存密码</span></div>
     <div class="rgrid">${['gpt', 'argon', 'opus', 'grok'].map(card).join('')}</div>
-    <div class="sec-h"${impl('plan')}><h3>本地 Agent</h3><span class="cnt">在独立 worktree 中运行，由你在本机授权</span></div>
-    <div class="rgrid">${['codex', 'cc'].map(card).join('')}</div>
-    <div class="sec-h"${impl('plan')}><h3>调度偏好</h3><span class="cnt">给调度者和流程的建议，不是写死的规则</span></div>
+    <div class="sec-h"${impl('plan')}><h3>派工偏好</h3><span class="cnt">给 CC 和流程的建议，不是写死的规则</span></div>
     <div class="card" style="padding:6px 16px">
       ${[['优先使用订阅内或免费的资源', true], ['某个 AI 接近上限时，自动改派并通知我', true], ['登录失效时，不自动换人，先问我', true], ['同时运行的本地 Agent 最多 2 个', true]].map(([l, on], i) => `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;${i ? 'border-top:1px solid var(--line)' : ''}"><span style="flex:1">${l}</span><span class="toggle ${on ? 'on' : ''}" onclick="this.classList.toggle('on')"><i></i></span></div>`).join('')}
     </div>
@@ -779,13 +806,22 @@ const DRAWER_TABS = [['sum', '摘要', 'doc'], ['disc', '讨论', 'users'], ['ra
 function drawer() {
   const d = S.drawer;
   const t = task(d.task);
-  const det = DETAIL[d.key] || { title: d.key === 'brief' ? '委派单 · GPT → Codex' : '详情', sum: [] };
-  let body = '';
+  const det = DETAIL[d.key] || { title: '详情', sum: [] };
+  let body;
   if (d.tab === 'sum') body = `<ul style="margin:0;padding-left:18px;line-height:1.9">${det.sum.map((s) => `<li>${esc(s)}</li>`).join('') || '<li>（无）</li>'}</ul>
       <div class="sec-h" style="margin-top:20px"><h3>证据</h3></div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="chip ok">${ico('check', 'xs')}提交 a1c93e0 · ai-one 已回读</span><span class="chip claim">测试 112/112 · Codex 自述</span><span class="chip">${ico('doc', 'xs')}Issue #${t.issue || '—'} 正文</span></div>`;
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="chip ok">${ico('check', 'xs')}提交 a1c93e0 · ai-one 已回读</span><span class="chip claim">“测试都通过了” · GPT 自述</span><span class="chip ok">${ico('check', 'xs')}pnpm verify · CC 本机运行</span><span class="chip">${ico('doc', 'xs')}Issue #${t.issue || '—'} 正文</span></div>`;
   else if (d.tab === 'disc') body = [['独立思考', [['gpt', 'GPT', '首页最上方放“需要你”，按紧急程度排序；进行中的任务一行一个。'], ['argon', 'Argon', '需要考虑空状态；多仓库时要能按仓库筛选；HUD 是否也要显示？']]], ['第 1 轮交换', [['gpt', 'GPT', '同意空状态与筛选。HUD 涉及多窗口，建议放下一版。'], ['argon', 'Argon', '同意延后 HUD，记录为下一版需求。']]]]
     .map(([h, ms]) => `<div class="round"><div class="rh2">${h}</div>${ms.map(([id, n, tx]) => `<div class="msg">${av(id, 's')}<div class="bd2"><div class="who2">${n}<span class="faint" style="font-weight:400">完整回复 1,2${id.length} 字 · 摘要</span><button class="lnk" style="margin-left:auto;font-weight:400" onclick="S.drawer.tab='raw';render()">原文</button></div>${esc(tx)}</div></div>`).join('')}</div>`).join('');
+  else if (d.tab === 'raw' && d.key === 'brief') body = `<div class="raw">【CC → Prodex → ChatGPT · 派工首条消息（协作协议 v0.2 模板 B）】
+你正在参与 ai-one 的 Issue 协作任务。执行本 Issue 的现有 AGENTS.md 及《协作协议 v0.2》；
+先核对 GitHub 的当前事实，不把旧 Handoff、聊天记忆或模型自述当成最新状态。
+只在授权范围内操作，不合并。当前任务：xiaolebao516/ai-one#42；本次角色：Executor。
+如已有工作，继续而非重做；若信息冲突，说明差异并暂停危险写操作。
+────────
+（六条核心规则 + 四项补充摘要，略）
+任务：按 #42 的验收实现，继续已有分支与 PR #43；完成后报告完整 HEAD 与实际验证。</div>
+      <div class="faint" style="font-size:12px;margin-top:10px">期望模型：Thinking · 标准；实际档位：UNVERIFIED。request_id 保存在本机，不写入 GitHub。</div>`;
   else if (d.tab === 'raw') body = `<div class="raw">【ai-one 转发包 · 第 1 轮 · 发给 Argon】
 任务：ai-one #42 总览页：一眼看到需要我处理的事
 你此前的独立结论已收到。以下是 GPT 的完整回复（未删改）：
@@ -796,7 +832,7 @@ function drawer() {
 请只回应你同意、反对或需要补充的点，并在结尾用协作标记写明立场。</div>
       <div class="faint" style="font-size:12px;margin-top:10px">原始记录只保存在本机，不写入 GitHub。<button class="lnk" onclick="toast('（模拟）切到网页并定位到这条回复')">在网页中定位</button></div>`;
   else if (d.tab === 'code') body = `<div class="diff"><div class="fh">src/home/NeedsYouSection.tsx</div><div>  export function NeedsYouSection({ items }: Props) {</div><div class="r">-   const count = items.length || 1;</div><div class="a hl">+   const count = items.length;</div><div>    if (count === 0) return &lt;QuietState /&gt;;</div><div class="fh">src/home/__tests__/needsYou.repoFilter.test.tsx</div><div class="a">+ it('filters by repo', () =&gt; { … })</div></div>`;
-  else body = [['ok', 'CI · pnpm verify', 'GitHub 回读 · 18/18'], ['ok', '组件测试 112/112', 'Codex 自述 · 待 CI 确认'], ['warn', '桌面端真机', '未运行']].map(([s, tx, src]) => `<div class="vrow" style="padding:8px 0;border-top:1px solid var(--line)"><span class="vic ${s}">${ico(s === 'ok' ? 'check' : 'alert', 'xs')}</span>${tx}<span class="src">${src}</span></div>`).join('');
+  else body = [['ok', 'CI · pnpm verify', 'GitHub 回读 · 18/18'], ['ok', 'pnpm verify 112/112', 'CC 本机运行'], ['warn', '“组件测试都通过了”', 'GPT 自述 · 不作为证据'], ['warn', '桌面端真机', '未运行']].map(([s, tx, src]) => `<div class="vrow" style="padding:8px 0;border-top:1px solid var(--line)"><span class="vic ${s}">${ico(s === 'ok' ? 'check' : 'alert', 'xs')}</span>${tx}<span class="src">${src}</span></div>`).join('');
   return `<div class="scrim" onclick="S.drawer=null;render()"></div><div class="drawer"${impl('plan', '逐层展开')}>
     <div class="dh">${ico('layers')}<h3>${esc(det.title)}</h3><button class="btn s icon ghost" onclick="S.drawer=null;render()">${ico('x', 's')}</button></div>
     <div class="tabs">${DRAWER_TABS.map(([k, l, i]) => `<button class="tab ${d.tab === k ? 'on' : ''}" onclick="S.drawer.tab='${k}';render()">${ico(i, 's')}${l}</button>`).join('')}</div>
@@ -806,7 +842,7 @@ function drawer() {
 function palette() {
   const q = S.pq.trim().toLowerCase();
   const cmds = [...STAGE_LIB.map((s) => [ico('spark', 's'), `${s.name}`, s.cmd, `S.comp.mode='stage';S.comp.stage='${s.id}';go('home')`]),
-    [ico('users', 's'), '交给 GPT 调度', '/lead', "S.comp.mode='lead';go('home')"],
+    [ico('users', 's'), '交给 CC 协调', '/lead', "S.comp.mode='lead';go('home')"],
     [ico('chat', 's'), '新聊天', '/chat', "go('chat')"],
     [ico('gauge', 's'), '查看资源与额度', '', "go('res')"],
     [ico(S.theme === 'dark' ? 'sun' : 'moon', 's'), '切换浅色 / 深色', '', 'setTheme()']].filter((c) => !q || (c[1] + c[2]).toLowerCase().includes(q));
@@ -820,6 +856,7 @@ function palette() {
 function hudPop() {
   return `<div class="scrim" style="background:transparent" onclick="S.hud=false;render()"></div><div class="hudpop"${impl('plan', 'HUD')}>
     <h6>资源<span>2 分钟前更新</span></h6>${Object.keys(R).map((id) => resRow(id, true)).join('')}
+    <div class="resrow"><span class="av l" style="--c:#3B3A36">Px</span><div class="nm">${BRIDGE.name} <span style="font-weight:400;color:#9C9990">派工通道</span></div><span class="q"><span class="qdot"></span>可用</span><div class="nw">${BRIDGE.text}</div></div>
     <div class="foot"><span>额度按“已知 / 网页提示 / 估算 / 未知”区分</span><button onclick="S.hud=false;go('res')">详情 →</button></div>
   </div>`;
 }
@@ -852,13 +889,13 @@ function render() {
   document.querySelectorAll('.scroll[data-k]').forEach((el) => { if (keep[el.dataset.k] != null) el.scrollTop = keep[el.dataset.k]; });
   if (focusKey) {
     const el = document.querySelector(`[data-k="${focusKey}"]`);
-    if (el) { el.focus(); try { el.setSelectionRange(caret, caret); } catch (e) { /* ignore */ } }
+    if (el) { el.focus(); try { el.setSelectionRange(caret, caret); } catch { /* 部分元素不支持选区 */ } }
   }
   if (S.palette && focusKey !== 'pal') document.querySelector('[data-k="pal"]')?.focus();
   if (S._scrollTo) { document.getElementById(S._scrollTo)?.scrollIntoView({ block: 'start', behavior: 'smooth' }); S._scrollTo = null; }
 }
 function protoBar() {
-  const sc = [['A', '想需求', 'scenarioA()'], ['B', 'GPT 调度开发', 'scenarioB()'], ['C', '多模型配置', 'scenarioC()'], ['D', '多仓库', 'scenarioD()'], ['E', '故障与决策', 'scenarioE()'], ['F', '自由聊天', 'scenarioF()']];
+  const sc = [['A', '想需求', 'scenarioA()'], ['B', 'CC 协调开发', 'scenarioB()'], ['C', '多模型配置', 'scenarioC()'], ['D', '多仓库', 'scenarioD()'], ['E', '故障与决策', 'scenarioE()'], ['F', '自由聊天', 'scenarioF()']];
   return `<b>ai-one v2 交互原型</b><span class="mockflag">模拟数据</span><span class="sep"></span>
     <div class="grp"><span>场景</span>${sc.map(([k, l, f]) => `<button onclick="${f}" title="${l}">${k} ${l}</button>`).join('')}</div>
     <span class="sp"></span>
@@ -947,13 +984,13 @@ function needAct(id, a, i) {
   }
   if (a === 'write') { S.writing = id; return render(); }
   if (a === 'merge') {
-    t.state = 'done'; t.stateText = '已合并'; t.pr.st = 'merged'; t.now = `你合并了 PR #${t.pr.n}。GPT 会关闭 Issue 并留下交接记录。`; t.nowMeta = ''; t.stages[t.stages.length - 1].st = 'done';
+    t.state = 'done'; t.stateText = '已合并'; t.pr.st = 'merged'; t.now = `你合并了 PR #${t.pr.n}。CC 会核对合并结果、关闭 Issue 并留下交接记录。`; t.nowMeta = ''; t.stages[t.stages.length - 1].st = 'done';
     S.writing = null;
     return toast(`（模拟）PR #${t.pr.n} 已合并`);
   }
   if (a === 'changes') {
     const txt = document.querySelector('[data-k="write"]')?.value || '标题文案再短一点';
-    t.state = 'rework'; t.stateText = '按你的意见返工'; t.now = 'GPT 收到你的修改意见，已交给 Codex 返工。'; t.nowMeta = '返工后会重新审计并再次请你验收';
+    t.state = 'rework'; t.stateText = '按你的意见返工'; t.now = 'CC 收到你的修改意见，经 Prodex 交给 GPT 执行会话返工。'; t.nowMeta = '返工后针对新 HEAD 重新审计，再请你验收';
     t.events.push({ stage: 'ship', k: 'you', who: [], t: '现在', text: '你的修改意见：' + txt, _new: true });
     t.stages[t.stages.length - 1].st = 'todo'; t.stages.find((s) => s.id === 'build').st = 'active';
     S.writing = null; return render();
@@ -963,8 +1000,8 @@ function needAct(id, a, i) {
     t.team = [...new Set([...t.team, 'opus'])]; (ROLE[id] = ROLE[id] || {}).opus = ['裁决', '审阅中'];
     t.events.push({ stage: 'build', k: 'you', who: [], t: '现在', text: '你请 Opus 裁决。', _new: true });
     later(t, () => {
-      t.state = 'rework'; t.stateText = '按裁决返工 · 第 1/3 轮'; t.now = 'Opus 裁决：先用阈值 + 手动按钮上线，同时记录网页提示作为后续增强。Codex 正在返工。'; t.nowMeta = '返工计数已重置';
-      t.events.push({ stage: 'build', k: 'result', who: ['opus'], t: '现在', text: 'Opus 裁决：采用 Codex 的方向，并把网页提示检测记为后续 Issue。', _new: true });
+      t.state = 'rework'; t.stateText = '按裁决返工 · 第 1/3 轮'; t.now = 'Opus 裁决：先用阈值 + 手动按钮上线，同时记录网页提示作为后续增强。CC 正在返工。'; t.nowMeta = '返工计数已重置';
+      t.events.push({ stage: 'build', k: 'result', who: ['opus'], t: '现在', text: 'Opus 裁决：采用 CC 的方向，并把网页提示检测记为后续 Issue。', _new: true });
       ROLE[id].opus = ['裁决', '已完成'];
     }, 2500);
     return render();
@@ -972,7 +1009,7 @@ function needAct(id, a, i) {
   if (a === 'pick' || a === 'writeok') {
     const txt = a === 'writeok' ? (document.querySelector('[data-k="write"]')?.value || '按我的方案') : t.need.sides[i][1].replace(/（.*）/, '') + ' 的方向';
     t.state = 'rework'; t.stateText = '按你的决定返工 · 第 1/3 轮'; t.need = null; S.writing = null;
-    t.now = `你的决定已发给 GPT 与 Codex：${txt}。Codex 正在返工。`; t.nowMeta = '返工计数已重置为 0/3';
+    t.now = `CC 已把你的决定交给执行方和审计会话：${txt}。CC 正在返工。`; t.nowMeta = '返工计数已重置为 0/3';
     t.events.push({ stage: 'build', k: 'you', who: [], t: '现在', text: '你的决定：' + txt, _new: true });
     return render();
   }
@@ -1021,16 +1058,17 @@ function sendDock(id, interrupt) {
   t.events.push({ stage, k: 'you', who: [], t: '现在', text: (interrupt ? '（打断）' : '（插话）') + txt, _new: true });
   render();
   later(t, () => {
-    t.events.push({ stage, k: t.kind === 'discussion' ? 'result' : 'decide', who: t.kind === 'discussion' ? ['gpt', 'argon'] : ['gpt'], t: '现在', text: t.kind === 'discussion' ? 'GPT 与 Argon 各自回应了你的追问，并更新了汇总。' : interrupt ? '已停止当前生成，按你的话调整：' + txt.slice(0, 24) : '收到，会在当前步骤完成后一起处理。', _new: true });
+    t.events.push({ stage, k: t.kind === 'discussion' ? 'result' : 'decide', who: t.kind === 'discussion' ? ['gpt', 'argon'] : ['cc'], t: '现在', text: t.kind === 'discussion' ? 'GPT 与 Argon 各自回应了你的追问，并更新了汇总。' : interrupt ? 'CC 已停止当前生成，按你的话调整：' + txt.slice(0, 24) : 'CC 收到，会在当前步骤完成后一起处理。', _new: true });
   }, 1600);
 }
 function toPlan(id) {
   const t = task(id);
   t.kind = undefined; t.repo = 'ai-one'; t.issue = 48; t.state = 'run'; t.stateText = '定方案'; t.lead = 'flow'; t.flow = 'full';
-  t.now = 'GPT、Argon 和 Opus 正在基于讨论结论各自给出方案。'; t.nowMeta = 'GPT 已为它创建 Issue #48（模拟），讨论汇总作为 Issue 正文';
-  t.team = ['gpt', 'argon', 'opus'];
-  t.stages = [{ id: 'grill', st: 'done', team: ['gpt', 'argon'], sum: '3 条结论，1 项分歧', dur: '刚刚' }, { id: 'plan', st: 'active', team: ['gpt', 'argon', 'opus'], sum: '三方独立给方案' }, { id: 'split', st: 'todo', team: ['gpt'], sum: '' }, { id: 'build', st: 'todo', team: ['codex', 'gpt'], sum: '' }, { id: 'ship', st: 'todo', team: ['gpt'], sum: '' }];
-  t.disc = { lanes: ['gpt', 'argon', 'opus'], phases: ['独立方案', '第 1 轮'], cells: [{ gpt: ['run', ''], argon: ['run', ''], opus: ['run', ''] }] };
+  t.now = 'GPT、Argon 和 CC 正在基于讨论结论各自给出方案。'; t.nowMeta = 'CC 已为它创建 Task Issue #48（模拟），讨论汇总作为 Issue 正文';
+  t.team = ['cc', 'gpt', 'argon'];
+  t.stages = [{ id: 'grill', st: 'done', team: ['gpt', 'argon'], sum: '3 条结论，1 项分歧', dur: '刚刚' }, { id: 'plan', st: 'active', team: ['gpt', 'argon', 'cc'], sum: '三方独立给方案' }, { id: 'split', st: 'todo', team: ['cc'], sum: '' }, { id: 'build', st: 'todo', team: ['gpt', 'cc'], sum: '' }, { id: 'ship', st: 'todo', team: ['cc'], sum: '' }];
+  t.disc = { lanes: ['gpt', 'argon', 'cc'], phases: ['独立方案', '第 1 轮'], roles: { cc: '把关' }, cells: [{ gpt: ['run', ''], argon: ['run', ''], cc: ['run', ''] }] };
+  ROLE[id] = { cc: ['协调 · 把关', '独立给方案中'], gpt: ['讨论', '独立给方案中'], argon: ['讨论', '独立给方案中'] };
   t.events = [{ stage: 'grill', k: 'result', who: ['gpt', 'argon'], t: '刚刚', text: '想需求完成：3 条结论，1 项分歧，1 个待补证据。', detail: 'grill' }];
   t.rules = ['方案审计 PASS 才进入拆任务'];
   render();
@@ -1109,48 +1147,54 @@ function startLead(title, flowId) {
   const repo = S.comp.repo || 'ai-one';
   const viaFlow = !!flowId;
   const t = {
-    id, repo, issue: 47, title: title.length > 30 ? title.slice(0, 30) + '…' : title, state: 'run', lead: viaFlow ? 'flow' : 'gpt', flow: flowId || 'lead', dyn: !viaFlow,
-    stateText: '进行中', updated: '刚刚', now: viaFlow ? '按“快速开发”流程开始：GPT 与 Argon 先讨论需求。' : 'GPT 正在读 Issue 和相关代码，决定怎么推进。', nowMeta: '只在需要你时停下',
-    team: ['gpt'], pr: null, ci: null, review: null, stages: [], events: [], rules: ['审计不通过自动返工，最多 3 轮', '合并前需要我验收'],
+    id, repo, issue: 47, title: title.length > 30 ? title.slice(0, 30) + '…' : title, state: 'run', lead: viaFlow ? 'flow' : 'cc', flow: flowId || 'lead', dyn: !viaFlow,
+    stateText: '进行中', updated: '刚刚', now: viaFlow ? '按“快速开发”流程开始：GPT 与讨论伙伴先各自梳理需求。' : 'CC 正在读 Issue 和相关代码，决定怎么推进。', nowMeta: '只在需要你时停下',
+    team: ['cc'], pr: null, ci: null, review: null, stages: [], events: [],
+    rules: ['审计不通过自动返工，最多 3 轮', '执行和审计用不同会话', 'Prodex 请求结果不明时先恢复，不重发', '合并前需要我验收'],
   };
-  ROLE[id] = { gpt: [viaFlow ? '执行 · 汇总' : '调度', '阅读需求'] };
+  ROLE[id] = { cc: ['协调 · 本机验证', '阅读需求'] };
   TASKS.unshift(t);
   S.comp.text = '';
   openTask(id);
-  const auditor = R.argon.login === 'ok' ? 'argon' : 'opus';
+  const partner = R.argon.login === 'ok' ? 'argon' : 'opus';
   const ev = (stage, k, who, text, extra = {}) => t.events.push({ stage, k, who, t: '现在', text, _new: true, ...extra });
+  const build = () => t.stages.find((s) => s.id === 'build');
   const steps = [
-    () => { ev('plan', 'live', ['gpt'], 'GPT 正在阅读 Issue 与仓库结构'); t.stages.push({ id: 'plan', st: 'active', team: ['gpt'], sum: '阅读需求' }); },
+    () => { ev('plan', 'live', ['cc'], 'CC 正在阅读 Issue 与仓库结构'); t.stages.push({ id: 'plan', st: 'active', team: ['cc'], sum: '阅读需求' }); },
     () => {
       t.events.pop();
-      ev('plan', 'decide', ['gpt'], '需求清楚、改动集中在 1 个文件：跳过“想需求”，自己定方案并实现。', { override: true });
-      t.now = 'GPT 判断这是小改动，自己定方案。';
+      ev('plan', 'decide', ['cc'], '需求清楚、改动集中在 1 个文件：跳过“想需求”。方案我定，实现交给 GPT。', { override: true });
+      t.now = 'CC 判断这是小改动，自己定方案。';
     },
-    () => { ev('plan', 'result', ['gpt'], '方案：设置模型新增 notifyOnlyWhenNeeded（默认开），通知入口统一判断。'); t.stages[0].st = 'done'; t.stages[0].sum = '小改动，GPT 自定方案'; t.stages[0].dur = '1 分钟'; t.stages.push({ id: 'build', st: 'active', team: ['gpt'], sum: 'GPT 实现中' }); t.now = 'GPT 正在实现并推送。'; ROLE[id].gpt = ['调度 · 执行', '实现中']; },
+    () => { ev('plan', 'result', ['cc'], '方案：设置模型新增 notifyOnlyWhenNeeded（默认开），通知入口统一判断。'); t.stages[0].st = 'done'; t.stages[0].sum = '小改动，CC 自定方案'; t.stages[0].dur = '1 分钟'; t.stages.push({ id: 'build', st: 'active', team: ['gpt', 'cc'], sum: 'GPT 实现中' }); },
+    () => {
+      ev('build', 'decide', ['cc'], '经 Prodex 派 GPT 执行（会话 A）。', { brief: true, chips: [['ok', 'Prodex 回执 · request_id 已保存']] });
+      t.team.push('gpt'); ROLE[id].gpt = ['执行（会话 A）', '实现中']; t.now = 'GPT 执行会话正在实现并推送。';
+    },
+    () => { ev('build', 'sys', [], 'Prodex 请求超时、结果不明：CC 先用 request_id 恢复，拿到了回复，没有重复派工。'); },
     () => { ev('build', 'step', ['gpt'], 'GPT 在新分支推送提交并开 PR。', { chips: [['ok', '提交 5d2e8f1 · 已回读'], ['ok', 'PR #48 · 已回读']] }); t.pr = { n: 48, st: 'draft' }; t.ci = 'run'; },
     () => {
-      ev('build', 'decide', ['gpt'], auditor === 'argon' ? '作者不能自审：请 Argon 独立审计 5d2e8f1。' : '作者不能自审。Argon 登录失效，改请 Opus 审计（Opus 接近上限，只审这一次）。', { override: true });
-      t.team.push(auditor); t.stages[1].team.push(auditor); (ROLE[id][auditor] = ['审计', '审计中']);
-      ev('build', 'live', [auditor], `${R[auditor].name} 审计中`); t.now = `${R[auditor].name} 正在独立审计真实 Diff。`;
+      ev('build', 'step', ['cc'], 'CC 本机运行 pnpm verify：通过。', { chips: [['ok', '本机运行 · 通过']] });
+      ev('build', 'decide', ['cc'], '经 Prodex 开独立会话（会话 B），请 GPT 审计 5d2e8f1；不带执行上下文。');
+      ev('build', 'live', ['gpt'], 'GPT 审计会话审查中'); ROLE[id].gpt = ['执行（会话 A）· 审计（会话 B）', '审计中']; t.now = 'GPT 审计会话正在独立审查真实 Diff 与 HEAD。';
     },
-    () => { t.events.pop(); ev('build', 'fail', [auditor], `${R[auditor].name} 审计 5d2e8f1：未通过。`, { chips: [['bad', '旧设置迁移时默认值丢失']] }); ev('build', 'sys', [], '已自动打回 GPT 返工（第 1 轮，上限 3 轮）。'); t.state = 'rework'; t.stateText = '返工中 · 第 1/3 轮'; t.now = 'GPT 正在按审计意见补上设置迁移。'; t.review = { st: 'fail', text: `${R[auditor].name} 审计未通过` }; },
-    () => { ev('build', 'step', ['gpt'], 'GPT 返工后推送新提交。', { chips: [['ok', '提交 9a0b7c3 · 已回读'], ['claim', '新增迁移测试 · GPT 自述']] }); t.state = 'run'; t.stateText = '复审中'; t.now = `${R[auditor].name} 正在针对新 HEAD 9a0b7c3 复审（不沿用旧结论）。`; },
-    () => { ev('build', 'result', [auditor], `${R[auditor].name} 复审 9a0b7c3：通过。`, { chips: [['ok', 'PASS @ 9a0b7c3'], ['ok', 'CI 18/18 · 已回读']] }); t.ci = 'ok'; t.review = { st: 'ok', text: `${R[auditor].name} 审计通过` }; t.stages[1].st = 'done'; t.stages[1].sum = '返工 1 次后通过'; t.stages[1].dur = '6 分钟'; ROLE[id][auditor] = ['审计', '已通过']; },
+    () => { t.events.pop(); ev('build', 'fail', ['gpt'], 'GPT 独立审计 5d2e8f1：REVISE。', { chips: [['bad', '旧设置迁移时默认值丢失']] }); ev('build', 'sys', [], 'CC 把审计意见原文转给执行会话 A，返工第 1 轮（上限 3 轮）。'); t.state = 'rework'; t.stateText = '返工中 · 第 1/3 轮'; t.now = 'GPT 执行会话正在按审计意见补上设置迁移。'; t.review = { st: 'fail', text: 'GPT 独立审计 REVISE' }; },
+    () => { ev('build', 'step', ['gpt'], 'GPT 返工后推送新提交。', { chips: [['ok', '提交 9a0b7c3 · 已回读'], ['claim', '“新增迁移测试” · GPT 自述']] }); ev('build', 'step', ['cc'], 'CC 本机重跑 pnpm verify：通过，新增 2 个测试确实存在。', { chips: [['ok', '本机运行 · 通过']] }); t.state = 'run'; t.stateText = '复审中'; t.now = 'GPT 审计会话正在针对新 HEAD 9a0b7c3 复审（不沿用旧结论）。'; },
+    () => { ev('build', 'result', ['gpt'], 'GPT 审计会话复审 9a0b7c3：PASS。', { chips: [['ok', 'PASS @ 9a0b7c3'], ['ok', 'CI 18/18 · 已回读']] }); t.ci = 'ok'; t.review = { st: 'ok', text: 'GPT 独立审计 PASS' }; build().st = 'done'; build().sum = '返工 1 次后 PASS'; build().dur = '7 分钟'; },
     () => {
-      t.stages.push({ id: 'ship', st: 'you', team: ['gpt'], sum: '等你验收' }); t.dyn = false;
-      t.state = 'accept'; t.stateText = '待你验收'; t.pr.st = 'ready'; t.now = `完成，等你验收并合并 PR #48。`; t.nowMeta = '共 8 分钟（模拟）· 返工 1 次';
-      ROLE[id].gpt = ['调度 · 执行 · 汇总', '等你验收'];
-      t.accept = { did: ['设置页新增“只在需要我时通知”开关，默认开启', '旧设置迁移时保留用户原有的通知偏好'], verify: [['ok', 'CI 18/18 通过', 'GitHub 回读'], ['ok', '迁移测试 2 个', 'CI 内运行'], ['warn', '桌面通知真机未验证', '需要你看一眼']], reviews: [[auditor, `${R[auditor].name} 审计 PASS`, '9a0b7c3']], risk: '仅影响通知判断入口；关闭开关后行为与旧版一致。' };
+      t.stages = t.stages.filter((s) => s.id !== 'ship');
+      t.stages.push({ id: 'ship', st: 'you', team: ['cc'], sum: '等你验收' }); t.dyn = false;
+      t.state = 'accept'; t.stateText = '待你验收'; t.pr.st = 'ready'; t.now = `完成，等你验收并合并 PR #48。`; t.nowMeta = '共 9 分钟（模拟）· 返工 1 次 · 审计针对当前 HEAD';
+      ROLE[id].cc = ['协调 · 本机验证 · 汇总', '等你验收']; ROLE[id].gpt = ['执行（会话 A）· 审计（会话 B）', '审计 PASS'];
+      t.accept = { did: ['设置页新增“只在需要我时通知”开关，默认开启', '旧设置迁移时保留用户原有的通知偏好'], verify: [['ok', 'CI 18/18 通过', 'GitHub 回读'], ['ok', 'pnpm verify 通过', 'CC 本机运行'], ['warn', '桌面通知真机未验证', '需要你看一眼']], reviews: [['gpt', 'GPT 独立审计 PASS（会话 B）', '9a0b7c3']], risk: '仅影响通知判断入口；关闭开关后行为与旧版一致。' };
       toast(`${repo} #47 完成，等你验收`, ['查看', `openTask('${id}')`]);
     },
   ];
   if (viaFlow) {
     steps.splice(0, 3,
-      () => { t.stages = [{ id: 'grill', st: 'active', team: ['gpt', auditor], sum: '讨论需求' }, { id: 'build', st: 'todo', team: ['gpt', auditor], sum: '' }, { id: 'ship', st: 'todo', team: ['gpt'], sum: '' }]; t.team = ['gpt', auditor]; ROLE[id][auditor] = ['讨论 · 审计', '讨论中']; ev('grill', 'step', ['gpt', auditor], `GPT 与 ${R[auditor].name} 各自梳理需求，彼此看不到对方。`); },
-      () => { ev('grill', 'result', ['gpt', auditor], '1 轮交换后无新问题：需求 2 条。', { detail: 'grill' }); t.stages[0].st = 'done'; t.stages[0].dur = '3 分钟'; t.stages[0].sum = '需求 2 条'; t.stages[1].st = 'active'; t.stages[1].sum = 'GPT 实现中'; t.now = 'GPT 正在实现并推送。'; },
+      () => { t.stages = [{ id: 'grill', st: 'active', team: ['gpt', partner], sum: '讨论需求' }, { id: 'build', st: 'todo', team: ['gpt', 'cc'], sum: '' }, { id: 'ship', st: 'todo', team: ['cc'], sum: '' }]; t.team = ['cc', 'gpt', partner]; ROLE[id].gpt = ['讨论', '讨论中']; ROLE[id][partner] = ['讨论', '讨论中']; ev('grill', 'step', ['gpt', partner], `GPT 与 ${R[partner].name} 各自梳理需求，彼此看不到对方。`); },
+      () => { ev('grill', 'result', ['gpt', partner], '1 轮交换后无新问题：需求 2 条。', { detail: 'grill' }); t.stages[0].st = 'done'; t.stages[0].dur = '3 分钟'; t.stages[0].sum = '需求 2 条'; build().st = 'active'; build().sum = 'GPT 实现中'; ROLE[id][partner][1] = '已完成'; },
     );
-    steps.splice(3, 1, () => { ev('build', 'live', [auditor], `${R[auditor].name} 审计中`); t.now = `${R[auditor].name} 正在独立审计真实 Diff。`; });
-    steps[steps.length - 1] = ((orig) => () => { t.stages = t.stages.filter((s) => s.id !== 'ship' || s.st !== 'todo'); orig(); })(steps[steps.length - 1]);
   }
   runSteps(t, steps, 1500);
 }
@@ -1173,7 +1217,7 @@ function scenarioA() {
   S.comp.mode = 'stage'; S.comp.stage = 'grill'; S.comp.text = GRILL_SCRIPT.topic; go('home');
   toast('场景 A：问题已填好，点“开始”。也可以在输入框打 /grill');
 }
-function scenarioB() { openTask('t42'); toast('场景 B：GPT 调度中的任务。想从头看，到总览选“交给 GPT 调度”后点开始'); }
+function scenarioB() { openTask('t42'); toast('场景 B：CC 协调、经 Prodex 派 GPT 执行与审计。想从头看，到总览选“交给 CC”后点开始'); }
 function scenarioC() { S.flow.sel = 'parallel'; S.flow.pop = null; go('flows'); toast('场景 C：点参与者可改角色、模型、思考深度。运行中的例子见 home-lab #7'); }
 function scenarioD() { S.tasksGroup = 'repo'; S.repoFilter = null; go('tasks'); }
 function scenarioE() { openTask('t12'); toast('场景 E：登录失效。另见 ai-one #45（审计 3 次不通过，需要你决定）'); }
@@ -1181,7 +1225,10 @@ function scenarioF() { S.chat.tab = 'cmp'; go('chat'); }
 
 document.addEventListener('keydown', (e) => {
   const typing = /TEXTAREA|INPUT/.test(document.activeElement?.tagName);
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); S.palette ? (S.palette = false, render()) : openPalette(); }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (S.palette) { S.palette = false; render(); } else openPalette();
+  }
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') { e.preventDefault(); newTask(); }
   else if ((e.ctrlKey || e.metaKey) && e.key === '.') { e.preventDefault(); if (S.view === 'task' && cur()) togglePause(S.task); }
   else if (e.key === 'Escape') { S.palette = false; S.drawer = null; S.menu = null; S.hud = false; S.slash = false; S.flow.pop = null; render(); }
@@ -1206,6 +1253,13 @@ function fromHash() {
   if (q.has('grill')) { relogin('argon'); S.toasts = []; startGrill(GRILL_SCRIPT.topic); S.fast = true; }
   if (q.has('lead')) { startLead('设置页增加“只在需要我时通知”的开关', null); S.fast = true; }
 }
+
+/* 界面里的 onclick / oninput 直接调用这些函数 */
+Object.assign(window, {
+  go, openTask, openStage, openDrawer, openPalette, openWeb, openRes, toggle, setTheme, toast, newTask, setComp, compInput, compKey,
+  relogin, needAct, togglePause, takeOver, giveBack, handoff, stopTask, sendDock, toPlan, forward, toggleTarget, chatSend, chatToTask,
+  start, resetAll, render, scenarioA, scenarioB, scenarioC, scenarioD, scenarioE, scenarioF,
+});
 
 resetAll();
 fromHash();

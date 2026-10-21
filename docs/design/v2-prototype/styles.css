@@ -241,11 +241,13 @@ svg.i.l { width: 18px; height: 18px; }
 .impl-on [data-impl="wip"]::after { background: #E3ECFF; color: #2650B8; box-shadow: 0 0 0 1px #BFD1FB; }
 .impl-on [data-impl="plan"]::after { background: var(--card); color: #6C5BA8; box-shadow: 0 0 0 1px #C9BEF0; border: 1px dashed transparent; }
 .impl-on [data-impl="part"]::after { background: #FFF1D6; color: #8A5300; box-shadow: 0 0 0 1px #F1D19A; }
+.impl-on [data-impl="ext"]::after { background: #DDF2F0; color: #11625B; box-shadow: 0 0 0 1px #A9DCD6; }
 .impl-on [data-impl].impl-in::after { top: 6px; right: 6px; }
 .impl-on [data-impl].impl-left::after { right: auto; left: 0; top: -20px; }
 .impl-on [data-impl].impl-below::after { top: auto; bottom: -15px; right: 50%; transform: translateX(50%); }
 .tag-i { font: 600 10px/16px var(--font); padding: 0 6px; border-radius: 4px; }
 .tag-i.part { background: #FFF1D6; color: #8A5300; }
+.tag-i.ext { background: #DDF2F0; color: #11625B; }
 .tag-i.done { background: #DDF3E5; color: #1E6B3F; } .tag-i.wip { background: #E3ECFF; color: #2650B8; } .tag-i.plan { background: #fff; color: #6C5BA8; box-shadow: 0 0 0 1px #C9BEF0; }
 
 /* ---------- 总览 ---------- */
