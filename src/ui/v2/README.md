@@ -50,7 +50,7 @@ export function MyV2Page() {
 
 - 改某个值：编辑 `tokens.ts` 中对应 skin 的值。`src/__tests__/v2-tokens.test.ts` 会检查两种模式的令牌名一致，以及正文、状态文字的 WCAG 对比度。
 - 新增一套方案：在 `V2_SKINS` 里加一项（形状 + 明 / 暗两组颜色），`<V2Scope skin="…">` 即可使用。
-- 运行时整体切换：没有写 `skin` 的 `<V2Scope>` 都跟随共享偏好 `setV2Skin('mist')` / `useV2Skin()`（`skinPreference.ts`，按来源存在 localStorage `ai-one.v2.skin`）。所以 HUD、已迁移的旧界面和 Gallery 会一起换；只有需要固定外观的地方（如 Gallery 并排对比）才写 `skin`。
+- 运行时整体切换：没有写 `skin` 的 `<V2Scope>` 先继承外层 scope 的方案，最外层则跟随共享偏好 `setV2Skin('mist')` / `useV2Skin()`（`skinPreference.ts`，按来源存在 localStorage `ai-one.v2.skin`）。所以 HUD、已迁移的旧界面和 Gallery 会一起换；只有需要固定外观的地方（如 Gallery 并排对比）才写 `skin`。
 - `v2.css` 只放 Tailwind 表达不了的东西（状态形状、动画、焦点环），所有选择器都限定在 `.v2-scope` 下（有测试检查）。
 
 ## 组件陈列（开发态）

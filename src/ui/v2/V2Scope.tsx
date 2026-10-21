@@ -1,4 +1,4 @@
-import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
+import { createContext, useContext, type CSSProperties, type HTMLAttributes, type ReactNode } from 'react';
 import { cx } from './cx';
 import { useV2Skin } from './skinPreference';
 import { resolveV2Mode, useDocumentDarkClass } from './themeMode';
@@ -13,6 +13,9 @@ export interface V2ScopeProps extends HTMLAttributes<HTMLDivElement> {
   children?: ReactNode;
 }
 
+/** Skin of the nearest enclosing scope, so unpinned nested scopes match their surroundings. */
+const InheritedSkin = createContext<V2SkinId | undefined>(undefined);
+
 /**
  * Root of every v2 surface. Writes the skin's tokens as `--v2-*` custom properties on its own
  * element, so v2 styling exists only inside the scope and two scopes can show different skins
@@ -20,7 +23,9 @@ export interface V2ScopeProps extends HTMLAttributes<HTMLDivElement> {
  */
 export function V2Scope({ skin: pinnedSkin, mode = 'auto', className, style, children, ...rest }: V2ScopeProps) {
   const preferredSkin = useV2Skin();
-  const skin = pinnedSkin ?? preferredSkin;
+  const inheritedSkin = useContext(InheritedSkin);
+  // Pinned > enclosing scope > shared preference.
+  const skin = pinnedSkin ?? inheritedSkin ?? preferredSkin;
   const documentDark = useDocumentDarkClass();
   const resolved = resolveV2Mode(mode, documentDark);
   const scopeStyle = { ...v2CssVariables(skin, resolved), colorScheme: resolved, ...style } as CSSProperties;
@@ -32,7 +37,7 @@ export function V2Scope({ skin: pinnedSkin, mode = 'auto', className, style, chi
       className={cx('v2-scope font-v2 text-v2-body text-v2-ink', className)}
       style={scopeStyle}
     >
-      {children}
+      <InheritedSkin.Provider value={skin}>{children}</InheritedSkin.Provider>
     </div>
   );
 }

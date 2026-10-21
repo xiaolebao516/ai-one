@@ -218,6 +218,16 @@ describe('theme scope', () => {
     expect(dark).toContain('color-scheme:dark');
   });
 
+  it('lets unpinned nested scopes inherit the enclosing skin', () => {
+    const html = renderToStaticMarkup(
+      <V2Scope skin="mist" mode="light">
+        <V2Scope>inner</V2Scope>
+      </V2Scope>,
+    );
+    expect(html.match(/data-v2-skin="mist"/g)).toHaveLength(2);
+    expect(renderToStaticMarkup(<V2Scope>alone</V2Scope>)).toContain('data-v2-skin="paper"');
+  });
+
   it('follows the app theme class in auto mode', () => {
     expect(resolveV2Mode('auto', true)).toBe('dark');
     expect(resolveV2Mode('auto', false)).toBe('light');
