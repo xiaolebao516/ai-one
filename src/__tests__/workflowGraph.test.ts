@@ -416,8 +416,12 @@ describe('workflow graph foundation', () => {
         if (geminiRoundAttempts === 2) response = '[Error: temporary model failure]';
       }
       if (provider === 'claude') {
-        response = 'Evidence-backed findings: Evidence reviewed. Shared conclusions: Both agree. Disagreements: NONE. Evidence gaps: NONE. Next steps: Verify source.\\n' +
-          '[[AI_ONE_AUDIT_DECISION:FINISH]]\\n[[AI_ONE_AUDIT_RESULT:AGREED]]\\n[[AI_ONE_AUDIT_QUESTION:NONE]]';
+        response = [
+          'Evidence-backed findings: Evidence reviewed. Shared conclusions: Both agree. Disagreements: NONE. Evidence gaps: NONE. Next steps: Verify source.',
+          '[[AI_ONE_AUDIT_DECISION:FINISH]]',
+          '[[AI_ONE_AUDIT_RESULT:AGREED]]',
+          '[[AI_ONE_AUDIT_QUESTION:NONE]]',
+        ].join('\n');
       }
       publishBridgeMessage(done(provider, response));
     });
