@@ -29,7 +29,6 @@
 - **状态看板**：GitHub Projects 可按父 Spec 与 Task 展示 Todo / In Progress / Review / Blocked / Done，但它只汇总 GitHub 事实，不另建进度数据源；当前工具不能创建原生子 Issue 关系或自动维护 Project 字段时，必须明确报告能力缺口。
 - **标签约定**：仅使用已有 `needs-review`、`blocked`、`needs-user`；ROUTINE/DEEP 和 Spec Revision 写入 Issue 正文，不额外制造标签和状态文件。
 
-
 ## 执行与验收
 
 - 先读取项目指引、根配置、相关 Issue 及 Git 状态。非平凡实现先确定范围与验收；采用最小正确变更。
