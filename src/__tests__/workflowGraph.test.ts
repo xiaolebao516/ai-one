@@ -357,7 +357,7 @@ describe('workflow graph foundation', () => {
     expect(prompts[1].text).toContain('Original question:\nAssess the design');
     expect(prompts[0].text).toContain('read-only');
     expect(prompts[1].text).not.toContain('independent response from chatgpt');
-    expect(prompts[2].text).toContain('independent response from chatgpt');
+    expect(prompts[2].text).not.toContain('independent response from chatgpt');
     expect(prompts[2].text).toContain('independent response from gemini');
     expect(prompts[3].text).toContain(agreement);
     expect(prompts[3].text).not.toContain('independent response from gemini');
