@@ -266,6 +266,11 @@ export function hudReducer(state: HudState, action: HudAction): HudState {
   }
 }
 
+/** Escape leaves the detail view first, then the HUD. */
+export function escapeAction(state: HudState): 'back' | 'close' {
+  return state.view === 'detail' ? 'back' : 'close';
+}
+
 /** The selected task; a stale id (data swapped underneath) yields undefined, never a guess. */
 export function selectedTask(state: HudState, tasks: readonly HudTask[]): HudTask | undefined {
   return state.selectedId ? tasks.find((task) => task.id === state.selectedId) : undefined;

@@ -4,6 +4,7 @@ import {
   ALL,
   STATUS_TONE,
   effectiveCi,
+  escapeAction,
   filterTasks,
   formatAge,
   hudReducer,
@@ -83,7 +84,7 @@ export function TaskHud({ locale, onClose, tasks = TASK_HUD_MOCK_TASKS, initialS
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Escape' || event.defaultPrevented) return;
     event.preventDefault();
-    if (state.view === 'detail') dispatch({ type: 'back' });
+    if (escapeAction(state) === 'back') dispatch({ type: 'back' });
     else onClose();
   };
 
