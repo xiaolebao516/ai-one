@@ -100,44 +100,38 @@ function pickSections(masked: string, inline: boolean): SectionMatch[] | undefin
     if (strongest.length > 1 || (inline && candidates.length > 1)) return undefined;
     found.push({ label: section.label, start: strongest[0].start, end: strongest[0].end });
   }
-  if (found.length < MIN_REPORT_SECTIONS) return undefined;
+  // Inline headings cannot be told apart from prose that names a section, so an all-inline audit
+  // is only trusted when every section is present exactly once.
+  if (found.length < (inline ? REPORT_SECTIONS.length : MIN_REPORT_SECTIONS)) return undefined;
   return found.every((section, index) => index === 0 || section.start >= found[index - 1].end) ? found : undefined;
 }
 
 /**
- * Line headings may leave sections that the audit wrote inline (e.g. "A. Shared conclusions: B.").
- * Look for each missing one only in the gap between its found neighbours, and only on the same line
- * as the previous heading when that heading is itself followed by text ("Heading: text"); a heading
- * name mentioned in prose under a standalone heading stays prose. One candidate fills the section,
- * several make the structure ambiguous, none leaves it genuinely missing.
+ * True when a section missing from the line headings appears inline on a "Heading: text" line,
+ * e.g. "A. Shared conclusions: B." or "Both teams agree. Disagreements: none.". The two have the
+ * same shape, so neither can be placed safely. A section name in prose under a standalone heading
+ * is plain prose and leaves that section reported as not provided.
  */
-function fillInlineGaps(masked: string, found: SectionMatch[]): SectionMatch[] | undefined {
+function hasAmbiguousInlineSection(masked: string, found: SectionMatch[]): boolean {
   const order = (label: I18nKey) => REPORT_SECTIONS.findIndex((section) => section.label === label);
-  const result = [...found];
-  for (const [index, section] of REPORT_SECTIONS.entries()) {
-    if (result.some((match) => match.label === section.label)) continue;
-    const before = result.filter((match) => order(match.label) < index).at(-1);
-    const after = result.find((match) => order(match.label) > index);
-    if (!before) continue;
+  return REPORT_SECTIONS.some((section, index) => {
+    if (found.some((match) => match.label === section.label)) return false;
+    const before = found.filter((match) => order(match.label) < index).at(-1);
+    const after = found.find((match) => order(match.label) > index);
+    if (!before) return false;
     const lineEnd = masked.indexOf('\n', before.end);
-    const inlineRunEnd = Math.min(lineEnd < 0 ? masked.length : lineEnd, after?.start ?? masked.length);
-    if (!masked.slice(before.end, inlineRunEnd).trim()) continue;
-    const candidates = [...masked.matchAll(sectionHeading(section.pattern, true))]
-      .filter((match) => match.index >= before.end && match.index + match[0].length <= inlineRunEnd);
-    if (candidates.length > 1) return undefined;
-    if (candidates.length === 1) {
-      const start = candidates[0].index;
-      result.splice(after ? result.indexOf(after) : result.length, 0,
-        { label: section.label, start, end: start + candidates[0][0].length });
-    }
-  }
-  return result;
+    const runEnd = Math.min(lineEnd < 0 ? masked.length : lineEnd, after?.start ?? masked.length);
+    return [...masked.matchAll(sectionHeading(section.pattern, true))]
+      .some((match) => match.index >= before.end && match.index + match[0].length <= runEnd);
+  });
 }
 
 function auditSections(body: string): { label: I18nKey; content: string | undefined }[] | undefined {
   const masked = maskFencedCode(body);
   const lineSections = pickSections(masked, false);
-  const found = lineSections ? fillInlineGaps(masked, lineSections) : pickSections(masked, true);
+  const found = lineSections
+    ? (hasAmbiguousInlineSection(masked, lineSections) ? undefined : lineSections)
+    : pickSections(masked, true);
   if (!found) return undefined;
   return REPORT_SECTIONS.map(({ label }) => {
     const index = found.findIndex((section) => section.label === label);
