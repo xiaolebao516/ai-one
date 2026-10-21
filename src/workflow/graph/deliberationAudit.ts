@@ -104,9 +104,36 @@ function pickSections(masked: string, inline: boolean): SectionMatch[] | undefin
   return found.every((section, index) => index === 0 || section.start >= found[index - 1].end) ? found : undefined;
 }
 
+/**
+ * Line headings may leave sections that the audit wrote inline (e.g. "A. Shared conclusions: B.").
+ * Look for each missing one only in the gap between its found neighbours: one candidate fills it,
+ * several make the structure ambiguous, none leaves it genuinely missing.
+ */
+function fillInlineGaps(masked: string, found: SectionMatch[]): SectionMatch[] | undefined {
+  const order = (label: I18nKey) => REPORT_SECTIONS.findIndex((section) => section.label === label);
+  const result = [...found];
+  for (const [index, section] of REPORT_SECTIONS.entries()) {
+    if (result.some((match) => match.label === section.label)) continue;
+    const before = result.filter((match) => order(match.label) < index).at(-1);
+    const after = result.find((match) => order(match.label) > index);
+    const low = before?.end ?? 0;
+    const high = after?.start ?? masked.length;
+    const candidates = [...masked.matchAll(sectionHeading(section.pattern, true))]
+      .filter((match) => match.index >= low && match.index + match[0].length <= high);
+    if (candidates.length > 1) return undefined;
+    if (candidates.length === 1) {
+      const start = candidates[0].index;
+      result.splice(after ? result.indexOf(after) : result.length, 0,
+        { label: section.label, start, end: start + candidates[0][0].length });
+    }
+  }
+  return result;
+}
+
 function auditSections(body: string): { label: I18nKey; content: string | undefined }[] | undefined {
   const masked = maskFencedCode(body);
-  const found = pickSections(masked, false) ?? pickSections(masked, true);
+  const lineSections = pickSections(masked, false);
+  const found = lineSections ? fillInlineGaps(masked, lineSections) : pickSections(masked, true);
   if (!found) return undefined;
   return REPORT_SECTIONS.map(({ label }) => {
     const index = found.findIndex((section) => section.label === label);
