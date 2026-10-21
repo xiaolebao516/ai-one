@@ -17,6 +17,34 @@ export interface NavBlockedPayload {
   host: string;
 }
 
+// Result of asking a provider page to stop. 'clicked' means a stop control was clicked, not that
+// generation is confirmed stopped; the page engine re-checks idle before its next send.
+export interface ProviderStopResult {
+  outcome: 'clicked' | 'not-found' | 'skipped' | 'unavailable' | 'error';
+  generating?: boolean;
+  detail?: string;
+}
+
+const STOP_ENGINE_JS =
+  "window.__MAC_ENGINE__ && typeof window.__MAC_ENGINE__.stop === 'function' ? window.__MAC_ENGINE__.stop() : null";
+
+export function parseProviderStopResult(raw: string): ProviderStopResult {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw) as unknown;
+    if (typeof value === 'string') value = JSON.parse(value) as unknown;
+  } catch {
+    return { outcome: 'error', detail: 'unreadable stop result' };
+  }
+  if (!value || typeof value !== 'object') return { outcome: 'unavailable', detail: 'page engine not loaded' };
+  const result = value as { found?: unknown; clicked?: unknown; generating?: unknown; skipped?: unknown; error?: unknown };
+  const generating = result.generating === true;
+  if (typeof result.error === 'string') return { outcome: 'error', generating, detail: result.error };
+  if (typeof result.skipped === 'string') return { outcome: 'skipped', generating, detail: result.skipped };
+  if (result.clicked === true) return { outcome: 'clicked', generating };
+  return { outcome: 'not-found', generating };
+}
+
 // CSS px × devicePixelRatio = 實體像素。dpr 已包含 WebView2 頁面縮放
 // （Windows「文字大小」會變成 ZoomFactor），Logical 座標會少乘這個縮放而錯位。
 const toBounds = (rect: DOMRectReadOnly) => {
@@ -80,11 +108,8 @@ export const host = {
           payload: { text },
         })});`,
       }),
-    stop: (provider: AIProvider): Promise<void> =>
-      invoke('provider_eval', {
-        provider,
-        js: "window.__MAC_ENGINE__ && typeof window.__MAC_ENGINE__.stop === 'function' && window.__MAC_ENGINE__.stop();",
-      }),
+    stop: async (provider: AIProvider): Promise<ProviderStopResult> =>
+      parseProviderStopResult(await invoke<string>('provider_eval_with_callback', { provider, js: STOP_ENGINE_JS })),
     openLogin: (provider: AIProvider): Promise<void> => invoke('provider_open_login', { provider }),
     openLoginExternal: (provider: AIProvider): Promise<void> => invoke('provider_open_login_external', { provider }),
     reload: (provider: AIProvider): Promise<void> => invoke('provider_reload', { provider }),

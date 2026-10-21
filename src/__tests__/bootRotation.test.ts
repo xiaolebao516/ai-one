@@ -26,7 +26,7 @@ vi.mock('../host', () => ({
       fill: vi.fn(),
       eval: vi.fn(),
       evalWithCallback: vi.fn(),
-      stop: vi.fn(() => Promise.resolve()),
+      stop: vi.fn(() => Promise.resolve({ outcome: 'clicked' as const })),
     },
     connections: {
       get: vi.fn(),

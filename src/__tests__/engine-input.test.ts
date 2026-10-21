@@ -20,6 +20,10 @@ const CHATGPT_TURN_SELECTOR = '[data-testid^="conversation-turn-"]';
 const CHATGPT_REASONING_SIDECAR_SELECTOR = '[data-testid*="reasoning"]';
 const CHATGPT_COPY_BUTTON_TEST_ID = 'copy-turn-action-button';
 const CHATGPT_TERMINAL_SAMPLE_INTERVAL_MS = 400;
+// Mirrors injected/engine.ts: after a host stop, 4 consecutive idle samples 250 ms apart.
+const STOP_IDLE_SAMPLE_MS = 250;
+const STOP_IDLE_CONFIRM_MS = STOP_IDLE_SAMPLE_MS * 3;
+const STOP_IDLE_MAX_WAIT_MS = 5_000;
 const CHATGPT_TERMINAL_STABLE_MS = 1_200;
 const LEGACY_GROK_EDITOR_SELECTOR = '.ProseMirror[contenteditable="true"]';
 const GROK_TEXTAREA_SELECTORS = [
@@ -1957,11 +1961,141 @@ describe('injected engine input hardening', () => {
     await flushMicrotasks();
 
     send(handler, 'retry draft');
-    await vi.advanceTimersByTimeAsync(PRE_SEND_DELAY_MS);
+    // The retry first confirms the page stayed idle after the stop.
+    await vi.advanceTimersByTimeAsync(STOP_IDLE_CONFIRM_MS + PRE_SEND_DELAY_MS);
 
     expect(env.input.textContent).toBe('retry draft');
     expect(env.sendButton?.clickCount).toBe(2);
     expect(errorDone(env)).toBeUndefined();
+  });
+
+  describe('send busy gate and stop results (#15)', () => {
+    const geminiLike = { provider: 'gemini' as AIProvider, thinkingDetectors: ['.thinking'], stopButtonSelectors: ['button.stop'] };
+    type StopResult = { found: boolean; clicked: boolean; generating: boolean; error?: string; skipped?: string };
+    const engineStop = () =>
+      (window as unknown as { __MAC_ENGINE__?: { stop?: () => StopResult } }).__MAC_ENGINE__?.stop?.();
+
+    it('sends normally when a non-ChatGPT page is idle', async () => {
+      vi.useFakeTimers();
+      const env = createEnv({ inputKind: 'textarea' });
+      const handler = await installEngine(env);
+      dispatchAdapter(handler, geminiLike);
+
+      send(handler, 'idle page prompt', 'gemini');
+      await vi.advanceTimersByTimeAsync(PRE_SEND_DELAY_MS);
+
+      expect(env.input.textContent).toBe('idle page prompt');
+      expect(env.sendButton?.clickCount).toBe(1);
+      expect(errorDone(env)).toBeUndefined();
+    });
+
+    it('refuses to send while a non-ChatGPT page is still generating, without touching the composer', async () => {
+      vi.useFakeTimers();
+      const env = createEnv({ inputKind: 'textarea' });
+      const handler = await installEngine(env);
+      dispatchAdapter(handler, geminiLike);
+      env.thinking = true;
+
+      send(handler, 'must not land on a busy page', 'gemini');
+      await vi.advanceTimersByTimeAsync(PRE_SEND_DELAY_MS + SEND_RETRY_DELAY_MS);
+
+      expect(errorDone(env)?.payload).toBe('[Error: gemini send rejected: provider is still generating]');
+      expect(env.sendButton?.clickCount).toBe(0);
+      expect(env.input.textContent).not.toBe('must not land on a busy page');
+    });
+
+    it('reports that the stop control was found and clicked while generating', async () => {
+      vi.useFakeTimers();
+      const env = createEnv({ inputKind: 'textarea' });
+      const stopButton = new FakeElement(env.document, 'button');
+      env.detectorElements.set('button.stop', [stopButton]);
+      const handler = await installEngine(env);
+      dispatchAdapter(handler, geminiLike);
+      env.thinking = true;
+
+      expect(engineStop()).toEqual({ found: true, clicked: true, generating: true });
+      expect(stopButton.clickCount).toBe(1);
+    });
+
+    it('reports a missing stop control instead of silently skipping it', async () => {
+      vi.useFakeTimers();
+      const env = createEnv({ inputKind: 'textarea' });
+      const handler = await installEngine(env);
+      dispatchAdapter(handler, geminiLike);
+      env.thinking = true;
+
+      expect(engineStop()).toEqual({ found: false, clicked: false, generating: true });
+    });
+
+    it('reports an error thrown by the stop control click', async () => {
+      vi.useFakeTimers();
+      const env = createEnv({ inputKind: 'textarea' });
+      const stopButton = new FakeElement(env.document, 'button');
+      stopButton.onClick = () => {
+        throw new Error('click blocked');
+      };
+      env.detectorElements.set('button.stop', [stopButton]);
+      const handler = await installEngine(env);
+      dispatchAdapter(handler, geminiLike);
+
+      expect(engineStop()).toMatchObject({ found: true, clicked: false, error: 'click blocked' });
+    });
+
+    it('refuses the next send after a stop while the page keeps generating', async () => {
+      vi.useFakeTimers();
+      const env = createEnv({ inputKind: 'textarea' });
+      const handler = await installEngine(env);
+      dispatchAdapter(handler, geminiLike);
+      env.thinking = true;
+      engineStop();
+
+      send(handler, 'must wait for a confirmed stop', 'gemini');
+      await vi.advanceTimersByTimeAsync(STOP_IDLE_MAX_WAIT_MS - STOP_IDLE_SAMPLE_MS);
+      expect(errorDone(env)).toBeUndefined();
+      expect(env.sendButton?.clickCount).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(STOP_IDLE_SAMPLE_MS * 2);
+      expect(errorDone(env)?.payload).toBe('[Error: gemini send rejected: stop not confirmed, provider may still be generating]');
+      expect(env.sendButton?.clickCount).toBe(0);
+      expect(env.input.textContent).not.toBe('must wait for a confirmed stop');
+    });
+
+    it('does not treat a single idle snapshot after a stop as a confirmed stop', async () => {
+      vi.useFakeTimers();
+      const env = createEnv({ inputKind: 'textarea' });
+      const handler = await installEngine(env);
+      dispatchAdapter(handler, geminiLike);
+      env.thinking = true;
+      engineStop();
+
+      // Idle for one sample, then generating again.
+      env.thinking = false;
+      send(handler, 'not on a flicker', 'gemini');
+      await flushMicrotasks();
+      env.thinking = true;
+      await vi.advanceTimersByTimeAsync(STOP_IDLE_CONFIRM_MS + PRE_SEND_DELAY_MS);
+
+      expect(env.sendButton?.clickCount).toBe(0);
+      expect(env.input.textContent).not.toBe('not on a flicker');
+    });
+
+    it('sends after a stop once the page stays idle for the confirmation window', async () => {
+      vi.useFakeTimers();
+      const env = createEnv({ inputKind: 'textarea' });
+      const handler = await installEngine(env);
+      dispatchAdapter(handler, geminiLike);
+      env.thinking = true;
+      engineStop();
+
+      send(handler, 'after a confirmed stop', 'gemini');
+      await vi.advanceTimersByTimeAsync(STOP_IDLE_SAMPLE_MS * 2);
+      env.thinking = false;
+      await vi.advanceTimersByTimeAsync(STOP_IDLE_CONFIRM_MS + STOP_IDLE_SAMPLE_MS + PRE_SEND_DELAY_MS);
+
+      expect(env.input.textContent).toBe('after a confirmed stop');
+      expect(env.sendButton?.clickCount).toBe(1);
+      expect(errorDone(env)).toBeUndefined();
+    });
   });
 
   it('clicks Grok\'s live chat-stop-button when the host stops the provider', async () => {
@@ -1996,8 +2130,9 @@ describe('injected engine input hardening', () => {
       },
     });
 
-    env.thinking = true;
     send(handler, 'first draft');
+    // Generation starts after the send is accepted; an already-busy page would be refused.
+    env.thinking = true;
     await flushMicrotasks();
     env.responses = [new FakeElement(env.document, 'div', 'first answer')];
     await vi.advanceTimersByTimeAsync(1_010);
@@ -2032,8 +2167,9 @@ describe('injected engine input hardening', () => {
       },
     });
 
-    env.thinking = true;
     send(handler, 'draft');
+    // Generation starts after the send is accepted; an already-busy page would be refused.
+    env.thinking = true;
     await flushMicrotasks();
     const response = new FakeElement(env.document, 'div', 'partial answer');
     env.responses = [response];
@@ -2060,7 +2196,6 @@ describe('injected engine input hardening', () => {
     vi.useFakeTimers();
     const env = createEnv({ inputKind: 'textarea' });
     const stopButton = new FakeElement(env.document, 'button');
-    env.detectorElements.set(GROK_CHAT_STOP_BUTTON_SELECTOR, [stopButton]);
     const handler = await installEngine(env);
     dispatchAdapter(handler, {
       timing: {
@@ -2072,6 +2207,8 @@ describe('injected engine input hardening', () => {
     });
 
     send(handler, 'use Heavy reasoning');
+    // Generation starts after the send is accepted; an already-busy page would be refused.
+    env.detectorElements.set(GROK_CHAT_STOP_BUTTON_SELECTOR, [stopButton]);
     await flushMicrotasks();
     env.responses = [new FakeElement(env.document, 'div', 'intermediate Heavy answer')];
     await vi.advanceTimersByTimeAsync(20);
@@ -2106,7 +2243,6 @@ describe('injected engine input hardening', () => {
     const setThinking = (thinking: boolean) => {
       env.detectorElements.set(GROK_CHAT_STOP_BUTTON_SELECTOR, thinking ? [stopButton] : []);
     };
-    setThinking(initiallyThinking);
     const handler = await installEngine(env);
     dispatchAdapter(handler, {
       timing: {
@@ -2119,6 +2255,8 @@ describe('injected engine input hardening', () => {
     if (env.sendButton) env.sendButton.onClick = () => env.input.setVisibleText('');
 
     send(handler, 'multi-phase Heavy answer');
+    // Generation starts after the send is accepted; an already-busy page would be refused.
+    setThinking(initiallyThinking);
     await flushMicrotasks();
     env.responses = [new FakeElement(env.document, 'div', 'unchanged intermediate answer')];
     await vi.advanceTimersByTimeAsync(initiallyThinking ? 12_000 : 3_000);
@@ -2497,8 +2635,9 @@ describe('injected engine input hardening', () => {
       },
     });
 
-    env.thinking = true;
     send(handler, 'ask something');
+    // Generation starts after the send is accepted; an already-busy page would be refused.
+    env.thinking = true;
     await flushMicrotasks();
     env.responses = [new FakeElement(env.document, 'div', 'opening line')];
     await vi.advanceTimersByTimeAsync(1_000);

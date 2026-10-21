@@ -15,7 +15,7 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: listenMock,
 }));
 
-import { host } from '../host';
+import { host, parseProviderStopResult } from '../host';
 
 describe('host snapshot bindings', () => {
   beforeEach(() => {
@@ -101,15 +101,30 @@ describe('host snapshot bindings', () => {
     });
   });
 
-  it('stops provider automation through the semantic engine command', async () => {
-    invokeMock.mockResolvedValueOnce(undefined);
+  it('stops provider automation through the semantic engine command and returns what the page did', async () => {
+    invokeMock.mockResolvedValueOnce(JSON.stringify({ found: true, clicked: true, generating: true }));
 
-    await host.provider.stop('chatgpt');
+    await expect(host.provider.stop('chatgpt')).resolves.toEqual({ outcome: 'clicked', generating: true });
 
-    expect(invokeMock).toHaveBeenLastCalledWith('provider_eval', {
+    expect(invokeMock).toHaveBeenLastCalledWith('provider_eval_with_callback', {
       provider: 'chatgpt',
-      js: "window.__MAC_ENGINE__ && typeof window.__MAC_ENGINE__.stop === 'function' && window.__MAC_ENGINE__.stop();",
+      js: "window.__MAC_ENGINE__ && typeof window.__MAC_ENGINE__.stop === 'function' ? window.__MAC_ENGINE__.stop() : null",
     });
+  });
+
+  it.each([
+    ['a missing stop control', { found: false, clicked: false, generating: true }, { outcome: 'not-found', generating: true }],
+    ['a click error', { found: true, clicked: false, generating: false, error: 'click blocked' }, { outcome: 'error', generating: false, detail: 'click blocked' }],
+    ['a skipped stop', { found: false, clicked: false, generating: false, skipped: 'challenge' }, { outcome: 'skipped', generating: false, detail: 'challenge' }],
+  ])('maps %s to a non-clicked stop outcome', (_label, page, expected) => {
+    expect(parseProviderStopResult(JSON.stringify(page))).toEqual(expected);
+  });
+
+  it('treats a page without the engine or an unreadable result as an unconfirmed stop', () => {
+    expect(parseProviderStopResult('null')).toEqual({ outcome: 'unavailable', detail: 'page engine not loaded' });
+    expect(parseProviderStopResult('false')).toEqual({ outcome: 'unavailable', detail: 'page engine not loaded' });
+    expect(parseProviderStopResult('not json')).toEqual({ outcome: 'error', detail: 'unreadable stop result' });
+    expect(parseProviderStopResult(JSON.stringify(JSON.stringify({ clicked: true })))).toEqual({ outcome: 'clicked', generating: false });
   });
 
   it('shows providers without stealing popup focus unless explicitly requested', async () => {

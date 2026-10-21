@@ -54,7 +54,7 @@ vi.mock('../host', () => ({
       fill: vi.fn(),
       eval: vi.fn(),
       evalWithCallback: vi.fn(),
-      stop: vi.fn(() => Promise.resolve()),
+      stop: vi.fn(() => Promise.resolve({ outcome: 'clicked' as const })),
     },
     connections: {
       get: vi.fn(),
@@ -973,11 +973,13 @@ describe('workflow engine', () => {
     const timeoutEvents: StepTimeoutEvent[] = [];
     const unsubscribe = onStepTimeoutEvent((event) => timeoutEvents.push(event));
     let releaseSlowStop: (() => void) | undefined;
-    const slowStop = new Promise<void>((resolve) => {
-      releaseSlowStop = resolve;
+    const slowStop = new Promise<{ outcome: 'clicked' }>((resolve) => {
+      releaseSlowStop = () => resolve({ outcome: 'clicked' });
     });
     const failedProvider = DEFAULT_ROUNDTABLE_ROLES.first;
-    vi.mocked(host.provider.stop).mockImplementation((provider) => (provider === failedProvider ? slowStop : Promise.resolve()));
+    vi.mocked(host.provider.stop).mockImplementation((provider) =>
+      provider === failedProvider ? slowStop : Promise.resolve({ outcome: 'clicked' as const }),
+    );
     vi.mocked(host.provider.send).mockImplementation(async (provider) => {
       publishBridgeMessage(done(provider, '[Error: adapter not installed]'));
     });

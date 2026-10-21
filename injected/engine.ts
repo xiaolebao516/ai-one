@@ -38,8 +38,24 @@ interface AdapterConfig {
 interface MacEngineState {
   bootId: string;
   adapterVersion: number;
-  stop?: () => void;
+  stop?: () => EngineStopResult;
 }
+
+// What a host stop request actually did on the page. Clicking a stop control does not prove the
+// page stopped generating; the next send re-checks that the page stays idle (confirmIdleAfterStop).
+interface EngineStopResult {
+  found: boolean;
+  clicked: boolean;
+  generating: boolean;
+  skipped?: 'no-adapter' | 'challenge';
+  error?: string;
+}
+
+// After a stop, the next send waits for this many consecutive idle samples before sending, and
+// gives up (rejecting the send) if the page does not stay idle within the max wait.
+const STOP_IDLE_SAMPLE_MS = 250;
+const STOP_IDLE_REQUIRED_SAMPLES = 4;
+const STOP_IDLE_MAX_WAIT_MS = 5_000;
 
 type InputStrategy = (el: Element, text: string, assertCanMutate: ChallengeMutationGuard) => void | Promise<void>;
 
@@ -308,6 +324,8 @@ class InactiveSendOperationError extends Error {
   let lastChunkTime = 0;
   let lastActivatedInput: Element | null = null;
   let chatGptTerminalGate: ChatGptTerminalGateState = emptyChatGptTerminalGate();
+  // Set by every host stop. The next send must first see the page stay idle (confirmIdleAfterStop).
+  let stopUnconfirmed = false;
 
   window.__MAC_ENGINE__ = {
     bootId: bridge.bootId,
@@ -368,8 +386,22 @@ class InactiveSendOperationError extends Error {
       const sendOperation = beginSendOperation(message.provider);
       if (sendOperation === undefined) return;
       if (abortAutomationForChallenge(message.provider, true, 'send', sendOperation)) return;
-      if (rejectSendWhileProviderGenerating(message.provider, sendOperation)) return;
       const payload = message.payload as { text?: string } | undefined;
+      if (stopUnconfirmed) {
+        void confirmIdleAfterStop(sendOperation).then((idle) => {
+          if (!isActiveSendOperation(sendOperation)) return;
+          if (!idle) {
+            const provider = message.provider ?? adapter?.provider;
+            doneWithError(`${provider} send rejected: stop not confirmed, provider may still be generating`, provider, sendOperation);
+            return;
+          }
+          stopUnconfirmed = false;
+          if (rejectSendWhileProviderBusy(message.provider, sendOperation)) return;
+          void sendMessage(payload?.text ?? '', message.provider, sendOperation);
+        });
+        return;
+      }
+      if (rejectSendWhileProviderBusy(message.provider, sendOperation)) return;
       void sendMessage(payload?.text ?? '', message.provider, sendOperation);
       return;
     }
@@ -499,23 +531,35 @@ class InactiveSendOperationError extends Error {
     return queryFirst(activeAdapter.inputSelectors);
   }
 
-  function stop() {
+  function stop(): EngineStopResult {
+    const result: EngineStopResult = { found: false, clicked: false, generating: false };
     try {
-      if (adapter && !abortAutomationForChallenge(adapter.provider, false, 'stop')) {
+      if (!adapter) {
+        result.skipped = 'no-adapter';
+      } else if (abortAutomationForChallenge(adapter.provider, false, 'stop')) {
+        result.skipped = 'challenge';
+      } else {
+        result.generating = providerBusyAtSendStart(adapter.provider);
         const liveGrokButton =
           adapter.provider === 'grok' ? queryFirstVisible([GROK_LIVE_STOP_BUTTON_SELECTOR]) : null;
-        const button = liveGrokButton ?? queryFirstVisible(adapter.stopButtonSelectors ?? []);
-        (button as HTMLElement | null)?.click?.();
+        const button = (liveGrokButton ?? queryFirstVisible(adapter.stopButtonSelectors ?? [])) as HTMLElement | null;
+        result.found = button !== null;
+        if (button && typeof button.click === 'function') {
+          button.click();
+          result.clicked = true;
+        }
       }
-    } catch {
-      // best effort
+    } catch (error) {
+      result.error = error instanceof Error ? error.message : String(error);
     } finally {
       // The host already completed its waiter when it calls stop after a timeout. Release the
       // page-side generation too, or beginSendOperation() rejects every later Retry until reload.
       cancelResponseWait();
       activeSendOperation = undefined;
       draftStaging = false;
+      stopUnconfirmed = true;
     }
+    return result;
   }
 
   function hasDetector(detectors: Detector[] = []): boolean {
@@ -1641,6 +1685,50 @@ class InactiveSendOperationError extends Error {
     if (!provider) return false;
     doneWithError(`${provider} send rejected: provider is still generating`, provider, sendOperation);
     return true;
+  }
+
+  // Send-start gate for every provider: ChatGPT's strong activity plus the adapter's thinking
+  // detectors (which include each provider's stop control). The ChatGPT-only checks during the
+  // send itself stay in rejectSendWhileProviderGenerating.
+  function providerBusyAtSendStart(providerHint?: AIProvider): boolean {
+    if (providerStillGeneratingBeforeSend(providerHint)) return true;
+    if (providerHint && adapter && providerHint !== adapter.provider) return false;
+    return isThinking();
+  }
+
+  function rejectSendWhileProviderBusy(providerHint: AIProvider | undefined, sendOperation: number): boolean {
+    if (!providerBusyAtSendStart(providerHint)) return false;
+    const provider = providerHint ?? adapter?.provider;
+    if (!provider) return false;
+    doneWithError(`${provider} send rejected: provider is still generating`, provider, sendOperation);
+    return true;
+  }
+
+  // A single idle snapshot right after a stop is not proof that generation ended, so require
+  // several consecutive idle samples. Resolves false if the page stays busy past the max wait or
+  // the send operation is released (for example by another stop).
+  function confirmIdleAfterStop(sendOperation: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const startedAt = Date.now();
+      let idleSamples = 0;
+      const sample = () => {
+        if (!isActiveSendOperation(sendOperation)) {
+          resolve(false);
+          return;
+        }
+        idleSamples = providerBusyAtSendStart() ? 0 : idleSamples + 1;
+        if (idleSamples >= STOP_IDLE_REQUIRED_SAMPLES) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() - startedAt >= STOP_IDLE_MAX_WAIT_MS) {
+          resolve(false);
+          return;
+        }
+        window.setTimeout(sample, STOP_IDLE_SAMPLE_MS);
+      };
+      sample();
+    });
   }
 
   function emptyChatGptTerminalGate(): ChatGptTerminalGateState {
