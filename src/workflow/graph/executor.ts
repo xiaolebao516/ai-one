@@ -127,7 +127,7 @@ export async function executeGraph(graph: WorkflowGraph, params: ExecuteGraphPar
     }
 
     if (graph.onComplete?.report?.kind === 'deliberation') {
-      emitSystemNotice(deliberationAuditReport(graph.onComplete.report.rounds, (nodeId) => context.outputs.get(nodeId)?.text));
+      emitSystemNotice(deliberationAuditReport(graph.onComplete.report.rounds, (nodeId) => context.outputs.get(nodeId)?.text, context.locale));
     }
     if (graph.onComplete?.status !== undefined) sendWorkflowStatus(graph.onComplete.status);
     else sendWorkflowStatus('');

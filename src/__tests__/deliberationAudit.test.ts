@@ -48,3 +48,115 @@ describe('independent audit parser through WebView serializer', () => {
     expect(deliberationAuditReport(rounds, (id) => id === 'a' ? 'bad' : good.get(id))).toContain('INCOMPLETE_BLOCKED');
   });
 });
+
+describe('deliberation final report', () => {
+  const twoRounds = [
+    { round: 1, first: 'f1', second: 's1', auditor: 'a1' },
+    { round: 2, first: 'f2', second: 's2', auditor: 'a2' },
+    { round: 3, first: 'f3', second: 's3', auditor: 'a3' },
+  ];
+  const continueAudit = 'Evidence-backed findings: Partial.\nShared conclusions: Some.\nDisagreements: Calibration.\nEvidence gaps: Repeatability.\nNext steps: Ask again.\n' +
+    '[[AI_ONE_AUDIT_DECISION:CONTINUE]]\n[[AI_ONE_AUDIT_RESULT:DISAGREEMENTS]]\n[[AI_ONE_AUDIT_QUESTION:Check the 12.05 patch notes]]';
+  const finishAudit = [
+    'I reviewed both replies in this round.',
+    '## Evidence-backed findings',
+    'Patch notes confirm the nerf.',
+    '## **Shared conclusions**',
+    'Both accept the current win rates.',
+    '## Disagreements',
+    'Whether the ceiling is higher in coordinated teams.',
+    '## Evidence gaps',
+    'No public high-tier team data.',
+    '## Next steps',
+    'Deliver the conclusion to the user.',
+    '```',
+    '[[AI_ONE_AUDIT_DECISION:FINISH]]',
+    '[[AI_ONE_AUDIT_RESULT:DISAGREEMENTS]]',
+    '[[AI_ONE_AUDIT_QUESTION:NONE]]',
+    '```',
+  ].join('\n');
+  const outputs = new Map([['f1', 'x'], ['s1', 'y'], ['a1', continueAudit], ['f2', 'x2'], ['s2', 'y2'], ['a2', finishAudit]]);
+  const get = (id: string) => outputs.get(id);
+
+  it('turns the last audit into localized sections without control tags or a verbatim repeat', () => {
+    const report = deliberationAuditReport(twoRounds, get, 'zh-TW');
+    expect(report).toContain('`COMPLETE_WITH_DISAGREEMENTS (round 2 of 3)`');
+    expect(report).toContain('最終報告：仍有分歧');
+    const headings = ['### 有證據支持的結論', '### 雙方共同結論', '### 仍有分歧', '### 證據缺口', '### 下一步'];
+    const positions = headings.map((heading) => report.indexOf(heading));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    const section = (heading: string) => report.slice(report.indexOf(heading) + heading.length).split('\n### ')[0].trim();
+    expect(section('### 有證據支持的結論')).toBe('Patch notes confirm the nerf.');
+    expect(section('### 雙方共同結論')).toBe('Both accept the current win rates.');
+    expect(section('### 仍有分歧')).toBe('Whether the ceiling is higher in coordinated teams.');
+    expect(section('### 證據缺口')).toBe('No public high-tier team data.');
+    expect(section('### 下一步').startsWith('Deliver the conclusion to the user.')).toBe(true);
+    expect(report).not.toContain('[[AI_ONE_AUDIT');
+    expect(report).not.toContain('```');
+    expect(report).not.toContain('I reviewed both replies in this round.');
+    expect(report).not.toMatch(/Evidence gaps|Next steps|Shared conclusions/);
+  });
+
+  it('summarizes the process, including the audit question that drove each extra round', () => {
+    const report = deliberationAuditReport(twoRounds, get, 'zh-TW');
+    expect(report).toContain('獨立初答 → 第 1 輪討論 → 審計：繼續（待查：Check the 12.05 patch notes） → 第 2 輪討論 → 審計：結束');
+  });
+
+  it('parses headings that a WebView serializes from real heading and code elements', () => {
+    const root = element('div', [
+      element('h2', [textNode('Evidence-backed findings')]), element('p', [textNode('Supported A.')]),
+      element('h2', [textNode('Shared conclusions')]), element('p', [textNode('Shared B.')]),
+      element('h3', [element('strong', [textNode('Disagreements')])]), element('p', [textNode('Disputed C.')]),
+      element('p', [element('strong', [textNode('Evidence gaps:')]), textNode(' Missing D.')]),
+      element('h2', [textNode('Next steps')]), element('ul', [element('li', [textNode('Do E.')])]),
+      element('pre', [element('code', [textNode('[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:AGREED]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]')])]),
+    ]);
+    const serialized = serializeResponseText(root as unknown as Element);
+    const report = deliberationAuditReport([{ round: 1, first: 'f', second: 's', auditor: 'a' }],
+      (id) => ({ f: 'x', s: 'y', a: serialized } as Record<string, string>)[id], 'en');
+    expect(report).toContain('`COMPLETE_AGREED (round 1 of 3)`');
+    expect(report).toContain('Final report: agreement reached');
+    expect(report).toMatch(/### Evidence-backed findings\n\nSupported A\./);
+    expect(report).toMatch(/### Remaining disagreements\n\nDisputed C\./);
+    expect(report).toMatch(/### Evidence gaps\n\nMissing D\./);
+    expect(report).toMatch(/### Next steps\n\n- Do E\./);
+    expect(report).not.toContain('[[AI_ONE_AUDIT');
+    expect(report).not.toContain('```');
+  });
+
+  it('accepts inline headings and shows NONE as a localized empty section', () => {
+    const audit = 'Evidence-backed findings: Fact. Shared conclusions: Agreement. Disagreements: NONE. Evidence gaps: none. Next steps: Verify.\n' +
+      '[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:AGREED]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]';
+    const report = deliberationAuditReport([{ round: 1, first: 'f', second: 's', auditor: 'a' }],
+      (id) => ({ f: 'x', s: 'y', a: audit } as Record<string, string>)[id], 'zh-TW');
+    expect(report).toMatch(/### 仍有分歧\n\n無/);
+    expect(report).toMatch(/### 證據缺口\n\n無/);
+    expect(report).toMatch(/### 下一步\n\nVerify\./);
+  });
+
+  it('falls back honestly when the audit has a valid decision but no section headings', () => {
+    const audit = 'Overall the two answers converge but one source is unverified.\n' +
+      '[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:DISAGREEMENTS]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]';
+    const report = deliberationAuditReport([{ round: 1, first: 'f', second: 's', auditor: 'a' }],
+      (id) => ({ f: 'x', s: 'y', a: audit } as Record<string, string>)[id], 'zh-TW');
+    expect(report).toContain('COMPLETE_WITH_DISAGREEMENTS');
+    expect(report).toContain('審計沒有按約定的標題分段');
+    expect(report).toContain('Overall the two answers converge but one source is unverified.');
+    expect(report).not.toContain('### 有證據支持的結論');
+    expect(report).not.toContain('[[AI_ONE_AUDIT');
+  });
+
+  it('marks the round budget and keeps blocked reports explicit in every language', () => {
+    const outputs3 = new Map([...outputs, ['a2', continueAudit], ['f3', 'x3'], ['s3', 'y3'], ['a3', finishAudit]]);
+    const en = deliberationAuditReport(twoRounds, (id) => outputs3.get(id), 'en');
+    expect(en).toContain('round budget exhausted');
+    expect(deliberationAuditReport(twoRounds, (id) => outputs3.get(id), 'zh-TW')).toContain('已用完全部 3 輪');
+    for (const locale of ['en', 'zh-TW', 'ja', 'de'] as const) {
+      expect(deliberationAuditReport(twoRounds, () => undefined, locale)).toContain('`INCOMPLETE_BLOCKED`');
+      // An unparseable round-1 audit cannot continue the graph, so no round-2 outputs exist.
+      expect(deliberationAuditReport(twoRounds, (id) => id === 'a1' ? 'unparseable audit text' : id.endsWith('1') ? outputs.get(id) : undefined, locale))
+        .toContain('`INCOMPLETE_BLOCKED (round 1)`');
+    }
+  });
+});
