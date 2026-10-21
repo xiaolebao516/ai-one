@@ -1,6 +1,6 @@
 # AI 协作工作台 V1：产品交互与 UI/UX 设计方案
 
-> **HISTORICAL / NOT CURRENT PRODUCT SSOT。** 本文是旧 V1 的设计稿（对应旧 V1 Epic #1 与旧任务 #7，二者均已被 #32 取代），保留原文作历史参考，不是当前交付要求。当前产品方向以 [Spec #32](https://github.com/xiaolebao516/ai-one/issues/32) 为准；v2 产品形态与原型设计见 [#33](https://github.com/xiaolebao516/ai-one/issues/33)（评审中，未合并）。
+> **HISTORICAL / NOT CURRENT PRODUCT SSOT。** 本文是旧 V1 的设计稿（对应旧 V1 Epic #1 与旧任务 #7，二者均已被 #32 取代），保留原文作历史参考，不是当前交付要求。当前产品方向以 [Spec #32](https://github.com/xiaolebao516/ai-one/issues/32) 为准；当前设计参考是 v2 设计稿 [`v2-product-design.md`](v2-product-design.md) 与 [`v2-prototype/`](v2-prototype/index.html)（#33）。
 
 - 状态：评审稿**修订版**，待与 Codex 的技术方案共同评审。评审通过前不进入设计稿落地和前端实现。
 - 日期：2026-10-20

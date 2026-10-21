@@ -1,6 +1,6 @@
 # ai-one：AI 协作工作台
 
-ai-one 是服务自己实际开发的、任务驱动的多 AI 协作工作台：把 Claude Code 经 Prodex 派 ChatGPT 开发、独立审计、返工、复审的工作方式，集中到一个有明确进度的入口，复用用户已有的 AI 网页订阅。
+ai-one 的目标是做一个服务自己实际开发的、任务驱动的多 AI 协作工作台：先把已在仓库外跑通的 Claude Code 经 Prodex 派 ChatGPT 开发、独立审计、返工、复审的工作方式，集中到一个有明确进度的入口，复用用户已有的 AI 网页订阅。
 
 **当前产品需求的唯一入口是 [Spec #32](https://github.com/xiaolebao516/ai-one/issues/32)。** 协作规则见 [`AGENTS.md`](AGENTS.md)，文档导航见 [`docs/README.md`](docs/README.md)，技术调研见 [`TECHNICAL-RESEARCH-V1.md`](TECHNICAL-RESEARCH-V1.md)。
 
@@ -10,8 +10,8 @@ ai-one 是服务自己实际开发的、任务驱动的多 AI 协作工作台：
 
 | 状态 | 内容 |
 |---|---|
-| **已进入 `main`** | 应用代码以 [Multi-AI Chat Desktop](https://github.com/TED-H-com/multi-ai-chat-desktop) `v1.9.7`（`6bcf904`）为基线导入，加一处截断保护修复（#2、#3 / PR #14）；发送忙碌门禁与停止失败可见（#15 / PR #16）；Issue-first 的 Spec / Task / Handoff 模板与协作规则（#29 / PR #30）。目前运行的仍是上游应用的功能加这些改动。 |
-| **Draft，待验收** | 多轮双 AI 讨论与独立审计（[#18](https://github.com/xiaolebao516/ai-one/issues/18) / PR #19，真实三 provider 的 Windows WebView 测试待核实）；v2 产品形态与交互原型设计（[#33](https://github.com/xiaolebao516/ai-one/issues/33) / PR #34，设计稿，不是已实现的功能）。 |
+| **已进入 `main`** | 应用代码以 [Multi-AI Chat Desktop](https://github.com/TED-H-com/multi-ai-chat-desktop) `v1.9.7`（`6bcf904`）为基线导入，加一处截断保护修复（#2、#3 / PR #14）；发送忙碌门禁与停止失败可见（#15 / PR #16）；Issue-first 的 Spec / Task / Handoff 模板与协作规则（#29 / PR #30）。目前运行的仍是上游应用的功能加这些改动。另有 v2 产品形态与交互原型的**设计稿**（#33 / PR #34：[`docs/design/v2-product-design.md`](docs/design/v2-product-design.md)、[`docs/design/v2-prototype/`](docs/design/v2-prototype/index.html)），只是设计，不含功能实现。 |
+| **进行中，待验收** | 多轮双 AI 讨论与独立审计（[#18](https://github.com/xiaolebao516/ai-one/issues/18) / PR #19，Draft，真实三 provider 的 Windows WebView 测试待核实）。其余进行中的 Task 以 GitHub 上的开放 PR 为准。 |
 | **外部实验已验证，未集成** | Claude Code 经 Prodex 派 ChatGPT 执行 GitHub 写入、独立审查、按评论返工、多 HEAD 复审与恢复（#26 / #27 / PR #28）。这是在 ai-one 之外跑通的工作流；ai-one 应用内**没有**自动派工或无人值守调度。 |
 | **设计 / 规划** | 任务 HUD、跨仓库视图、自动解析 REVISE 并调度、阶段预设与自定义、CC 与网页 Chat 的双向派工、可靠额度显示（见 Spec #32）。 |
 
@@ -24,7 +24,7 @@ ai-one 是服务自己实际开发的、任务驱动的多 AI 协作工作台：
 | 路径 | 内容 |
 |---|---|
 | `src/` `src-tauri/` `injected/` `adapters/` `shared/` `scripts/` | 应用代码（来自上游）：React 控制面板、Tauri/Rust 宿主、注入网页的脚本、各 AI 网页的选择器配置、开发脚本 |
-| `docs/` | 上游的规格、架构、兼容性与发布文档（`SPEC.md`、`PLAN.md` 为保留的遗留基线），旧 V1 设计 `docs/design/`（历史参考）；分类见 [`docs/README.md`](docs/README.md) |
+| `docs/` | 上游的规格、架构、兼容性与发布文档（`SPEC.md`、`PLAN.md` 为保留的遗留基线）；`docs/design/` 下有 v2 设计稿（当前设计参考）与旧 V1 设计（历史参考）；分类见 [`docs/README.md`](docs/README.md) |
 | `AGENTS.md`、`TECHNICAL-RESEARCH-V1.md`、`research-evidence/` | ai-one 的协作规则与调研资料 |
 
 ## 环境要求（Windows 10/11 x64）
