@@ -11,6 +11,11 @@ test('preserves Unicode letters and numbers', () => {
   assert.equal(slugify(' 中文 日本 123 '), '中文-日本-123');
 });
 
+test('preserves combining marks inside Unicode words after NFC normalization', () => {
+  assert.equal(slugify('İstanbul'), 'i\u0307stanbul');
+  assert.equal(slugify('re\u0301sume\u0301'), 'résumé');
+});
+
 test('never leaves a leading or trailing hyphen', () => {
   assert.equal(slugify('--- Hello ---'), 'hello');
 });
