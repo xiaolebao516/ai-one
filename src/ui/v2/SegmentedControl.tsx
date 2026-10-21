@@ -47,13 +47,14 @@ export function SegmentedControl({ label, idBase, options, value, onChange, clas
             onClick={option.disabled ? undefined : () => onChange(option.value)}
             onKeyDown={handleKeyDown}
             className={cx(
-              'inline-flex h-v2-control-sm items-center gap-1.5 whitespace-nowrap rounded-v2-sm px-2.5 text-v2-meta transition-colors',
+              'inline-flex h-v2-control-sm items-center gap-1.5 whitespace-nowrap rounded-v2-sm px-2.5 transition-colors',
               'disabled:cursor-not-allowed disabled:opacity-[0.45]',
-              checked ? 'bg-v2-surface font-semibold text-v2-ink shadow-v2-card' : 'text-v2-ink-2 enabled:hover:text-v2-ink',
+              checked ? 'bg-v2-surface text-v2-ink shadow-v2-card' : 'text-v2-ink-2 enabled:hover:text-v2-ink',
             )}
           >
-            <span>{option.label}</span>
-            {option.count !== undefined ? <span className="font-normal text-v2-ink-3">{option.count}</span> : null}
+            {/* Type classes sit on the label: the app's global `[tabindex] { font: inherit }` would override them on the button. */}
+            <span className={cx('text-v2-meta', checked && 'font-semibold')}>{option.label}</span>
+            {option.count !== undefined ? <span className="text-v2-meta text-v2-ink-3">{option.count}</span> : null}
           </button>
         );
       })}

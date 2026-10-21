@@ -260,6 +260,17 @@ describe('isolation and token discipline', () => {
   });
 });
 
+describe('global stylesheet interplay', () => {
+  it('keeps type classes off focusable controls that carry tabIndex (src/styles.css resets their font)', () => {
+    const tabs = Tabs({ label: 'L', idBase: 'g', value: 'a', onChange: vi.fn(), items: [{ id: 'a', label: 'A', count: 1 }, { id: 'b', label: 'B' }] });
+    const segments = SegmentedControl({ label: 'L', idBase: 'h', value: 'a', onChange: vi.fn(), options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B', count: 2 }] });
+    const focusable = [...findAll(tabs, (element) => element.props.tabIndex !== undefined), ...findAll(segments, (element) => element.props.tabIndex !== undefined)];
+    expect(focusable.length).toBe(4);
+    for (const element of focusable) expect(String(element.props.className)).not.toMatch(/(?:^|\s)(?:text-v2-(?:title|heading|lead|body|meta|micro)|font-(?:semibold|bold|normal))(?:\s|$)/);
+    expect(renderToStaticMarkup(tabs)).toContain('font-semibold');
+  });
+});
+
 describe('gallery parameters', () => {
   it('round-trips the view options through the URL and rejects unknown skins', () => {
     const params = { skin: 'mist' as const, mode: 'dark' as const, compare: true };

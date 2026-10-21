@@ -47,13 +47,14 @@ export function Tabs({ label, idBase, items, value, onChange, className }: TabsP
             onClick={item.disabled ? undefined : () => onChange(item.id)}
             onKeyDown={handleKeyDown}
             className={cx(
-              '-mb-px inline-flex h-v2-control-lg items-center gap-1.5 border-b-2 px-0.5 text-v2-body transition-colors',
+              '-mb-px inline-flex h-v2-control-lg items-center gap-1.5 border-b-2 px-0.5 transition-colors',
               'disabled:cursor-not-allowed disabled:opacity-[0.45]',
-              selected ? 'border-v2-primary font-semibold text-v2-ink' : 'border-transparent text-v2-ink-2 enabled:hover:text-v2-ink',
+              selected ? 'border-v2-primary text-v2-ink' : 'border-transparent text-v2-ink-2 enabled:hover:text-v2-ink',
             )}
           >
-            <span>{item.label}</span>
-            {item.count !== undefined ? <span className="text-v2-meta font-normal text-v2-ink-3">{item.count}</span> : null}
+            {/* Type classes sit on the label: the app's global `[tabindex] { font: inherit }` would override them on the button. */}
+            <span className={cx('text-v2-body', selected && 'font-semibold')}>{item.label}</span>
+            {item.count !== undefined ? <span className="text-v2-meta text-v2-ink-3">{item.count}</span> : null}
           </button>
         );
       })}
