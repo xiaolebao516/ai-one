@@ -13,18 +13,22 @@
 - 用户：确定方向、裁决分歧、执行或授权真实账号操作、确认合并。
 - Opus（本地 Claude Code）：主导本地代码开发、UI/UX、桌面运行与实际测试，也可负责技术实现。
 - GPT（ChatGPT + GitHub 连接器）：主导技术方案与任务分解、GitHub Issue、代码审查、PR 交叉验收，以及必要的远程代码修改。
-- 每个 Issue 正文写明 Owner 与 Reviewer。双方按具体 Issue 灵活调整，不固定某一方只做某类工作。
+- Task Issue 写明执行 Owner 和独立 Reviewer；Spec Issue 写明需求负责人和整体验收人。角色随任务调整，作者不能把自审当成独立 Review。
 
-## Issue、PR 与 Handoff
+## Issue-first：Spec、Task、PR 与 Handoff
 
-- Issue 是任务事实源：写明目标、范围、验收、依赖、Owner 与 Reviewer。范围或验收变化时先更新 Issue。
-- 启动或恢复项目任务时，先取得明确的 Issue 入口（链接或仓库 + 编号），读取本文件、相关已有 Spec（若适用）、Issue 正文和最新一条 Handoff，并按需核对 PR、提交及测试证据。若 Handoff 记录的 HEAD 与分支实际 HEAD 不一致，或其后有新的提交或 Review，以 GitHub 实际状态为准并说明差异。用简短状态说明确认执行位置和下一步，不要求用户重述旧对话；缺权限或入口不明确时不猜测进度。
-- 新 Chat、跨模型或跨 Agent 接手时，以已核实的仓库 / Issue / PR 状态为准，不让旧会话记忆覆盖工程事实；普通研究与临时聊天不强制创建 Issue。
-- 一个 Issue 对应一个范围明确的分支和一个 PR。分支命名为 `<类型>/<Issue 号>-<简述>`，例如 `docs/9-issue-pr-handoff`、`feat/5-run-control`。
-- PR 指向 `main`，正文用 `Closes #N` 关联 Issue，按 `.github/pull_request_template.md` 记录改动、验证、已知限制与 Handoff。
-- Handoff 只用 Issue 或 PR 评论，写明：已完成事项、当前分支与 HEAD SHA、实际验证结果与未验证项、阻塞、下一执行者与可执行的下一步；有 PR 时附 PR 链接与 Review 状态。不另建交接文档，不复制完整聊天、秘密或大段日志。
-- 标签只用 `needs-review`（等待审查）、`blocked`（被依赖或外部条件阻塞）、`needs-user`（需要用户决定、授权或真实账号操作）。Owner 写在 Issue 正文，不建身份标签。
-- Reviewer 在 PR 中给出审查意见；Owner 修改后在评论中注明新的 HEAD SHA。用户确认后才合并。
+- **两种 Issue**：`[Spec]` 负责需求的目标、行为、约束、非目标与**整体验收**；`[Task]` 负责一个可独立执行、独立审查的交付增量及**局部验收**。简单明确的需求直接使用独立 Task，不必创建父 Spec 或额外 Markdown 文件；复杂需求使用 Spec 父 Issue 和可验收的 Task 子 Issue，避免在每个子任务复制完整需求。
+- **待设计是合法状态**：Spec 使用 `.github/ISSUE_TEMPLATE/spec.md`，写明负责人、`Spec Revision: v1`、阶段与可检查的交付标准。阶段 `DESIGN_PENDING` 允许暂时没有实施方案、没有子 Issue，但不允许假称可直接执行。复杂需求进入实施阶段前，先拆为可验收的 Task。只有真实 GitHub Sub-issues 关系才算建立了父子结构；仅在正文引用 `#N` 不算。工具不能建立原生关系时应报告待关联，不能伪报完成。
+- **Task 应小而完整**：Task 使用 `.github/ISSUE_TEMPLATE/task.md`，说明本次交付、范围/非目标、依赖、可核验验收及验证手段、Owner、Reviewer、`Complexity: ROUTINE | DEEP`；如有父 Spec，记录其 Issue 和已检查的 `Spec Revision`。粒度以“一次独立 Review 能确认的交付”为准，不按文件或 commit 机械拆分。代码 Task 原则上一个工作分支和一个主要 PR；非代码 Task 可以用可核实成果完成。
+- **变更与重审**：Spec 目标、边界、验收发生实质变化时，负责人先将 `Spec Revision` 递增，并以评论记录改动、原因和影响；所有关联的未完成 Task（含已开 PR）都必须重审，并记录核对的新版本及影响结论。在核对完成前暂停受影响的实施及验收；无影响可继续、范围变化应更新 Task 并复审 PR、失效任务可拆分或取消。排版错字无需升级版本。新 Spec Issue 不得静默覆盖已有 `docs/SPEC.md`、`docs/PLAN.md` 和现有安全/架构基线；冲突由用户先裁决。
+- **完成与及时清理**：每种 Issue 都必须有交付标准。代码 Task 在局部验收、必要验证和 PR 合并（或明确认可的等价交付）后才能以 Completed 关闭；Draft PR 或 CI 绿不代表任务交付。Spec 必须整体验收通过、全部必要子任务妥善处理后才可关闭；不能因子 Issue 全关就自动宣称 Spec Done。尚未实施的 Spec 可保持 Open / DESIGN_PENDING。取消、重复或不实施的任务说明原因，以 GitHub 相应关闭原因结束，保留历史，不删评论/PR。
+- **恢复与交接**：接手 Task 读取本文件、Task 正文、父 Spec 最新正文和修订记录（如有）、最新 Handoff、当前分支/PR HEAD、Review、CI。Handoff 只是线索，不是事实；遇到 Spec 版本未重审、HEAD 不匹配或其他冲突先说明并停止危险写入。不要求用户重述聊天。同一 Task 默认只允许一个活动写入者，这是协作规则而非技术锁；接力继续原分支和 PR，不重复创建。
+- **派工与升级**：协调者按风险和不确定性分级：ROUTINE 优先低成本/免费模型做已明确的实现、文档和测试；DEEP 交给适合的强模型做架构、排障、关键审计。遇到需求歧义、范围扩大、高风险边界或反复失败时，执行者给证据并请协调者决定咨询、升级、拆分，不自行扩权。复杂度只影响派工，不降低验收。派工记录期望模型/effort；无法核实实际档位写 `UNVERIFIED`。
+- **PR 与 Reviewer**：实现 PR 指向 `main`，正文以 `Closes #Task编号` 关联 Task；父 Spec 仅作 `Spec: #N` 引用，不由子 PR 自动关闭。独立 Reviewer 阅读最新真实 Diff、完整 HEAD、Task/Spec 验收、CI；审查评论以**所审完整 HEAD SHA** 开头，区分静态审查、CI、实际运行证据，并给 PASS / REVISE / BLOCKED。需要但缺少运行证据时 BLOCKED，写明可执行命令与通过条件；由 CI/具备环境者补证据再重审。HEAD 更新后旧审查失效。用户批准后才合并。
+- **Handoff / 不确定结果**：阻塞、责任切换、阶段结束或请求审查时，在 Issue/PR 用短评论记录状态、分支/完整 HEAD、完成内容、真实验证及未运行项、风险、下一步。普通每次提交/CI 变化无需重复长报告。GitHub 写操作、远程派工响应不确定时先回读远端或按 #26 协议恢复，不能盲目重试。不公开私有会话链接、对话正文或密钥。
+- **状态看板**：GitHub Projects 可按父 Spec 与 Task 展示 Todo / In Progress / Review / Blocked / Done，但它只汇总 GitHub 事实，不另建进度数据源；当前工具不能创建原生子 Issue 关系或自动维护 Project 字段时，必须明确报告能力缺口。
+- **标签约定**：仅使用已有 `needs-review`、`blocked`、`needs-user`；ROUTINE/DEEP 和 Spec Revision 写入 Issue 正文，不额外制造标签和状态文件。
+
 
 ## 执行与验收
 
