@@ -192,6 +192,14 @@ const CHATGPT_STRONG_STOP_SELECTORS = [
   'button[aria-label="Stop"]',
 ];
 
+// Stop buttons whose localized labels the bundled adapters miss, observed on the real Simplified
+// Chinese pages (ai-one #15 desktop drill). Used only by the send-start busy gate and stop(), so
+// response completion timing is unchanged.
+const LOCALIZED_STOP_SELECTORS: Partial<Record<AIProvider, string[]>> = {
+  chatgpt: ['button[aria-label="停止"]'],
+  gemini: ['button[aria-label="停止回答"]'],
+};
+
 // Fail closed after the shipped 10-minute inactivity window if the positive completion signal
 // never arrives. A selector rename must surface a retryable error instead of silently returning a
 // partial answer, while fresh response text or the ordinary thinking detectors keep the wait alive.
@@ -546,7 +554,10 @@ class InactiveSendOperationError extends Error {
         // checks already recognize. Click any control those checks treat as a live stop button.
         const chatGptStopButton =
           adapter.provider === 'chatgpt' ? queryFirstVisible(CHATGPT_STRONG_STOP_SELECTORS) : null;
-        const button = (liveGrokButton ?? chatGptStopButton ?? queryFirstVisible(adapter.stopButtonSelectors ?? [])) as HTMLElement | null;
+        const button = (liveGrokButton ??
+          chatGptStopButton ??
+          queryFirstVisible(adapter.stopButtonSelectors ?? []) ??
+          queryFirstVisible(localizedStopSelectors())) as HTMLElement | null;
         result.found = button !== null;
         if (button && typeof button.click === 'function') {
           button.click();
@@ -1697,7 +1708,11 @@ class InactiveSendOperationError extends Error {
   function providerBusyAtSendStart(providerHint?: AIProvider): boolean {
     if (providerStillGeneratingBeforeSend(providerHint)) return true;
     if (providerHint && adapter && providerHint !== adapter.provider) return false;
-    return isThinking();
+    return isThinking() || queryFirstVisible(localizedStopSelectors()) !== null;
+  }
+
+  function localizedStopSelectors(): string[] {
+    return (adapter && LOCALIZED_STOP_SELECTORS[adapter.provider]) ?? [];
   }
 
   function rejectSendWhileProviderBusy(providerHint: AIProvider | undefined, sendOperation: number): boolean {

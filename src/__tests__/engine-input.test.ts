@@ -2029,6 +2029,27 @@ describe('injected engine input hardening', () => {
       expect(composerStop.clickCount).toBe(1);
     });
 
+    // Labels observed on the real Simplified Chinese pages during the #15 desktop drill.
+    it.each([
+      ['chatgpt', () => bundledChatGptAdapter(), 'button[aria-label="停止"]'],
+      ['gemini', () => ({ ...geminiLike, stopButtonSelectors: ['button[aria-label="Stop response"]'] }), 'button[aria-label="停止回答"]'],
+    ] as const)('recognizes the Simplified Chinese %s stop button for stop and the send gate', async (provider, adapter, selector) => {
+      vi.useFakeTimers();
+      const env = createEnv({ inputKind: 'textarea' });
+      const localizedStop = new FakeElement(env.document, 'button');
+      env.detectorElements.set(selector, [localizedStop]);
+      const handler = await installEngine(env);
+      dispatchAdapter(handler, adapter());
+
+      send(handler, 'must not land while the localized stop button shows', provider);
+      await vi.advanceTimersByTimeAsync(PRE_SEND_DELAY_MS);
+      expect(errorDone(env)?.payload).toBe(`[Error: ${provider} send rejected: provider is still generating]`);
+      expect(env.sendButton?.clickCount).toBe(0);
+
+      expect(engineStop()).toEqual({ found: true, clicked: true, generating: true });
+      expect(localizedStop.clickCount).toBe(1);
+    });
+
     it('reports a missing stop control instead of silently skipping it', async () => {
       vi.useFakeTimers();
       const env = createEnv({ inputKind: 'textarea' });
