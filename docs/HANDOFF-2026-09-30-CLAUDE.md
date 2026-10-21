@@ -1,3 +1,5 @@
+> **HISTORICAL / UPSTREAM REFERENCE — 不是 ai-one 的 Handoff。** 本文是上游 Multi-AI Chat Desktop 维护者的会话交接，所述 `main`、发布与 Issue 均指上游仓库。请勿据此恢复 ai-one 的任务；ai-one 的恢复与交接以 `AGENTS.md` 与对应 GitHub Issue / PR 为准。
+
 # 交接紀錄：GitHub #115（ChatGPT Chat/Work 版面）與 #116（Grok 未登入），v1.9.6
 
 日期：2026-09-30。給下一個 session。這份是交接，不是新規格。行為契約仍以 `docs/SPEC.md` 與目前的 `main` 為準。

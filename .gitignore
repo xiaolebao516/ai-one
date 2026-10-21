@@ -20,9 +20,11 @@ src-tauri/gen
 .orchestration/
 plans/
 CLAUDE.md
-AGENTS.md
 docs/HANDOVER.md
 docs/VISION-ALIGNMENT.md
+
+# Prodex local ledger (prompts, answers, receipts) — may contain conversation text, never commit
+.bridge/
 
 # local debug bundles exported from the app — contain environment details, never commit
 multi-ai-chat-debug-*.txt

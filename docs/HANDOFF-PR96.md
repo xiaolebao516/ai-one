@@ -1,3 +1,5 @@
+> **HISTORICAL / UPSTREAM REFERENCE — 不是 ai-one 的 Handoff。** 本文是上游 Multi-AI Chat Desktop 的历史交接，所述 PR 与 Issue 均指上游仓库，且已作废（见下）。ai-one 的恢复与交接以 `AGENTS.md` 与对应 GitHub Issue / PR 为准。
+
 # PR #96 / v1.9.0 交接
 
 > **⚠️ 已作廢（2026-09-24）。這份是 v1.9.0 當時的歷史紀錄，不是現行行為。**
