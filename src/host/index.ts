@@ -17,6 +17,38 @@ export interface NavBlockedPayload {
   host: string;
 }
 
+// Result of asking a provider page to stop. 'clicked' means a stop control was clicked, not that
+// generation is confirmed stopped; the page engine re-checks idle before its next send.
+export interface ProviderStopResult {
+  outcome: 'clicked' | 'not-found' | 'skipped' | 'unavailable' | 'error';
+  generating?: boolean;
+  detail?: string;
+}
+
+// Fail closed at the host as well if the stop callback fails or the page engine is unavailable.
+// Only a successful explicit provider reload clears the host-side latch.
+const providersWithUnconfirmedStop = new Set<AIProvider>();
+
+const STOP_ENGINE_JS =
+  "window.__MAC_ENGINE__ && typeof window.__MAC_ENGINE__.stop === 'function' ? window.__MAC_ENGINE__.stop() : null";
+
+export function parseProviderStopResult(raw: string): ProviderStopResult {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw) as unknown;
+    if (typeof value === 'string') value = JSON.parse(value) as unknown;
+  } catch {
+    return { outcome: 'error', detail: 'unreadable stop result' };
+  }
+  if (!value || typeof value !== 'object') return { outcome: 'unavailable', detail: 'page engine not loaded' };
+  const result = value as { found?: unknown; clicked?: unknown; generating?: unknown; skipped?: unknown; error?: unknown };
+  const generating = result.generating === true;
+  if (typeof result.error === 'string') return { outcome: 'error', generating, detail: result.error };
+  if (typeof result.skipped === 'string') return { outcome: 'skipped', generating, detail: result.skipped };
+  if (result.clicked === true) return { outcome: 'clicked', generating };
+  return { outcome: 'not-found', generating };
+}
+
 // CSS px × devicePixelRatio = 實體像素。dpr 已包含 WebView2 頁面縮放
 // （Windows「文字大小」會變成 ZoomFactor），Logical 座標會少乘這個縮放而錯位。
 const toBounds = (rect: DOMRectReadOnly) => {
@@ -60,8 +92,11 @@ export const host = {
     eval: (provider: AIProvider, js: string): Promise<void> => invoke('provider_eval', { provider, js }),
     evalWithCallback: (provider: AIProvider, js: string): Promise<string> =>
       invoke('provider_eval_with_callback', { provider, js }),
-    send: (provider: AIProvider, text: string): Promise<void> =>
-      invoke('provider_eval', {
+    send: (provider: AIProvider, text: string): Promise<void> => {
+      if (providersWithUnconfirmedStop.has(provider)) {
+        return Promise.reject(new Error(`${provider} send rejected: stop failed; reload provider page before retrying`));
+      }
+      return invoke('provider_eval', {
         provider,
         js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
           v: 1,
@@ -69,7 +104,8 @@ export const host = {
           provider,
           payload: { text },
         })});`,
-      }),
+      });
+    },
     fill: (provider: AIProvider, text: string): Promise<void> =>
       invoke('provider_eval', {
         provider,
@@ -80,15 +116,23 @@ export const host = {
           payload: { text },
         })});`,
       }),
-    stop: (provider: AIProvider): Promise<void> =>
-      invoke('provider_eval', {
-        provider,
-        js: "window.__MAC_ENGINE__ && typeof window.__MAC_ENGINE__.stop === 'function' && window.__MAC_ENGINE__.stop();",
-      }),
+    stop: async (provider: AIProvider): Promise<ProviderStopResult> => {
+      // Mark unconfirmed before the async call; a timeout is not proof that stop succeeded.
+      providersWithUnconfirmedStop.add(provider);
+      const result = parseProviderStopResult(await invoke<string>('provider_eval_with_callback', { provider, js: STOP_ENGINE_JS }));
+      if (result.outcome === 'clicked') providersWithUnconfirmedStop.delete(provider);
+      return result;
+    },
     openLogin: (provider: AIProvider): Promise<void> => invoke('provider_open_login', { provider }),
     openLoginExternal: (provider: AIProvider): Promise<void> => invoke('provider_open_login_external', { provider }),
-    reload: (provider: AIProvider): Promise<void> => invoke('provider_reload', { provider }),
-    reconnect: (provider: AIProvider): Promise<void> => invoke('provider_reload', { provider, reconnect: true }),
+    reload: async (provider: AIProvider): Promise<void> => {
+      await invoke('provider_reload', { provider });
+      providersWithUnconfirmedStop.delete(provider);
+    },
+    reconnect: async (provider: AIProvider): Promise<void> => {
+      await invoke('provider_reload', { provider, reconnect: true });
+      providersWithUnconfirmedStop.delete(provider);
+    },
     newSession: (provider: AIProvider): Promise<void> => invoke('provider_new_session', { provider }),
   },
   adapter: {

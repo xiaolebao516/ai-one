@@ -34,7 +34,7 @@ vi.mock('../host', () => ({
     provider: {
       evalWithCallback: vi.fn(),
       eval: vi.fn(),
-      stop: vi.fn(() => Promise.resolve()),
+      stop: vi.fn(() => Promise.resolve({ outcome: 'clicked' as const })),
     },
     bridge: {
       subscribeTitle: vi.fn(),
@@ -294,8 +294,8 @@ describe('pull transport', () => {
     vi.useFakeTimers();
     const { messages, cleanup } = collectMessages();
     let releaseStop: (() => void) | undefined;
-    vi.mocked(host.provider.stop).mockImplementationOnce(() => new Promise<void>((resolve) => {
-      releaseStop = resolve;
+    vi.mocked(host.provider.stop).mockImplementationOnce(() => new Promise((resolve) => {
+      releaseStop = () => resolve({ outcome: 'clicked' });
     }));
     vi.mocked(host.provider.evalWithCallback).mockResolvedValue(JSON.stringify([]));
     setProviderAwaiting(provider, true);
@@ -334,8 +334,8 @@ describe('pull transport', () => {
     vi.useFakeTimers();
     const { messages, cleanup } = collectMessages();
     let releaseStop: (() => void) | undefined;
-    vi.mocked(host.provider.stop).mockImplementationOnce(() => new Promise<void>((resolve) => {
-      releaseStop = resolve;
+    vi.mocked(host.provider.stop).mockImplementationOnce(() => new Promise((resolve) => {
+      releaseStop = () => resolve({ outcome: 'clicked' });
     }));
     vi.mocked(host.provider.evalWithCallback).mockResolvedValue(JSON.stringify([]));
     setProviderAwaiting(provider, true);

@@ -70,6 +70,9 @@ export function StepTimeoutDialog({
         <p id="step-timeout-description" className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
           {formatI18n(t(descriptionKey, locale), { provider: providerLabel })}
         </p>
+        <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
+          {formatI18n(t('stepTimeout.retryResendWarning', locale), { provider: providerLabel })}
+        </p>
         <div className="mt-4 flex gap-2">
           <button type="button" className="border border-emerald-300 dark:border-emerald-700 px-3 py-2 text-xs hover:bg-emerald-100 dark:hover:bg-emerald-950" onClick={() => choose('retry')}>
             {t('stepTimeout.retry', locale)}

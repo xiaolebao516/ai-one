@@ -4,7 +4,7 @@ import { getRuntimeAppVersion } from '../appVersion';
 import { host } from '../host';
 import type { Locale } from '../i18n/resolve';
 import { formatI18n, t } from '../i18n/t';
-import { abortWorkflow, getInFlightProviders } from './cancel';
+import { abortWorkflow, getInFlightProviders, setStopNoticeLocale } from './cancel';
 import { emitSystemError, sendWorkflowStatus } from './events';
 import { executeGraph, preflightGraph, workflowGraphs } from './graph';
 import type { PreflightResult } from './preflight';
@@ -65,6 +65,7 @@ async function runPreparedWorkflow({
   snapshotRedactionTier,
   responseLanguagePolicy,
 }: RunWorkflowParams): Promise<RunWorkflowResult> {
+  setStopNoticeLocale(locale);
   const snapshotOptions = {
     enabled: snapshotPersistence,
     tier: snapshotRedactionTier,
