@@ -43,14 +43,35 @@ const REPORT_SECTIONS: readonly { pattern: string; label: I18nKey }[] = [
 /** Fewer recognized headings than this means the audit ignored the format; show it as-is instead. */
 const MIN_REPORT_SECTIONS = 3;
 
-// A heading starts a line or follows sentence punctuation, may carry Markdown heading, list-number
-// or bold markers (as the WebView serializer emits them), and ends with a colon or its line.
-function sectionHeading(pattern: string): RegExp {
+const CONTROL_TAG = /`?\[\[\s*AI_ONE_AUDIT_[A-Z_]+\s*:[^\]\n]*\]\]`?/gi;
+
+// A heading may carry Markdown heading, list or bold markers (as the WebView serializer emits them)
+// and ends with a colon or its line. Line headings must start a line; inline ones may also follow
+// sentence punctuation, which is only trusted when nothing better is available.
+function sectionHeading(pattern: string, inline: boolean): RegExp {
   return new RegExp(
-    '(?:^|(?<=[\\n.。;；!?！？]))[\\t ]*(?:#{1,6}[\\t ]*)?(?:\\d+[.)][\\t ]*)?(?:\\*\\*|__)?[\\t ]*(?:' + pattern + ')' +
+    (inline ? '(?:^|(?<=[\\n.。;；!?！？]))' : '(?:^|(?<=\\n))') +
+      '[\\t ]*(#{1,6}[\\t ]*)?((?:[-*+]|\\d+[.)])[\\t ]+)?(\\*\\*|__)?[\\t ]*(?:' + pattern + ')' +
       '[\\t ]*(?:\\*\\*|__)?[\\t ]*(?:[:：][\\t ]*(?:\\*\\*|__)?|(?=\\n)|$)',
-    'i',
+    'gi',
   );
+}
+
+/** Blank out fenced code (keeping offsets and line breaks) so example headings inside it are ignored. */
+function maskFencedCode(text: string): string {
+  let fence: string | undefined;
+  return text.split('\n').map((line) => {
+    const marker = /^[\t ]*(`{3,}|~{3,})/.exec(line)?.[1];
+    if (fence) {
+      if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = undefined;
+      return ' '.repeat(line.length);
+    }
+    if (marker) {
+      fence = marker;
+      return ' '.repeat(line.length);
+    }
+    return line;
+  }).join('\n');
 }
 
 /** The audit text before its control tags, without the code fence that may have wrapped them. */
@@ -61,22 +82,37 @@ function auditBody(text: string): string {
   return body.replace(/(?:^|\n)[\t ]*`{3,}[\w-]*[\t ]*$/, '').replace(/\n+[\t ]*(?:-{3,}|\*{3,})[\t ]*$/, '').trim();
 }
 
-function auditSections(body: string): { label: I18nKey; content: string | undefined }[] | undefined {
-  const found: { label: I18nKey; start: number; end: number }[] = [];
-  let cursor = 0;
+type SectionMatch = { label: I18nKey; start: number; end: number };
+
+/** Picks one heading per section, or undefined when the headings are too few, ambiguous or out of order. */
+function pickSections(masked: string, inline: boolean): SectionMatch[] | undefined {
+  const found: SectionMatch[] = [];
   for (const section of REPORT_SECTIONS) {
-    const match = sectionHeading(section.pattern).exec(body.slice(cursor));
-    if (!match) continue;
-    const start = cursor + match.index;
-    found.push({ label: section.label, start, end: start + match[0].length });
-    cursor = start + match[0].length;
+    const candidates = [...masked.matchAll(sectionHeading(section.pattern, inline))].map((match) => ({
+      start: match.index,
+      end: match.index + match[0].length,
+      // A Markdown heading beats a bold or list heading, which beats a plain "Heading:" line.
+      strength: match[1] ? 3 : match[2] || match[3] ? 2 : 1,
+    }));
+    if (candidates.length === 0) continue;
+    const best = Math.max(...candidates.map((candidate) => candidate.strength));
+    const strongest = candidates.filter((candidate) => candidate.strength === best);
+    if (strongest.length > 1 || (inline && candidates.length > 1)) return undefined;
+    found.push({ label: section.label, start: strongest[0].start, end: strongest[0].end });
   }
   if (found.length < MIN_REPORT_SECTIONS) return undefined;
+  return found.every((section, index) => index === 0 || section.start >= found[index - 1].end) ? found : undefined;
+}
+
+function auditSections(body: string): { label: I18nKey; content: string | undefined }[] | undefined {
+  const masked = maskFencedCode(body);
+  const found = pickSections(masked, false) ?? pickSections(masked, true);
+  if (!found) return undefined;
   return REPORT_SECTIONS.map(({ label }) => {
     const index = found.findIndex((section) => section.label === label);
     if (index < 0) return { label, content: undefined };
     const content = body.slice(found[index].end, found[index + 1]?.start ?? body.length)
-      .replace(/^[\s:：]+/, '').replace(/\n+[\t ]*(?:-{3,}|\*{3,})[\t ]*$/, '').trim();
+      .replace(CONTROL_TAG, '').replace(/^[\s:：]+/, '').replace(/\n+[\t ]*(?:-{3,}|\*{3,})[\t ]*$/, '').trim();
     return { label, content };
   });
 }
@@ -130,7 +166,8 @@ export function deliberationAuditReport(
     parts.push('> ' + t('deliberationReport.disclaimer', locale));
     for (const { label, content } of sections) parts.push('### ' + t(label, locale), sectionText(content, locale));
   } else {
-    parts.push('> ' + t('deliberationReport.unstructured', locale) + ' ' + t('deliberationReport.disclaimer', locale), body);
+    parts.push('> ' + t('deliberationReport.unstructured', locale) + ' ' + t('deliberationReport.disclaimer', locale),
+      body.replace(CONTROL_TAG, '').trim());
   }
   return parts.join('\n\n');
 }

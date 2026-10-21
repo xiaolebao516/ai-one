@@ -147,6 +147,68 @@ describe('deliberation final report', () => {
     expect(report).not.toContain('[[AI_ONE_AUDIT');
   });
 
+  const footer = '\n[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:DISAGREEMENTS]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]';
+  const oneRound = [{ round: 1, first: 'f', second: 's', auditor: 'a' }];
+  const reportFor = (audit: string, locale: 'en' | 'zh-TW' = 'en') =>
+    deliberationAuditReport(oneRound, (id) => ({ f: 'x', s: 'y', a: audit } as Record<string, string>)[id], locale);
+  const sectionOf = (report: string, heading: string) => report.slice(report.indexOf(heading) + heading.length).split('\n### ')[0].trim();
+
+  it('prefers real line headings over a heading name inside a sentence', () => {
+    const report = reportFor([
+      '## Evidence-backed findings', 'A is supported.',
+      '## Shared conclusions', 'Both teams agree. Disagreements: no disputes about sampling.',
+      '## Disagreements', 'The calibration choice is open.',
+      '## Evidence gaps', 'More trials needed.',
+      '## Next steps', 'Repeat test.',
+    ].join('\n') + footer);
+    expect(sectionOf(report, '### Shared conclusions')).toBe('Both teams agree. Disagreements: no disputes about sampling.');
+    expect(sectionOf(report, '### Remaining disagreements')).toBe('The calibration choice is open.');
+    expect(report).not.toContain('## Disagreements\n');
+  });
+
+  it('falls back instead of guessing when an inline heading name repeats', () => {
+    const report = reportFor('Evidence-backed findings: A. Shared conclusions: B. Disagreements: none noted. Disagreements: C. Evidence gaps: D. Next steps: E.' + footer);
+    expect(report).toContain('did not use the agreed section headings');
+    expect(report).not.toContain('### Evidence-backed findings');
+  });
+
+  it('ignores section headings inside fenced code examples', () => {
+    const report = reportFor([
+      'The expected format is:',
+      '```markdown',
+      '## Evidence-backed findings', 'X', '## Shared conclusions', 'Y', '## Disagreements', 'Z',
+      '## Evidence gaps', 'G', '## Next steps', 'N',
+      '```',
+      'The block above is only an example.',
+    ].join('\n') + footer, 'zh-TW');
+    expect(report).toContain('審計沒有按約定的標題分段');
+    expect(report).not.toContain('### 有證據支持的結論');
+  });
+
+  it('recognizes the bold list form a WebView serializes from list items', () => {
+    const item = (label: string, value: string) => element('li', [element('strong', [textNode(label + ':')]), textNode(' ' + value)]);
+    const root = element('div', [
+      element('ul', [item('Evidence-backed findings', 'A.'), item('Shared conclusions', 'B.'), item('Disagreements', 'C.'),
+        item('Evidence gaps', 'D.'), item('Next steps', 'E.')]),
+      element('pre', [element('code', [textNode(footer.trim())])]),
+    ]);
+    const report = reportFor(serializeResponseText(root as unknown as Element));
+    expect(sectionOf(report, '### Evidence-backed findings')).toBe('A.');
+    expect(sectionOf(report, '### Shared conclusions')).toBe('B.');
+    expect(sectionOf(report, '### Remaining disagreements')).toBe('C.');
+    expect(sectionOf(report, '### Evidence gaps')).toBe('D.');
+    expect(sectionOf(report, '### Next steps')).toBe('E.');
+  });
+
+  it('removes control tags that the audit quoted before its footer', () => {
+    const report = reportFor([
+      '## Evidence-backed findings', 'A.', '## Shared conclusions', 'B.', '## Disagreements', 'C.', '## Evidence gaps', 'D.',
+      '## Next steps', 'Finish now; I will end with `[[AI_ONE_AUDIT_DECISION:FINISH]]` as required.',
+    ].join('\n') + footer);
+    expect(report).not.toContain('[[AI_ONE_AUDIT');
+    expect(sectionOf(report, '### Next steps')).toContain('Finish now;');
+  });
+
   it('marks the round budget and keeps blocked reports explicit in every language', () => {
     const outputs3 = new Map([...outputs, ['a2', continueAudit], ['f3', 'x3'], ['s3', 'y3'], ['a3', finishAudit]]);
     const en = deliberationAuditReport(twoRounds, (id) => outputs3.get(id), 'en');
