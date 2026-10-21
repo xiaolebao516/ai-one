@@ -321,7 +321,7 @@ function prepareStepNode(
         const result =
           checkpointAction === 'native-edit'
             ? await fillAndAwaitNativeSend(provider, input, turn)
-            : await runStep(provider, input, turn, { recoverProviderErrors: context.graph.id === 'brainstorm' || context.graph.id === 'deliberation', allowSkip: context.graph.id !== 'deliberation' });
+            : await runStep(provider, input, turn, { recoverProviderErrors: context.graph.id === 'brainstorm' || context.graph.id === 'deliberation', allowSkip: context.graph.id !== 'deliberation', devFaultNodeId: context.graph.id === 'deliberation' ? nodeId : undefined });
         const responseError = providerResponseError(provider, result.response);
         if (responseError) throw responseError;
         recordStep({

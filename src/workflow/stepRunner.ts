@@ -1,5 +1,6 @@
 import type { AIProvider } from '../../shared/types';
 import { resetProviderPullState } from '../bridge/pull';
+import { consumeDevDeliberationFault, DevDeliberationFaultError } from '../dev/deliberationFault';
 import { abortWorkflow, checkAborted, getInFlightProviders, onWorkflowAbort, stopProvider } from './cancel';
 import {
   isProviderPageReloadedError,
@@ -17,6 +18,7 @@ export const SEND_REJECTION_RETRY_DELAY_MS = 1_500;
 export interface RunStepOptions {
   recoverProviderErrors?: boolean;
   allowSkip?: boolean;
+  devFaultNodeId?: string;
 }
 
 function waitForSendRetry(): Promise<void> {
@@ -45,6 +47,9 @@ export async function runStep(
     checkAborted();
     emitCountdown(provider);
     try {
+      if (options.devFaultNodeId && consumeDevDeliberationFault(options.devFaultNodeId, provider)) {
+        throw new DevDeliberationFaultError(provider);
+      }
       const result = await sendAndWait(provider, prompt, reservedTurn);
       const responseError = providerResponseError(provider, result.response);
       if (!responseError) return result;
@@ -61,7 +66,8 @@ export async function runStep(
       const recoveryDetail = isProviderPageReloadedError(error) ? 'provider-page-reloaded' : undefined;
       const action = await awaitStepTimeoutAction(provider, failureKind, recoveryDetail, options.allowSkip !== false);
       if (action === 'retry') {
-        await stopProvider(provider);
+        // Nothing to stop when a developer-only fault was injected before sending.
+        if (!(error instanceof DevDeliberationFaultError)) await stopProvider(provider);
         resetProviderPullState(provider);
         continue;
       }
