@@ -54,7 +54,9 @@ export function deliberationReport(
     return name + ': ' + (decision?.openIssues && decision.openIssues.toUpperCase() !== 'NONE'
       ? decision.openIssues : 'No parseable open-issues statement; inspect the full reply.');
   };
-  return 'UNRESOLVED (MAX_ROUNDS=' + DELIBERATION_MAX_ROUNDS + ', last round=' + last.round + '): The participants did not independently confirm an identical proposal.\n\nRemaining disagreements:\n' +
+  const leftProposal = parseDeliberationDecision(first)?.proposal ?? 'Not parseable';
+  const rightProposal = parseDeliberationDecision(second)?.proposal ?? 'Not parseable';
+  return 'UNRESOLVED (MAX_ROUNDS=' + DELIBERATION_MAX_ROUNDS + ', last round=' + last.round + '): The participants did not independently confirm an identical proposal.\n\nLatest proposals:\nFirst: ' + leftProposal + '\nSecond: ' + rightProposal + '\n\nRemaining disagreements:\n' +
     issue(first, 'First') + '\n' + issue(second, 'Second') +
     '\n\nThe full discussion is shown above. Do not treat this result as a passed independent audit.';
 }

@@ -137,6 +137,11 @@ export const promptBuilders: Record<string, PromptBuilder> = {
   'status.debate.con': (_args, context) => providerStepStatus('⚔️', 'workflowRole.debate.con', context),
   'status.debate.judge': (_args, context) => providerStepStatus('⚔️', 'workflowRole.debate.judge', context),
   'status.debate.summary': (_args, context) => providerStepStatus('⚔️', 'workflowRole.debate.summary', context),
+  'deliberation.initial': (args) => [
+    'Give your independent answer. Do not read another participant response until after completing this answer.',
+    'This workflow is read-only: investigate and explain, but do not create or modify GitHub issues, branches, pull requests, files, or external resources.',
+    'Original question:\n' + arg(args, 0),
+  ].join('\n\n'),
   'deliberation.reply': (args, context) => {
     const entries = historyArg(args, 2);
     const transcript = entries.map((item) => {
@@ -149,11 +154,8 @@ export const promptBuilders: Record<string, PromptBuilder> = {
       'Original question:\n' + arg(args, 0),
       'The full discussion so far (chronological, including your earlier responses):\n' + transcript,
       'Address specific disagreements and new evidence. Do not restart original research without reason. Revise your position when evidence warrants it. Never claim agreement merely to finish.',
-      'Finish your answer with exactly these three lines, without a code fence:',
-      '[[AI_ONE_DECISION:AGREE]] or [[AI_ONE_DECISION:REVISE]]',
-      '[[AI_ONE_PROPOSAL:one concise, specific proposal of 12-240 characters]]',
-      '[[AI_ONE_OPEN_ISSUES:NONE]] if no blockers, otherwise [[AI_ONE_OPEN_ISSUES:short unresolved disagreement]]',
-      'AGREE means you endorse that exact proposal with no outstanding objections. Any uncertainty, discrepancy, or missing evidence requires REVISE. Only matching explicit approvals from BOTH parties can end this discussion.',
+      'The LAST three lines of your answer must be contiguous, WITHOUT blank lines or code fences. Here is the format (replace every ... placeholder with your own content):\n[[AI_ONE_DECISION:REVISE]]\n[[AI_ONE_PROPOSAL:...]]\n[[AI_ONE_OPEN_ISSUES:...]]',
+      'Replace REVISE with AGREE only when you endorse the exact proposal with no unresolved blockers, and replace open issues with NONE. Otherwise retain REVISE and name the unresolved disagreement. State a concrete canonical proposal of 12-240 characters; do not copy the placeholder text. Only matching explicit approvals from BOTH parties can end this discussion.',
     ].join('\n\n');
   },
   'deliberation.label': (args) => 'Discussion round ' + numberArg(args, 0),

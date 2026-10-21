@@ -353,8 +353,10 @@ describe('workflow graph foundation', () => {
     off();
 
     expect(prompts.map((entry) => entry.provider)).toEqual(['chatgpt', 'gemini', 'chatgpt', 'gemini']);
-    expect(prompts[0].text).toBe('Assess the design');
-    expect(prompts[1].text).toBe('Assess the design');
+    expect(prompts[0].text).toContain('Original question:\nAssess the design');
+    expect(prompts[1].text).toContain('Original question:\nAssess the design');
+    expect(prompts[0].text).toContain('read-only');
+    expect(prompts[1].text).not.toContain('independent response from chatgpt');
     expect(prompts[2].text).toContain('independent response from chatgpt');
     expect(prompts[2].text).toContain('independent response from gemini');
     expect(prompts[3].text).toContain(agreement);

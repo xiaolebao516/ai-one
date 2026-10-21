@@ -61,7 +61,7 @@ function response(provider: AIProvider, action: 'RESPONSE_CHUNK' | 'RESPONSE_DON
 }
 
 describe('N4 preset catalog', () => {
-  it.each(['en', 'zh-TW', 'ja', 'de'] as const)('renders the six built-in cards with %s time meta only', (locale) => {
+  it.each(['en', 'zh-TW', 'ja', 'de'] as const)('renders the seven built-in cards with %s time meta only', (locale) => {
     const tree = PresetCatalog({
       mode: 'free',
       onSelectPreset: vi.fn(),
@@ -72,8 +72,8 @@ describe('N4 preset catalog', () => {
       (element) => element.type === 'button' && PRESET_CATALOG.some((preset) => textOf(element).includes(t(preset.displayNameKey, locale))),
     );
 
-    expect(PRESET_CATALOG).toHaveLength(6);
-    expect(cardButtons).toHaveLength(6);
+    expect(PRESET_CATALOG).toHaveLength(7);
+    expect(cardButtons).toHaveLength(7);
     for (const preset of PRESET_CATALOG) {
       const card = cardButtons.find((button) => textOf(button).includes(t(preset.displayNameKey, locale)));
       expect(card).toBeTruthy();
@@ -83,9 +83,10 @@ describe('N4 preset catalog', () => {
       expect(textOf(card)).not.toContain(t(preset.costLabelKey, locale));
       expect(textOf(card)).not.toContain('RAM');
     }
-    expect(PRESET_CATALOG.filter((preset) => preset.graphId !== 'free').map((preset) => preset.requiredProviders)).toEqual(
+    expect(PRESET_CATALOG.filter((preset) => preset.graphId !== 'free' && preset.id !== 'deliberation').map((preset) => preset.requiredProviders)).toEqual(
       Array.from({ length: 4 }, () => [...DEFAULT_FREE_TARGET_PROVIDERS]),
     );
+    expect(PRESET_CATALOG.find((preset) => preset.id === 'deliberation')?.requiredProviders).toEqual(['chatgpt', 'gemini']);
   });
 
   it('selects the clicked mode and exposes default roles for preset selection', () => {
