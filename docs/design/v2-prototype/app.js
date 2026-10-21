@@ -80,6 +80,7 @@ const ROLE = {
   t36: { cc: ['协调', '已完成'], gpt: ['执行 · 独立审计', '已完成'] },
   d1: { gpt: ['讨论', '已完成'], argon: ['讨论', '已完成'] },
 };
+const ROLE_SEED = structuredClone(ROLE);
 
 let R, TASKS, S, seq = 100;
 function freshState() {
@@ -95,6 +96,8 @@ function resetAll() {
   (TASKS || []).forEach((t) => clearTimeout(t._timer));
   R = structuredClone(RES_SEED);
   TASKS = structuredClone(TASK_SEED);
+  Object.keys(ROLE).forEach((k) => delete ROLE[k]);
+  Object.assign(ROLE, structuredClone(ROLE_SEED));
   S = freshState();
   S.chat.replies = structuredClone(CHAT_SEED.replies);
   S.chat.q = CHAT_SEED.q;
@@ -1111,8 +1114,10 @@ function chatToTask() {
 
 /* ================= 启动新任务（模拟） ================= */
 function start() {
-  const c = S.comp;
+  const c = { ...S.comp };
   const text = c.text.trim();
+  /* 开始后输入框回到默认方式：有仓库时“交给 CC”，没有时“想需求” */
+  S.comp.mode = S.comp.repo ? 'lead' : 'stage'; S.comp.stage = 'grill'; S.comp.autoGrill = !S.comp.repo;
   if (c.mode === 'chat') { S.chat.text = text || CHAT_SEED.q; S.comp.text = ''; go('chat'); return chatSend(); }
   if (c.mode === 'stage' && c.stage === 'grill') return startGrill(text || GRILL_SCRIPT.topic, c.sub);
   if (c.mode === 'stage') { toast(`（模拟）启动“${STAGE[c.stage].name}”：与“想需求”同样的阶段视图`); return startGrill(text || GRILL_SCRIPT.topic, c.sub); }
@@ -1226,7 +1231,21 @@ function scenarioA() {
 function scenarioB() { openTask('t42'); toast('场景 B：CC 协调、经 Prodex 派 GPT 执行与审计。想从头看，到总览选“交给 CC”后点开始'); }
 function scenarioC() { S.flow.sel = 'parallel'; S.flow.pop = null; go('flows'); toast('场景 C：点参与者可改角色、模型、思考深度。运行中的例子见 home-lab #7'); }
 function scenarioD() { S.tasksGroup = 'repo'; S.repoFilter = null; go('tasks'); }
-function scenarioE() { openTask('t12'); toast('场景 E：登录失效。另见 ai-one #45（审计 3 次不通过，需要你决定）'); }
+/* 把某个任务恢复成初始模拟状态，让场景跳转可以重复演示 */
+function restoreSeed(id) {
+  const i = TASKS.findIndex((t) => t.id === id);
+  const seed = TASK_SEED.find((t) => t.id === id);
+  if (i < 0 || !seed) return;
+  clearTimeout(TASKS[i]._timer);
+  TASKS[i] = structuredClone(seed);
+  ROLE[id] = structuredClone(ROLE_SEED[id]);
+}
+function scenarioE() {
+  restoreSeed('t12'); restoreSeed('t45');
+  R.argon = structuredClone(RES_SEED.argon);
+  openTask('t12');
+  toast('场景 E：登录失效。另见 ai-one #45（审计 3 次不通过，需要你决定）');
+}
 function scenarioF() { S.chat.tab = 'cmp'; go('chat'); }
 
 document.addEventListener('keydown', (e) => {
