@@ -258,7 +258,7 @@ function validateTextCondition(context: ValidationContext, condition: TextCondit
     validateTextRef(context, condition.second, `${path}.second`);
     return;
   }
-  if (condition.type === 'textIncludes' || condition.type === 'regex') {
+  if (condition.type === 'textIncludes' || condition.type === 'regex' || condition.type === 'deliberationAuditContinue') {
     validateTextRef(context, condition.ref, `${path}.ref`);
     return;
   }

@@ -5,7 +5,7 @@ import { formatI18n, t } from '../../i18n/t';
 import { abortWorkflow, checkAborted, getInFlightProviders } from '../cancel';
 import { awaitCheckpoint } from '../checkpoint';
 import { emitSystemNotice, sendRoleAssignment, sendWorkflowStatus } from '../events';
-import { deliberationReport } from './deliberationConsensus';
+import { deliberationAuditReport } from './deliberationAudit';
 import { fillAndAwaitNativeSend } from '../nativeEdit';
 import { providerResponseError, ProviderResponseError } from '../providerResponse';
 import { reserveProviderTurn, sendAndWait } from '../sendAndWait';
@@ -127,7 +127,7 @@ export async function executeGraph(graph: WorkflowGraph, params: ExecuteGraphPar
     }
 
     if (graph.onComplete?.report?.kind === 'deliberation') {
-      emitSystemNotice(deliberationReport(graph.onComplete.report.rounds, (nodeId) => context.outputs.get(nodeId)?.text));
+      emitSystemNotice(deliberationAuditReport(graph.onComplete.report.rounds, (nodeId) => context.outputs.get(nodeId)?.text));
     }
     if (graph.onComplete?.status !== undefined) sendWorkflowStatus(graph.onComplete.status);
     else sendWorkflowStatus('');
@@ -279,6 +279,9 @@ function prepareStepNode(
           updateSessionCheckpoint({ pendingCheckpointNodeId: null });
           checkAborted();
           if (decision.action === 'skip') {
+            if (context.graph.id === 'deliberation') {
+              throw new Error('Deliberation checkpoint skipped; independent audit is incomplete.');
+            }
             clearActiveTurn(provider, turn);
             recordStep({
               nodeId,

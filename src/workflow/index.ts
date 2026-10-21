@@ -5,7 +5,7 @@ import { host } from '../host';
 import type { Locale } from '../i18n/resolve';
 import { formatI18n, t } from '../i18n/t';
 import { abortWorkflow, getInFlightProviders, setStopNoticeLocale } from './cancel';
-import { emitSystemError, sendWorkflowStatus } from './events';
+import { emitSystemError, emitSystemNotice, sendWorkflowStatus } from './events';
 import { executeGraph, preflightGraph, workflowGraphs } from './graph';
 import type { PreflightResult } from './preflight';
 import { prepareWorkflowRun } from './runtime';
@@ -80,7 +80,10 @@ async function runPreparedWorkflow({
     if (presetId === 'deliberation') {
       const graph = workflowGraphs.deliberation;
       const preflight = await preflightGraph(graph, roles, activeProviders);
-      if (!preflight.ok) return { ok: false, preflight };
+      if (!preflight.ok) {
+        emitSystemNotice('INCOMPLETE_BLOCKED: An independent third-party auditor and both distinct discussion participants must be available.');
+        return { ok: false, preflight };
+      }
       await executeGraph(graph, { text, context, roles, checkpoints, locale, responseLanguagePolicy }, graphOptions);
       return { ok: true };
     }
@@ -120,7 +123,12 @@ async function runPreparedWorkflow({
     return { ok: true };
   } catch (error) {
     await tearDownWaiters(getInFlightProviders(), { stopClick: true });
-    emitSystemError(workflowFailureText(error, locale));
+    if (presetId === 'deliberation') {
+      const cancelled = error instanceof Error && error.message === 'Workflow cancelled by user';
+      emitSystemNotice((cancelled ? 'CANCELLED' : 'INCOMPLETE_BLOCKED') + ': ' + workflowFailureText(error, locale));
+    } else {
+      emitSystemError(workflowFailureText(error, locale));
+    }
     sendWorkflowStatus('');
     return { ok: true };
   }

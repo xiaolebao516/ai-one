@@ -1,4 +1,5 @@
 import type { HistoryItem } from './types';
+import { SKIP_RESPONSE } from '../state';
 
 /**
  * Each provider keeps its own native page conversation. Relay only complete,
@@ -13,10 +14,10 @@ export function newDeliberationReplies(
   if (!receiverName.trim()) return [...history];
   let lastOwnReply = -1;
   for (let index = 0; index < history.length; index += 1) {
-    if (history[index].name === receiverName) lastOwnReply = index;
+    if (history[index].name === receiverName && history[index].text !== SKIP_RESPONSE) lastOwnReply = index;
   }
   return history.filter((item, index) => {
-    if (item.name === receiverName) return false;
+    if (item.name === receiverName || item.text === SKIP_RESPONSE) return false;
     // Both models answered independently. At round 1, each must receive the
     // other's initial answer, even if it precedes their own in the graph history.
     const unseenInitial = round === 1 && item.round === undefined;

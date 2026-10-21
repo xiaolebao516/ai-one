@@ -62,7 +62,7 @@ export const PRESET_CATALOG: PresetCatalogEntry[] = [
     metaKey: 'preset.deliberation.meta',
     descriptionKey: 'preset.deliberation.description',
     costLabelKey: 'preset.deliberation.costLabel',
-    requiredProviders: ['chatgpt', 'gemini'],
+    requiredProviders: ['chatgpt', 'gemini', 'claude'],
     estMinutes: 8,
     ramHint: 'medium',
     source: 'builtin',
@@ -115,7 +115,7 @@ export function requiredProvidersForPreset(
   presetId: WorkflowPresetId,
   assignments: ModeRoleAssignments = DEFAULT_MODE_ROLE_ASSIGNMENTS,
 ): AIProvider[] {
-  if (presetId === 'deliberation') return [...presetForId(presetId).requiredProviders];
+  if (presetId === 'deliberation') return [...new Set<AIProvider>(['chatgpt', 'gemini', assignments.consult.reviewer])];
   const roles = defaultRolesForPreset(mode, presetId, assignments);
   return roles ? ([...new Set(Object.values(roles))] as AIProvider[]) : [...presetForId(presetId).requiredProviders];
 }
@@ -126,7 +126,7 @@ export function defaultRolesForPreset(
   assignments: ModeRoleAssignments = DEFAULT_MODE_ROLE_ASSIGNMENTS,
 ): ModeRoles | undefined {
   if (presetId === 'brainstorm') return { ...assignments.roundtable };
-  if (presetId === 'deliberation') return { ...assignments.consult, first: 'chatgpt', second: 'gemini' };
+  if (presetId === 'deliberation') return { ...assignments.consult, first: 'chatgpt', second: 'gemini', auditor: assignments.consult.reviewer };
   if (mode === 'free') return undefined;
   if (mode === 'debate') return { ...assignments.debate };
   if (mode === 'consult') return { ...assignments.consult };

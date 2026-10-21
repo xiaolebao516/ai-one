@@ -335,37 +335,7 @@ describe('workflow graph foundation', () => {
     const fanoutErrors = validateGraph(fanout);
     expect(fanoutErrors.some((error) => error.code === 'invalid-checkpoint' && error.path === 'nodes.fanout.template.checkpoint')).toBe(true);
   });
-  it('deliberation keeps initial research independent then exchanges full replies and stops on mutual agreement', async () => {
-    const prompts: { provider: AIProvider; text: string }[] = [];
-    const system: string[] = [];
-    const off = onBridgeMessage((event) => {
-      if (event.provider === ('system' as AIProvider) && event.action === 'RESPONSE_DONE') system.push(String(event.payload));
-    });
-    const proposal = 'Use a bounded two-provider workflow with shared evidence.';
-    const agreement = 'I checked the other view.\n[[AI_ONE_DECISION:AGREE]]\n[[AI_ONE_PROPOSAL:' + proposal + ']]\n[[AI_ONE_OPEN_ISSUES:NONE]]';
-    vi.mocked(host.provider.send).mockImplementation(async (provider, text) => {
-      prompts.push({ provider, text });
-      const response = prompts.length <= 2 ? 'independent response from ' + provider : agreement;
-      publishBridgeMessage(done(provider, response));
-    });
-
-    await expect(executeGraph(deliberationGraph, { text: 'Assess the design', roles: { first: 'chatgpt', second: 'gemini' } })).resolves.toBeUndefined();
-    off();
-
-    expect(prompts.map((entry) => entry.provider)).toEqual(['chatgpt', 'gemini', 'chatgpt', 'gemini']);
-    expect(prompts[0].text).toContain('Original question:\nAssess the design');
-    expect(prompts[1].text).toContain('Original question:\nAssess the design');
-    expect(prompts[0].text).toContain('read-only');
-    expect(prompts[1].text).not.toContain('independent response from chatgpt');
-    expect(prompts[2].text).not.toContain('independent response from chatgpt');
-    expect(prompts[2].text).toContain('independent response from gemini');
-    expect(prompts[3].text).toContain(agreement);
-    expect(prompts[3].text).not.toContain('independent response from gemini');
-    expect(system).toHaveLength(1);
-    expect(system[0]).toContain('CONVERGED (round 1)');
-  });
-
-  it('deliberation requires matching decisions from both sides and reports unresolved at the round limit', async () => {
+  it('deliberation preserves independent openings and stops after a FINISH audit', async () => {
     const prompts: { provider: AIProvider; text: string }[] = [];
     const system: string[] = [];
     const off = onBridgeMessage((event) => {
@@ -373,41 +343,66 @@ describe('workflow graph foundation', () => {
     });
     vi.mocked(host.provider.send).mockImplementation(async (provider, text) => {
       prompts.push({ provider, text });
-      const response = prompts.length <= 2
-        ? 'independent ' + provider
-        : provider === 'chatgpt'
-          ? '[[AI_ONE_DECISION:AGREE]]\n[[AI_ONE_PROPOSAL:A common but unverified safe proposal.]]\n[[AI_ONE_OPEN_ISSUES:NONE]]'
-          : '[[AI_ONE_DECISION:REVISE]]\n[[AI_ONE_PROPOSAL:A common but unverified safe proposal.]]\n[[AI_ONE_OPEN_ISSUES:Evidence is still missing]]';
+      const response = provider === 'claude'
+        ? 'Evidence-backed findings: Confirm original evidence.\nShared conclusions: Both agree on the main fact.\nDisagreements: NONE\nEvidence gaps: NONE\nNext steps: Verify the original documentation.\n[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:AGREED]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]'
+        : prompts.length <= 2 ? 'independent ' + provider : 'reasoned response from ' + provider;
       publishBridgeMessage(done(provider, response));
     });
-
-    await expect(executeGraph(deliberationGraph, { text: 'Test disagreement', roles: { first: 'chatgpt', second: 'gemini' } })).resolves.toBeUndefined();
+    await expect(executeGraph(deliberationGraph, { text: 'Assess design', roles: { first: 'chatgpt', second: 'gemini', auditor: 'claude' } })).resolves.toBeUndefined();
     off();
-
-    expect(prompts.map((item) => item.provider)).toEqual([
-      'chatgpt', 'gemini', 'chatgpt', 'gemini', 'chatgpt', 'gemini', 'chatgpt', 'gemini',
-    ]);
+    expect(prompts.map((entry) => entry.provider)).toEqual(['chatgpt', 'gemini', 'chatgpt', 'gemini', 'claude']);
+    expect(prompts[1].text).not.toContain('independent chatgpt');
     expect(prompts[2].text).toContain('independent gemini');
     expect(prompts[3].text).toContain('independent chatgpt');
-    // After round 1 each native page already holds both initial answers.
-    // Later prompts relay only NEW other-side responses, never full history.
-    expect(prompts[4].text).toContain('Evidence is still missing');
-    expect(prompts[4].text).not.toContain('independent gemini');
-    expect(prompts[5].text).not.toContain('independent chatgpt');
-    expect(prompts[6].text).toContain('Evidence is still missing');
-    expect(prompts[6].text).not.toContain('independent gemini');
-    expect(prompts[6].text).not.toContain('independent chatgpt');
+    expect(prompts[4].text).toContain('independent chatgpt');
+    expect(prompts[4].text).toContain('reasoned response');
     expect(system).toHaveLength(1);
-    expect(system[0]).toContain('UNRESOLVED (MAX_ROUNDS=3');
-    expect(system[0]).toContain('Evidence is still missing');
+    expect(system[0]).toContain('COMPLETE_AGREED (round 1');
   });
 
-  it('deliberation preflight uses only ChatGPT and Gemini, not the old four-role Consult', async () => {
+  it('deliberation uses the independent auditor question on each next round and always reports at the limit', async () => {
+    const prompts: { provider: AIProvider; text: string }[] = [];
+    const system: string[] = [];
+    const off = onBridgeMessage((event) => {
+      if (event.provider === ('system' as AIProvider) && event.action === 'RESPONSE_DONE') system.push(String(event.payload));
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider, text) => {
+      prompts.push({ provider, text });
+      const round = prompts.filter((entry) => entry.provider === 'claude').length;
+      const response = provider === 'claude'
+        ? 'Evidence-backed findings: Some facts are supported.\nShared conclusions: Agreement is partial.\nDisagreements: Several assumptions remain disputed.\nEvidence gaps: Citation still missing.\nNext steps: ' + (round < 3 ? 'Investigate specific source ' + round : 'Document the remaining gaps.') +
+          '\n[[AI_ONE_AUDIT_DECISION:' + (round < 3 ? 'CONTINUE' : 'FINISH') + ']]\n[[AI_ONE_AUDIT_RESULT:DISAGREEMENTS]]\n[[AI_ONE_AUDIT_QUESTION:' + (round < 3 ? 'Investigate source ' + round + ' now' : 'NONE') + ']]'
+        : prompts.length <= 2 ? 'independent ' + provider : 'discussion of facts by ' + provider;
+      publishBridgeMessage(done(provider, response));
+    });
+    await expect(executeGraph(deliberationGraph, { text: 'Test disagreement', roles: { first: 'chatgpt', second: 'gemini', auditor: 'claude' } })).resolves.toBeUndefined();
+    off();
+    expect(prompts.map((entry) => entry.provider)).toEqual([
+      'chatgpt', 'gemini', 'chatgpt', 'gemini', 'claude',
+      'chatgpt', 'gemini', 'claude', 'chatgpt', 'gemini', 'claude',
+    ]);
+    expect(prompts[5].text).toContain('Investigate source 1 now');
+    expect(prompts[8].text).toContain('Investigate source 2 now');
+    expect(prompts[5].text).not.toContain('independent gemini');
+    expect(prompts[6].text).not.toContain('independent chatgpt');
+    expect(system).toHaveLength(1);
+    expect(system[0]).toContain('COMPLETE_WITH_DISAGREEMENTS');
+    expect(system[0]).toContain('round budget exhausted');
+  });
+
+  it('deliberation requires an available distinct auditor and validates the graph', async () => {
     vi.mocked(host.connections.get).mockResolvedValue([state('chatgpt'), state('gemini'), state('grok', false), state('claude', false)]);
-    await expect(preflightGraph(deliberationGraph, { first: 'chatgpt', second: 'gemini' })).resolves.toMatchObject({
-      ok: true,
-      unavailable: [],
-      aliased: [],
+    await expect(preflightGraph(deliberationGraph, { first: 'chatgpt', second: 'gemini', auditor: 'claude' })).resolves.toMatchObject({
+      ok: false,
+      unavailable: ['claude'],
+    });
+    vi.mocked(host.connections.get).mockResolvedValue([state('chatgpt'), state('gemini'), state('claude')]);
+    await expect(preflightGraph(deliberationGraph, { first: 'chatgpt', second: 'gemini', auditor: 'gemini' })).resolves.toMatchObject({
+      ok: false,
+      aliased: ['gemini'],
+    });
+    await expect(preflightGraph(deliberationGraph, { first: 'chatgpt', second: 'gemini', auditor: 'claude' })).resolves.toMatchObject({
+      ok: true, unavailable: [], aliased: [],
     });
     expect(validateGraph(deliberationGraph)).toEqual([]);
   });
