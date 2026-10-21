@@ -401,6 +401,8 @@ describe('workflow graph foundation', () => {
       if (!event.timedOut) return;
       failures.push(event.failureKind ?? 'unknown');
       expect(event.provider).toBe('gemini');
+      expect(event.skipAllowed).toBe(false);
+      expect(chooseStepTimeoutAction('skip', event.requestId)).toBe(false);
       expect(chooseStepTimeoutAction('retry', event.requestId)).toBe(true);
     });
     const offBridge = onBridgeMessage((event) => {

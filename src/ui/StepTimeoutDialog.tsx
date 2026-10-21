@@ -14,6 +14,7 @@ export interface StepTimeoutDialogState {
   requestId?: number;
   failureKind?: StepRecoveryFailureKind;
   recoveryDetail?: StepRecoveryDetail;
+  skipAllowed?: boolean;
 }
 
 export function StepTimeoutDialog({
@@ -77,9 +78,11 @@ export function StepTimeoutDialog({
           <button type="button" className="border border-emerald-300 dark:border-emerald-700 px-3 py-2 text-xs hover:bg-emerald-100 dark:hover:bg-emerald-950" onClick={() => choose('retry')}>
             {t('stepTimeout.retry', locale)}
           </button>
-          <button type="button" className="border border-sky-300 dark:border-sky-700 px-3 py-2 text-xs hover:bg-sky-100 dark:hover:bg-sky-950" onClick={() => choose('skip')}>
-            {t('stepTimeout.skip', locale)}
-          </button>
+          {event.skipAllowed !== false && (
+            <button type="button" className="border border-sky-300 dark:border-sky-700 px-3 py-2 text-xs hover:bg-sky-100 dark:hover:bg-sky-950" onClick={() => choose('skip')}>
+              {t('stepTimeout.skip', locale)}
+            </button>
+          )}
           <button type="button" className="border border-red-300 dark:border-red-700 px-3 py-2 text-xs hover:bg-red-100 dark:hover:bg-red-950" onClick={() => choose('cancel')}>
             {t('stepTimeout.cancel', locale)}
           </button>
