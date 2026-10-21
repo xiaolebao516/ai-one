@@ -2060,6 +2060,21 @@ describe('injected engine input hardening', () => {
       expect(engineStop()).toEqual({ found: false, clicked: false, generating: true });
     });
 
+    it('blocks a send after an unclicked stop even when the thinking detectors report idle', async () => {
+      vi.useFakeTimers();
+      const env = createEnv({ inputKind: 'textarea' });
+      const handler = await installEngine(env);
+      dispatchAdapter(handler, geminiLike);
+      // Reproduce the observed selector blind spot: a live reply, but no DOM busy signal.
+      env.thinking = false;
+      expect(engineStop()).toEqual({ found: false, clicked: false, generating: false });
+      send(handler, 'must never auto-send after missed stop', 'gemini');
+      await vi.advanceTimersByTimeAsync(STOP_IDLE_MAX_WAIT_MS + PRE_SEND_DELAY_MS + 1_000);
+      expect(errorDone(env)?.payload).toBe('[Error: gemini send rejected: stop failed; reload provider page before retrying]');
+      expect(env.sendButton?.clickCount).toBe(0);
+      expect(env.input.textContent).not.toBe('must never auto-send after missed stop');
+    });
+
     it('reports an error thrown by the stop control click', async () => {
       vi.useFakeTimers();
       const env = createEnv({ inputKind: 'textarea' });

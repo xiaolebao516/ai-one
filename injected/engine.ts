@@ -334,6 +334,9 @@ class InactiveSendOperationError extends Error {
   let chatGptTerminalGate: ChatGptTerminalGateState = emptyChatGptTerminalGate();
   // Set by every host stop. The next send must first see the page stay idle (confirmIdleAfterStop).
   let stopUnconfirmed = false;
+  // A failed stop cannot be proven safe by the same DOM detectors that missed its button.
+  // Only a page reload creates a fresh engine and clears this fail-closed latch.
+  let stopRequiresReload = false;
 
   window.__MAC_ENGINE__ = {
     bootId: bridge.bootId,
@@ -395,6 +398,11 @@ class InactiveSendOperationError extends Error {
       if (sendOperation === undefined) return;
       if (abortAutomationForChallenge(message.provider, true, 'send', sendOperation)) return;
       const payload = message.payload as { text?: string } | undefined;
+      if (stopRequiresReload) {
+        const provider = message.provider ?? adapter?.provider;
+        doneWithError(`${provider} send rejected: stop failed; reload provider page before retrying`, provider, sendOperation);
+        return;
+      }
       if (stopUnconfirmed) {
         void confirmIdleAfterStop(sendOperation).then((idle) => {
           if (!isActiveSendOperation(sendOperation)) return;
@@ -573,6 +581,7 @@ class InactiveSendOperationError extends Error {
       activeSendOperation = undefined;
       draftStaging = false;
       stopUnconfirmed = true;
+      if (!result.clicked) stopRequiresReload = true;
     }
     return result;
   }

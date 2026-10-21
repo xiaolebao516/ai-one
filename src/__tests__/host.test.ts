@@ -127,6 +127,34 @@ describe('host snapshot bindings', () => {
     expect(parseProviderStopResult(JSON.stringify(JSON.stringify({ clicked: true })))).toEqual({ outcome: 'clicked', generating: false });
   });
 
+  it('blocks sending after an unclicked stop until the provider reloads', async () => {
+    invokeMock.mockResolvedValueOnce(JSON.stringify({ found: false, clicked: false, generating: false }));
+    await expect(host.provider.stop('gemini')).resolves.toEqual({ outcome: 'not-found', generating: false });
+    invokeMock.mockClear();
+    await expect(host.provider.send('gemini', 'must not send')).rejects.toThrow('reload provider page');
+    expect(invokeMock).not.toHaveBeenCalled();
+
+    invokeMock.mockResolvedValueOnce(undefined);
+    await host.provider.reload('gemini');
+    invokeMock.mockResolvedValueOnce(undefined);
+    await expect(host.provider.send('gemini', 'after reload')).resolves.toBeUndefined();
+    expect(invokeMock).toHaveBeenLastCalledWith('provider_eval', expect.objectContaining({ provider: 'gemini' }));
+  });
+
+  it('blocks sending after a stop callback failure, including when reload fails', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('callback timed out'));
+    await expect(host.provider.stop('chatgpt')).rejects.toThrow('callback timed out');
+    await expect(host.provider.send('chatgpt', 'unsafe')).rejects.toThrow('reload provider page');
+    invokeMock.mockRejectedValueOnce(new Error('reload failed'));
+    await expect(host.provider.reload('chatgpt')).rejects.toThrow('reload failed');
+    await expect(host.provider.send('chatgpt', 'still unsafe')).rejects.toThrow('reload provider page');
+
+    invokeMock.mockResolvedValueOnce(undefined);
+    await host.provider.reload('chatgpt');
+    invokeMock.mockResolvedValueOnce(undefined);
+    await expect(host.provider.send('chatgpt', 'new page')).resolves.toBeUndefined();
+  });
+
   it('shows providers without stealing popup focus unless explicitly requested', async () => {
     invokeMock.mockResolvedValue(undefined);
 

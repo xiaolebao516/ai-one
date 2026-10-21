@@ -25,6 +25,10 @@ export interface ProviderStopResult {
   detail?: string;
 }
 
+// Fail closed at the host as well if the stop callback fails or the page engine is unavailable.
+// Only a successful explicit provider reload clears the host-side latch.
+const providersWithUnconfirmedStop = new Set<AIProvider>();
+
 const STOP_ENGINE_JS =
   "window.__MAC_ENGINE__ && typeof window.__MAC_ENGINE__.stop === 'function' ? window.__MAC_ENGINE__.stop() : null";
 
@@ -88,8 +92,11 @@ export const host = {
     eval: (provider: AIProvider, js: string): Promise<void> => invoke('provider_eval', { provider, js }),
     evalWithCallback: (provider: AIProvider, js: string): Promise<string> =>
       invoke('provider_eval_with_callback', { provider, js }),
-    send: (provider: AIProvider, text: string): Promise<void> =>
-      invoke('provider_eval', {
+    send: (provider: AIProvider, text: string): Promise<void> => {
+      if (providersWithUnconfirmedStop.has(provider)) {
+        return Promise.reject(new Error(`${provider} send rejected: stop failed; reload provider page before retrying`));
+      }
+      return invoke('provider_eval', {
         provider,
         js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
           v: 1,
@@ -97,7 +104,8 @@ export const host = {
           provider,
           payload: { text },
         })});`,
-      }),
+      });
+    },
     fill: (provider: AIProvider, text: string): Promise<void> =>
       invoke('provider_eval', {
         provider,
@@ -108,12 +116,23 @@ export const host = {
           payload: { text },
         })});`,
       }),
-    stop: async (provider: AIProvider): Promise<ProviderStopResult> =>
-      parseProviderStopResult(await invoke<string>('provider_eval_with_callback', { provider, js: STOP_ENGINE_JS })),
+    stop: async (provider: AIProvider): Promise<ProviderStopResult> => {
+      // Mark unconfirmed before the async call; a timeout is not proof that stop succeeded.
+      providersWithUnconfirmedStop.add(provider);
+      const result = parseProviderStopResult(await invoke<string>('provider_eval_with_callback', { provider, js: STOP_ENGINE_JS }));
+      if (result.outcome === 'clicked') providersWithUnconfirmedStop.delete(provider);
+      return result;
+    },
     openLogin: (provider: AIProvider): Promise<void> => invoke('provider_open_login', { provider }),
     openLoginExternal: (provider: AIProvider): Promise<void> => invoke('provider_open_login_external', { provider }),
-    reload: (provider: AIProvider): Promise<void> => invoke('provider_reload', { provider }),
-    reconnect: (provider: AIProvider): Promise<void> => invoke('provider_reload', { provider, reconnect: true }),
+    reload: async (provider: AIProvider): Promise<void> => {
+      await invoke('provider_reload', { provider });
+      providersWithUnconfirmedStop.delete(provider);
+    },
+    reconnect: async (provider: AIProvider): Promise<void> => {
+      await invoke('provider_reload', { provider, reconnect: true });
+      providersWithUnconfirmedStop.delete(provider);
+    },
     newSession: (provider: AIProvider): Promise<void> => invoke('provider_new_session', { provider }),
   },
   adapter: {
