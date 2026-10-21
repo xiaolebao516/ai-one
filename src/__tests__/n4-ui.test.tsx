@@ -96,7 +96,7 @@ describe('N4 preset catalog', () => {
       locale={locale}
       onSelectPreset={vi.fn()}
     />);
-    expect(html).toContain(t('preset.deliberation.description', locale));
+    expect(html).toContain(t('preset.deliberation.description', locale).replace(/'/g, '&#x27;'));
     expect(html).toContain(t('preset.deliberation.costLabel', locale));
     expect(t('preset.deliberation.description', locale).toLowerCase()).not.toContain('same proposal');
   });
