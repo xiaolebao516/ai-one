@@ -86,7 +86,7 @@ describe('N4 preset catalog', () => {
     expect(PRESET_CATALOG.filter((preset) => preset.graphId !== 'free' && preset.id !== 'deliberation').map((preset) => preset.requiredProviders)).toEqual(
       Array.from({ length: 4 }, () => [...DEFAULT_FREE_TARGET_PROVIDERS]),
     );
-    expect(PRESET_CATALOG.find((preset) => preset.id === 'deliberation')?.requiredProviders).toEqual(['chatgpt', 'gemini']);
+    expect(PRESET_CATALOG.find((preset) => preset.id === 'deliberation')?.requiredProviders).toEqual(['chatgpt', 'gemini', 'claude']);
   });
 
   it('selects the clicked mode and exposes default roles for preset selection', () => {
@@ -108,7 +108,7 @@ describe('N4 preset catalog', () => {
     expect(defaultRolesForPreset('free')).toBeUndefined();
     expect(defaultRolesForPreset('free', 'brainstorm')).toEqual(DEFAULT_ROUNDTABLE_ROLES);
     expect(defaultRolesForPreset('consult', 'deliberation')).toMatchObject({ first: 'chatgpt', second: 'gemini' });
-    expect(requiredProvidersForPreset('consult', 'deliberation')).toEqual(['chatgpt', 'gemini']);
+    expect(requiredProvidersForPreset('consult', 'deliberation')).toEqual(['chatgpt', 'gemini', 'claude']);
     expect(requiredProvidersForPreset('consult', 'consult')).toHaveLength(4);
   });
 
@@ -134,7 +134,7 @@ describe('N4 preset catalog', () => {
     });
   });
 
-  it('allows two ready AI providers for the deliberation preset without requiring old Consult reviewers', () => {
+  it('shows missing independent auditor until a third provider is ready', () => {
     const allProviders: AIProvider[] = ['chatgpt', 'claude', 'gemini', 'grok', 'meta'];
     const states = Object.fromEntries(allProviders.map((provider) => [
       provider,
@@ -154,8 +154,8 @@ describe('N4 preset catalog', () => {
       locale="en"
       onSelectPreset={vi.fn()}
     />);
-    expect(html).toContain('2/2 ready');
-    expect(requiredProvidersForPreset('consult', 'deliberation')).toEqual(['chatgpt', 'gemini']);
+    expect(html).toContain('2/3 ready');
+    expect(requiredProvidersForPreset('consult', 'deliberation')).toEqual(['chatgpt', 'gemini', 'claude']);
   });
 
   it('renders the catalog as cards only without an advanced raw-controls drawer', () => {

@@ -39,7 +39,7 @@ describe('independent audit parser through WebView serializer', () => {
     expect(parseDeliberationAudit(body + '\n' + tags.join('\n') + '\nAdditional comment')).toBeUndefined();
     expect(parseDeliberationAudit('(no response — skipped)')).toBeUndefined();
     expect(parseDeliberationAudit('[Error: response truncated in transport]')).toBeUndefined();
-    expect(parseDeliberationAudit(body + '\n' + tags.join('\n').replace('calibration repeatability', 'NONE'))).toBeUndefined();
+    expect(parseDeliberationAudit(body + '\n' + tags.join('\n').replace('Investigate calibration repeatability', 'NONE'))).toBeUndefined();
   });
   it('generates a full disagreement report and blocks an unparseable audit', () => {
     const rounds = [{ round: 1, first: 'f', second: 's', auditor: 'a' }];
