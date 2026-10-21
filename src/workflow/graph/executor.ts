@@ -4,7 +4,8 @@ import type { Locale } from '../../i18n/resolve';
 import { formatI18n, t } from '../../i18n/t';
 import { abortWorkflow, checkAborted, getInFlightProviders } from '../cancel';
 import { awaitCheckpoint } from '../checkpoint';
-import { sendRoleAssignment, sendWorkflowStatus } from '../events';
+import { emitSystemNotice, sendRoleAssignment, sendWorkflowStatus } from '../events';
+import { deliberationReport } from './deliberationConsensus';
 import { fillAndAwaitNativeSend } from '../nativeEdit';
 import { providerResponseError, ProviderResponseError } from '../providerResponse';
 import { reserveProviderTurn, sendAndWait } from '../sendAndWait';
@@ -125,6 +126,9 @@ export async function executeGraph(graph: WorkflowGraph, params: ExecuteGraphPar
       evaluateEdges(context);
     }
 
+    if (graph.onComplete?.report?.kind === 'deliberation') {
+      emitSystemNotice(deliberationReport(graph.onComplete.report.rounds, (nodeId) => context.outputs.get(nodeId)?.text));
+    }
     if (graph.onComplete?.status !== undefined) sendWorkflowStatus(graph.onComplete.status);
     else sendWorkflowStatus('');
     completedCleanly = true;

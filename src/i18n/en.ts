@@ -22,6 +22,10 @@ export const en: Record<I18nKey, string> = {
   'preset.consult.description':
     'Use this for research-style questions. Two roles answer first, a reviewer checks them, and a final pass produces a concise combined answer.',
   'preset.consult.costLabel': '4 roles · 4 logins · ~2 min · Low RAM',
+  'preset.deliberation.displayName': 'Two-AI deliberation',
+  'preset.deliberation.meta': 'Up to 3 discussion rounds',
+  'preset.deliberation.description': 'ChatGPT and Gemini answer independently, then exchange full replies until both accept the same proposal or the 3-round limit is reached. The reported consensus is not an independent audit.',
+  'preset.deliberation.costLabel': '2 logins · up to 8 replies · Read-only · Medium RAM',
   'preset.coding.displayName': 'Coding',
   'preset.coding.meta': '~ 10 min',
   'preset.coding.description':
@@ -168,6 +172,7 @@ export const en: Record<I18nKey, string> = {
   'workflowStatus.freeTargets': '⚡ {providers} answering in parallel…',
   'workflowStatus.brainstormTargets': '✨ Starting the 12-round, 48-contribution brainstorm…',
   'workflowStatus.brainstormRound': '✨ Brainstorm round {round}/12 · phase {phase}/5 · speaker {seat}/4 — {provider} thinking…',
+  'workflowStatus.deliberationRound': 'Discussion round {round}/3 · {provider}',
   'workflowStatus.consultInitial': '🔍 {providers} answering in parallel…',
   'workflowStatus.providerStep': '{icon} {provider} — {step} in progress…',
   'workflowStatus.numberedProviderStep': '💻 Step {number}/{total} — {provider}: {step}…',

@@ -17,6 +17,7 @@ import {
   brainstormGraph,
   codingGraph,
   consultGraph,
+  deliberationGraph,
   debateGraph,
   executeGraph,
   freeGraph,
@@ -334,4 +335,69 @@ describe('workflow graph foundation', () => {
     const fanoutErrors = validateGraph(fanout);
     expect(fanoutErrors.some((error) => error.code === 'invalid-checkpoint' && error.path === 'nodes.fanout.template.checkpoint')).toBe(true);
   });
+  it('deliberation keeps initial research independent then exchanges full replies and stops on mutual agreement', async () => {
+    const prompts: { provider: AIProvider; text: string }[] = [];
+    const system: string[] = [];
+    const off = onBridgeMessage((event) => {
+      if (event.provider === ('system' as AIProvider) && event.action === 'RESPONSE_DONE') system.push(String(event.payload));
+    });
+    const proposal = 'Use a bounded two-provider workflow with shared evidence.';
+    const agreement = 'I checked the other view.\n[[AI_ONE_DECISION:AGREE]]\n[[AI_ONE_PROPOSAL:' + proposal + ']]\n[[AI_ONE_OPEN_ISSUES:NONE]]';
+    vi.mocked(host.provider.send).mockImplementation(async (provider, text) => {
+      prompts.push({ provider, text });
+      const response = prompts.length <= 2 ? 'independent response from ' + provider : agreement;
+      publishBridgeMessage(done(provider, response));
+    });
+
+    await expect(executeGraph(deliberationGraph, { text: 'Assess the design', roles: { first: 'chatgpt', second: 'gemini' } })).resolves.toBeUndefined();
+    off();
+
+    expect(prompts.map((entry) => entry.provider)).toEqual(['chatgpt', 'gemini', 'chatgpt', 'gemini']);
+    expect(prompts[0].text).toBe('Assess the design');
+    expect(prompts[1].text).toBe('Assess the design');
+    expect(prompts[2].text).toContain('independent response from chatgpt');
+    expect(prompts[2].text).toContain('independent response from gemini');
+    expect(prompts[3].text).toContain(agreement);
+    expect(system).toHaveLength(1);
+    expect(system[0]).toContain('CONVERGED (round 1)');
+  });
+
+  it('deliberation requires matching decisions from both sides and reports unresolved at the round limit', async () => {
+    const prompts: { provider: AIProvider; text: string }[] = [];
+    const system: string[] = [];
+    const off = onBridgeMessage((event) => {
+      if (event.provider === ('system' as AIProvider) && event.action === 'RESPONSE_DONE') system.push(String(event.payload));
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider, text) => {
+      prompts.push({ provider, text });
+      const response = prompts.length <= 2
+        ? 'independent ' + provider
+        : provider === 'chatgpt'
+          ? '[[AI_ONE_DECISION:AGREE]]\n[[AI_ONE_PROPOSAL:A common but unverified safe proposal.]]\n[[AI_ONE_OPEN_ISSUES:NONE]]'
+          : '[[AI_ONE_DECISION:REVISE]]\n[[AI_ONE_PROPOSAL:A common but unverified safe proposal.]]\n[[AI_ONE_OPEN_ISSUES:Evidence is still missing]]';
+      publishBridgeMessage(done(provider, response));
+    });
+
+    await expect(executeGraph(deliberationGraph, { text: 'Test disagreement', roles: { first: 'chatgpt', second: 'gemini' } })).resolves.toBeUndefined();
+    off();
+
+    expect(prompts.map((item) => item.provider)).toEqual([
+      'chatgpt', 'gemini', 'chatgpt', 'gemini', 'chatgpt', 'gemini', 'chatgpt', 'gemini',
+    ]);
+    expect(prompts[6].text).toContain('Evidence is still missing');
+    expect(system).toHaveLength(1);
+    expect(system[0]).toContain('UNRESOLVED (MAX_ROUNDS=3');
+    expect(system[0]).toContain('Evidence is still missing');
+  });
+
+  it('deliberation preflight uses only ChatGPT and Gemini, not the old four-role Consult', async () => {
+    vi.mocked(host.connections.get).mockResolvedValue([state('chatgpt'), state('gemini'), state('grok', false), state('claude', false)]);
+    await expect(preflightGraph(deliberationGraph, { first: 'chatgpt', second: 'gemini' })).resolves.toMatchObject({
+      ok: true,
+      unavailable: [],
+      aliased: [],
+    });
+    expect(validateGraph(deliberationGraph)).toEqual([]);
+  });
+
 });

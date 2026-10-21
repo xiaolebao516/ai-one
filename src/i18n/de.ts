@@ -22,6 +22,10 @@ export const de: Record<I18nKey, string> = {
   'preset.consult.description':
     'Für Recherchefragen. Zwei Rollen antworten zuerst, eine Prüfung folgt und ein letzter Durchlauf erstellt eine kurze Gesamtausgabe.',
   'preset.consult.costLabel': '4 Rollen · 4 Anmeldungen · ca. 2 Min. · Geringer RAM-Bedarf',
+  'preset.deliberation.displayName': 'KI-Diskussion zu zweit',
+  'preset.deliberation.meta': 'Bis zu 3 Runden',
+  'preset.deliberation.description': 'ChatGPT und Gemini antworten zuerst unabhängig und tauschen danach vollständige Antworten aus. Nach spätestens drei Runden werden Einigung oder offene Punkte ausgewiesen. Eine Einigung ersetzt keine unabhängige Prüfung.',
+  'preset.deliberation.costLabel': '2 Anmeldungen · bis zu 8 Antworten · nur Lesen · mittlerer RAM',
   'preset.coding.displayName': 'Programmieren',
   'preset.coding.meta': 'ca. 10 Min.',
   'preset.coding.description':
@@ -170,6 +174,7 @@ export const de: Record<I18nKey, string> = {
   'workflowStatus.freeTargets': '⚡ {providers} antworten parallel…',
   'workflowStatus.brainstormTargets': '✨ Brainstorming mit 12 Runden und 48 Beiträgen wird gestartet…',
   'workflowStatus.brainstormRound': '✨ Brainstorming-Runde {round}/12 · Phase {phase}/5 · Beitrag {seat}/4 — {provider} denkt nach…',
+  'workflowStatus.deliberationRound': 'Diskussion Runde {round}/3 · {provider}',
   'workflowStatus.consultInitial': '🔍 {providers} antworten parallel…',
   'workflowStatus.providerStep': '{icon} {provider} — {step} läuft…',
   'workflowStatus.numberedProviderStep': '💻 Schritt {number}/{total} — {provider}: {step}…',

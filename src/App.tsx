@@ -1715,11 +1715,11 @@ export default function App() {
       const appVersion = await getRuntimeAppVersion();
       const snapshot = matchingSnapshotForConversation(messages, getLastSnapshot());
       const exportPreset =
-        presetId === 'brainstorm'
+        presetId === 'brainstorm' || presetId === 'deliberation'
           ? {
               id: presetId,
-              icon: '✨',
-              name: translateKey('preset.brainstorm.displayName', localeRef.current),
+              icon: presetId === 'brainstorm' ? '✨' : '🔁',
+              name: translateKey(presetId === 'brainstorm' ? 'preset.brainstorm.displayName' : 'preset.deliberation.displayName', localeRef.current),
             }
           : undefined;
       const { content } = buildMarkdown(messages, mode, now, { appVersion, snapshot, preset: exportPreset });
@@ -2313,5 +2313,7 @@ function modeFromReplayPlan(plan: ReplayPlan): ChatMode | undefined {
 }
 
 function conversationPresetId(presetId: WorkflowPresetId, mode: ChatMode): WorkflowPresetId | undefined {
-  return presetId === 'brainstorm' && mode === 'free' ? presetId : undefined;
+  if (presetId === 'brainstorm' && mode === 'free') return presetId;
+  if (presetId === 'deliberation' && mode === 'consult') return presetId;
+  return undefined;
 }

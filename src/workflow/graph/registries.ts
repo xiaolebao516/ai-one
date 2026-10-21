@@ -1,4 +1,5 @@
 import { AI_PROVIDERS, brainstormPhaseForRound, PROMPTS } from '../../../shared/constants';
+import { hasDeliberationConsensus } from './deliberationConsensus';
 import type { AIProvider } from '../../../shared/types';
 import type { I18nKey } from '../../i18n/keys';
 import type { Locale } from '../../i18n/resolve';
@@ -136,6 +137,28 @@ export const promptBuilders: Record<string, PromptBuilder> = {
   'status.debate.con': (_args, context) => providerStepStatus('⚔️', 'workflowRole.debate.con', context),
   'status.debate.judge': (_args, context) => providerStepStatus('⚔️', 'workflowRole.debate.judge', context),
   'status.debate.summary': (_args, context) => providerStepStatus('⚔️', 'workflowRole.debate.summary', context),
+  'deliberation.reply': (args, context) => {
+    const entries = historyArg(args, 2);
+    const transcript = entries.map((item) => {
+      const heading = item.round ? 'Round ' + item.round + ' · ' + item.name : 'Independent answer · ' + item.name;
+      return heading + '\n' + item.text;
+    }).join('\n\n---\n\n');
+    return [
+      'Continue a read-only, evidence-based discussion with another AI.',
+      'You are ' + providerName(context.provider) + '. Discussion round ' + numberArg(args, 1) + ' of 3.',
+      'Original question:\n' + arg(args, 0),
+      'The full discussion so far (chronological, including your earlier responses):\n' + transcript,
+      'Address specific disagreements and new evidence. Do not restart original research without reason. Revise your position when evidence warrants it. Never claim agreement merely to finish.',
+      'Finish your answer with exactly these three lines, without a code fence:',
+      '[[AI_ONE_DECISION:AGREE]] or [[AI_ONE_DECISION:REVISE]]',
+      '[[AI_ONE_PROPOSAL:one concise, specific proposal of 12-240 characters]]',
+      '[[AI_ONE_OPEN_ISSUES:NONE]] if no blockers, otherwise [[AI_ONE_OPEN_ISSUES:short unresolved disagreement]]',
+      'AGREE means you endorse that exact proposal with no outstanding objections. Any uncertainty, discrepancy, or missing evidence requires REVISE. Only matching explicit approvals from BOTH parties can end this discussion.',
+    ].join('\n\n');
+  },
+  'deliberation.label': (args) => 'Discussion round ' + numberArg(args, 0),
+  'deliberation.status': (args, context) =>
+    translate('workflowStatus.deliberationRound', context, { round: numberArg(args, 0), provider: providerName(context.provider) }),
   'consult.first': (args) => PROMPTS.consult.first(arg(args, 0)),
   'consult.second': (args) => PROMPTS.consult.second(arg(args, 0)),
   'consult.reviewer': (args) => PROMPTS.consult.reviewer(arg(args, 0), arg(args, 1), arg(args, 2), arg(args, 3), arg(args, 4)),
@@ -230,6 +253,8 @@ function tokenJaccard(left: string, right: string): number {
 }
 
 export const textConditionEvaluators: Record<string, TextConditionEvaluator> = {
+  deliberationConsensus: (condition, context) => condition.type === 'deliberationConsensus' &&
+    hasDeliberationConsensus(context.resolveTextRef(condition.first), context.resolveTextRef(condition.second)),
   always: () => true,
   textIncludes: (condition, context) => {
     if (condition.type !== 'textIncludes') return false;

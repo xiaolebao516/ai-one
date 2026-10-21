@@ -22,6 +22,10 @@ export const ja: Record<I18nKey, string> = {
   'preset.consult.description':
     '調査型の質問に使います。2つの役割が先に回答し、レビュー役が検証して、最後の工程で簡潔に統合します。',
   'preset.consult.costLabel': '4役割 · ログイン4件 · 約2分 · RAM使用量：少',
+  'preset.deliberation.displayName': 'AI間の相互討論',
+  'preset.deliberation.meta': '最大3ラウンド',
+  'preset.deliberation.description': 'ChatGPTとGeminiが独立して回答した後、全文を交換して共通提案への同意を確認します。3ラウンドで未合意ならそのまま報告します。モデルの合意は独立監査ではありません。',
+  'preset.deliberation.costLabel': '2ログイン · 最大8回答 · 読み取り専用 · RAM中',
   'preset.coding.displayName': 'コーディング',
   'preset.coding.meta': '約10分',
   'preset.coding.description':
@@ -170,6 +174,7 @@ export const ja: Record<I18nKey, string> = {
   'workflowStatus.freeTargets': '⚡ {providers} が並列で回答中…',
   'workflowStatus.brainstormTargets': '✨ 12ラウンド・48発言のブレインストーミングを開始中…',
   'workflowStatus.brainstormRound': '✨ ブレインストーミング第{round}/12ラウンド・第{phase}/5段階・発言者{seat}/4 — {provider} が思考中…',
+  'workflowStatus.deliberationRound': '討論 {round}/3 · {provider}',
   'workflowStatus.consultInitial': '🔍 {providers} が並列で回答中…',
   'workflowStatus.providerStep': '{icon} {provider} — {step}を実行中…',
   'workflowStatus.numberedProviderStep': '💻 ステップ {number}/{total} — {provider}：{step}…',

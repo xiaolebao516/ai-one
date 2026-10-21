@@ -141,7 +141,7 @@ function presetReadiness(
   activeProviders?: readonly AIProvider[],
 ): { label: string; ready: boolean } {
   const roles = defaultRolesForPreset(preset.graphId, preset.id, modeRoles);
-  const required = roles ? ([...new Set(Object.values(roles))] as AIProvider[]) : preset.requiredProviders;
+  const required = preset.id === 'deliberation' ? preset.requiredProviders : roles ? ([...new Set(Object.values(roles))] as AIProvider[]) : preset.requiredProviders;
   if (required.length === 0) {
     const providers = activeProviders ?? DEFAULT_FREE_TARGET_PROVIDERS;
     const readyCount = providers.filter((provider) => isSendable(states[provider])).length;

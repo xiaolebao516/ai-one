@@ -77,6 +77,14 @@ async function runPreparedWorkflow({
         persistSnapshotIfEnabled(snapshot, snapshotOptions),
       ...(appVersion ? { appVersion } : {}),
     };
+    if (presetId === 'deliberation') {
+      const graph = workflowGraphs.deliberation;
+      const preflight = await preflightGraph(graph, roles, activeProviders);
+      if (!preflight.ok) return { ok: false, preflight };
+      await executeGraph(graph, { text, context, roles, checkpoints, locale, responseLanguagePolicy }, graphOptions);
+      return { ok: true };
+    }
+
     if (presetId === 'brainstorm') {
       const graph = workflowGraphs.brainstorm;
       const preflight = await preflightGraph(graph, roles, activeProviders);

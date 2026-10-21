@@ -56,6 +56,18 @@ export const PRESET_CATALOG: PresetCatalogEntry[] = [
     source: 'builtin',
   },
   {
+    id: 'deliberation',
+    graphId: 'consult',
+    displayNameKey: 'preset.deliberation.displayName',
+    metaKey: 'preset.deliberation.meta',
+    descriptionKey: 'preset.deliberation.description',
+    costLabelKey: 'preset.deliberation.costLabel',
+    requiredProviders: ['chatgpt', 'gemini'],
+    estMinutes: 8,
+    ramHint: 'medium',
+    source: 'builtin',
+  },
+  {
     id: 'coding',
     graphId: 'coding',
     displayNameKey: 'preset.coding.displayName',
@@ -103,6 +115,7 @@ export function defaultRolesForPreset(
   assignments: ModeRoleAssignments = DEFAULT_MODE_ROLE_ASSIGNMENTS,
 ): ModeRoles | undefined {
   if (presetId === 'brainstorm') return { ...assignments.roundtable };
+  if (presetId === 'deliberation') return { ...assignments.consult, first: 'chatgpt', second: 'gemini' };
   if (mode === 'free') return undefined;
   if (mode === 'debate') return { ...assignments.debate };
   if (mode === 'consult') return { ...assignments.consult };
