@@ -90,7 +90,7 @@ import {
   waitForPresentationTargetBounds,
 } from './ui/presentationCommands';
 import { preflightGraph, workflowGraphs } from './workflow/graph';
-import { defaultRolesForPreset, presetForId } from './ui/presetCatalogData';
+import { defaultRolesForPreset, presetForId, requiredProvidersForPreset } from './ui/presetCatalogData';
 import { buildPreflightDialogModel } from './ui/preflightModel';
 import { preflightFromResult, type PreflightSubject } from './ui/preflightFromResult';
 import { processingAfterSend, processingAfterSettle, processingAfterWorkflowStatus } from './ui/processing';
@@ -400,12 +400,10 @@ export default function App() {
   }, [centerSurface, modalHiddenProviders, presentation, states]);
   const hasFreeModeTargets = useMemo(() => hasEffectiveFreeModeTargets(targets, states), [states, targets]);
   const anySendableTargets = useMemo(() => defaultTargets(states, activeProviders), [activeProviders, states]);
-  const requiredModeProviders = useMemo(() => {
-    const roles = defaultRolesForPreset(mode, presetId, appSettings.modeRoles);
-    return roles
-      ? ([...new Set(Object.values(roles))] as AIProvider[])
-      : presetForId(presetId).requiredProviders;
-  }, [mode, presetId, appSettings.modeRoles]);
+  const requiredModeProviders = useMemo(
+    () => requiredProvidersForPreset(mode, presetId, appSettings.modeRoles),
+    [mode, presetId, appSettings.modeRoles],
+  );
   const readyModeProviders = useMemo(
     () => requiredModeProviders.filter((provider) => isSendable(states[provider])),
     [requiredModeProviders, states],
@@ -1514,16 +1512,19 @@ export default function App() {
   const send = async (trimmed: string): Promise<boolean> => {
     if (!trimmed) return false;
     const brainstorm = presetId === 'brainstorm';
+    const deliberation = presetId === 'deliberation';
     const serialMode = isSerialMode(mode) ? mode as Exclude<ChatMode, 'free'> : undefined;
     const modeRoles = settingsRef.current.modeRoles;
-    const workflowRoles = brainstorm
+    const workflowRoles = brainstorm || deliberation
       ? defaultRolesForPreset(mode, presetId, modeRoles)
       : serialMode
         ? defaultRolesForPreset(serialMode, undefined, modeRoles)
         : undefined;
-    const participants = workflowRoles
-      ? [...new Set(Object.values(workflowRoles))]
-      : freeModeTargets(targets, statesRef.current);
+    const participants = deliberation
+      ? requiredProvidersForPreset(mode, presetId, modeRoles)
+      : workflowRoles
+        ? [...new Set(Object.values(workflowRoles))]
+        : freeModeTargets(targets, statesRef.current);
 
     const providersToFreshen = pendingProviderSessionResets(
       pendingProviderResetRef.current,
@@ -1572,7 +1573,13 @@ export default function App() {
       }
     }
 
-    const serialGraph = brainstorm ? workflowGraphs.brainstorm : serialMode ? workflowGraphs[serialMode] : undefined;
+    const serialGraph = deliberation
+      ? workflowGraphs.deliberation
+      : brainstorm
+        ? workflowGraphs.brainstorm
+        : serialMode
+          ? workflowGraphs[serialMode]
+          : undefined;
     if (serialGraph) {
       try {
         const result = await preflightGraph(
@@ -2054,8 +2061,8 @@ export default function App() {
               <div className="min-w-[11rem] flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="ai-sister-mode-badge shrink-0 border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950 px-2 py-1 text-xs font-medium text-sky-700 dark:text-sky-100">
-                    <span className="mr-1">{presetId === 'brainstorm' ? '✨' : CHAT_MODES[mode].icon}</span>
-                    {presetId === 'brainstorm' ? translate(presetForId(presetId).displayNameKey) : translate(MODE_NAME_KEYS[mode])}
+                    <span className="mr-1">{presetId === 'brainstorm' ? '✨' : presetId === 'deliberation' ? '🔁' : CHAT_MODES[mode].icon}</span>
+                    {presetId === 'brainstorm' || presetId === 'deliberation' ? translate(presetForId(presetId).displayNameKey) : translate(MODE_NAME_KEYS[mode])}
                   </span>
                   <span className="min-w-0 truncate text-xs text-zinc-600 dark:text-zinc-400">{workflowStatus || translate('processTrace.settled')}</span>
                 </div>

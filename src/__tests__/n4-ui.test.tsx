@@ -13,7 +13,7 @@ import { t } from '../i18n/t';
 import { PresetCatalog } from '../ui/PresetCatalog';
 import { ProcessTrace } from '../ui/ProcessTrace';
 import { createProcessTrace, reduceProcessTraceEvent } from '../ui/processTraceModel';
-import { defaultRolesForPreset, PRESET_CATALOG } from '../ui/presetCatalogData';
+import { defaultRolesForPreset, PRESET_CATALOG, requiredProvidersForPreset } from '../ui/presetCatalogData';
 
 interface ElementProps {
   children?: ReactNode;
@@ -107,6 +107,9 @@ describe('N4 preset catalog', () => {
     expect(defaultRolesForPreset('roundtable')).toEqual(DEFAULT_ROUNDTABLE_ROLES);
     expect(defaultRolesForPreset('free')).toBeUndefined();
     expect(defaultRolesForPreset('free', 'brainstorm')).toEqual(DEFAULT_ROUNDTABLE_ROLES);
+    expect(defaultRolesForPreset('consult', 'deliberation')).toMatchObject({ first: 'chatgpt', second: 'gemini' });
+    expect(requiredProvidersForPreset('consult', 'deliberation')).toEqual(['chatgpt', 'gemini']);
+    expect(requiredProvidersForPreset('consult', 'consult')).toHaveLength(4);
   });
 
   it('keeps brainstorm visually distinct while routing it through the free graph', () => {
@@ -129,6 +132,30 @@ describe('N4 preset catalog', () => {
       graphId: 'free',
       requiredProviders: [...DEFAULT_FREE_TARGET_PROVIDERS],
     });
+  });
+
+  it('allows two ready AI providers for the deliberation preset without requiring old Consult reviewers', () => {
+    const allProviders: AIProvider[] = ['chatgpt', 'claude', 'gemini', 'grok', 'meta'];
+    const states = Object.fromEntries(allProviders.map((provider) => [
+      provider,
+      {
+        provider,
+        webview: provider === 'chatgpt' || provider === 'gemini' ? 'loaded' : 'none',
+        dom: provider === 'chatgpt' || provider === 'gemini' ? 'ready' : 'unknown',
+        login: provider === 'chatgpt' || provider === 'gemini' ? 'logged_in' : 'unknown',
+        thinking: false,
+        lastStatusAt: 1,
+      } satisfies ProviderState,
+    ])) as Record<AIProvider, ProviderState>;
+    const html = renderToStaticMarkup(<PresetCatalog
+      mode="consult"
+      selectedPresetId="deliberation"
+      states={states}
+      locale="en"
+      onSelectPreset={vi.fn()}
+    />);
+    expect(html).toContain('2/2 ready');
+    expect(requiredProvidersForPreset('consult', 'deliberation')).toEqual(['chatgpt', 'gemini']);
   });
 
   it('renders the catalog as cards only without an advanced raw-controls drawer', () => {

@@ -109,6 +109,17 @@ export function presetForId(presetId: WorkflowPresetId): PresetCatalogEntry {
   return PRESET_CATALOG.find((preset) => preset.id === presetId) ?? PRESET_CATALOG[0];
 }
 
+/** The preset is the source of truth for *required* providers, even if it reuses a legacy mode. */
+export function requiredProvidersForPreset(
+  mode: ChatMode,
+  presetId: WorkflowPresetId,
+  assignments: ModeRoleAssignments = DEFAULT_MODE_ROLE_ASSIGNMENTS,
+): AIProvider[] {
+  if (presetId === 'deliberation') return [...presetForId(presetId).requiredProviders];
+  const roles = defaultRolesForPreset(mode, presetId, assignments);
+  return roles ? ([...new Set(Object.values(roles))] as AIProvider[]) : [...presetForId(presetId).requiredProviders];
+}
+
 export function defaultRolesForPreset(
   mode: ChatMode,
   presetId?: WorkflowPresetId,
