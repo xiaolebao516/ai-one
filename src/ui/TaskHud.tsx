@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { Locale } from '../i18n/resolve';
 import {
   ALL,
@@ -69,11 +69,10 @@ export function TaskHud({ locale, onClose, tasks = TASK_HUD_MOCK_TASKS, initialS
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Return focus to whatever opened the HUD (the chat entry button) when it closes.
-  useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    return () => opener?.focus();
-  }, []);
+  // Remember what opened the HUD (the chat entry button) during the first render: by the time an
+  // effect runs, App has made the chat inert and the browser has already moved focus to <body>.
+  const [opener] = useState(() => (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null));
+  useEffect(() => () => opener?.focus(), [opener]);
 
   // Each view change moves focus to the view heading and scrolls to the top.
   useEffect(() => {
@@ -179,8 +178,8 @@ function Overview({ tasks, locale, text, dispatch, headingRef }: ViewProps & { t
         {text.t('mockBody')}
       </Notice>
       <div className="flex flex-col gap-v2-sm">
-        <h1 ref={headingRef} tabIndex={-1} className="m-0 text-v2-title text-v2-ink">
-          {headline}
+        <h1 ref={headingRef} tabIndex={-1} className="m-0 text-v2-ink">
+          <span className="text-v2-title">{headline}</span>
         </h1>
         <p className="m-0 text-v2-meta text-v2-ink-2">{text.t('subline')}</p>
         {tasks.length > 0 ? (
@@ -237,9 +236,11 @@ function Overview({ tasks, locale, text, dispatch, headingRef }: ViewProps & { t
 
 function CounterButton({ tone, count, label, hint, onClick }: { tone: 'run' | 'you' | 'unknown'; count: number; label: string; hint: string; onClick: () => void }) {
   return (
-    <Button onClick={onClick} title={hint} className="gap-v2-sm">
-      <StatusIndicator tone={tone} label={label} />
-      <span className="tabular-nums">{count}</span>
+    <Button onClick={onClick} title={hint}>
+      <span className="inline-flex items-center gap-v2-sm">
+        <StatusIndicator tone={tone} label={label} />
+        <span className="tabular-nums">{count}</span>
+      </span>
     </Button>
   );
 }
@@ -328,9 +329,9 @@ function TaskList({ tasks, state, locale, text, dispatch, headingRef }: ViewProp
   return (
     <>
       <div className="flex flex-col gap-v2-md">
-        <h1 ref={headingRef} tabIndex={-1} className="m-0 text-v2-heading text-v2-ink">
-          {text.t('tabList')}
-          <span className="ml-v2-sm text-v2-meta font-normal text-v2-ink-3">{text.t('listCount', { n: visible.length })}</span>
+        <h1 ref={headingRef} tabIndex={-1} className="m-0 text-v2-ink">
+          <span className="text-v2-heading">{text.t('tabList')}</span>
+          <span className="ml-v2-sm text-v2-meta text-v2-ink-3">{text.t('listCount', { n: visible.length })}</span>
         </h1>
         <div className="flex flex-wrap items-center gap-v2-md">
           <Select
@@ -409,8 +410,8 @@ function TaskDetail({ task, backTo, locale, text, dispatch, headingRef }: ViewPr
           {task.pr ? ` / PR #${task.pr.number}` : ''}
         </div>
         <div className="flex flex-wrap items-center gap-v2-md">
-          <h1 ref={headingRef} tabIndex={-1} className="m-0 min-w-0 flex-1 text-v2-heading text-v2-ink">
-            {pickText(task.title, locale)}
+          <h1 ref={headingRef} tabIndex={-1} className="m-0 min-w-0 flex-1 text-v2-ink">
+            <span className="text-v2-heading">{pickText(task.title, locale)}</span>
           </h1>
           <StatusIndicator tone={tone} label={statusLabel} variant="pill" />
         </div>
@@ -437,7 +438,7 @@ function TaskDetail({ task, backTo, locale, text, dispatch, headingRef }: ViewPr
         </Notice>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-v2-lg xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid grid-cols-1 gap-v2-lg min-[1100px]:grid-cols-[minmax(0,1fr)_300px]">
         <div className="flex min-w-0 flex-col gap-v2-lg">
           <Card as="section" aria-labelledby={`${ID}-now`} className="flex flex-col gap-v2-sm">
             <h2 id={`${ID}-now`} className="m-0 text-v2-meta font-semibold text-v2-ink-3">
