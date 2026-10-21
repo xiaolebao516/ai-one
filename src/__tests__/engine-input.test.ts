@@ -1956,6 +1956,10 @@ describe('injected engine input hardening', () => {
 
     send(handler, 'first draft');
     await vi.advanceTimersByTimeAsync(PRE_SEND_DELAY_MS);
+    // Model an actual clickable Grok stop control, then its disappearance on stop.
+    const liveStop = new FakeElement(env.document, 'button');
+    liveStop.onClick = () => env.detectorElements.delete(GROK_CHAT_STOP_BUTTON_SELECTOR);
+    env.detectorElements.set(GROK_CHAT_STOP_BUTTON_SELECTOR, [liveStop]);
     const engine = (window as unknown as { __MAC_ENGINE__?: { stop?: () => void } }).__MAC_ENGINE__;
     engine?.stop?.();
     await flushMicrotasks();
@@ -2094,8 +2098,9 @@ describe('injected engine input hardening', () => {
       const env = createEnv({ inputKind: 'textarea' });
       const handler = await installEngine(env);
       dispatchAdapter(handler, geminiLike);
+      env.detectorElements.set('button.stop', [new FakeElement(env.document, 'button')]);
       env.thinking = true;
-      engineStop();
+      expect(engineStop()).toMatchObject({ found: true, clicked: true });
 
       send(handler, 'must wait for a confirmed stop', 'gemini');
       await vi.advanceTimersByTimeAsync(STOP_IDLE_MAX_WAIT_MS - STOP_IDLE_SAMPLE_MS);
@@ -2113,8 +2118,9 @@ describe('injected engine input hardening', () => {
       const env = createEnv({ inputKind: 'textarea' });
       const handler = await installEngine(env);
       dispatchAdapter(handler, geminiLike);
+      env.detectorElements.set('button.stop', [new FakeElement(env.document, 'button')]);
       env.thinking = true;
-      engineStop();
+      expect(engineStop()).toMatchObject({ found: true, clicked: true });
 
       // Idle for one sample, then generating again.
       env.thinking = false;
@@ -2132,8 +2138,9 @@ describe('injected engine input hardening', () => {
       const env = createEnv({ inputKind: 'textarea' });
       const handler = await installEngine(env);
       dispatchAdapter(handler, geminiLike);
+      env.detectorElements.set('button.stop', [new FakeElement(env.document, 'button')]);
       env.thinking = true;
-      engineStop();
+      expect(engineStop()).toMatchObject({ found: true, clicked: true });
 
       send(handler, 'after a confirmed stop', 'gemini');
       await vi.advanceTimersByTimeAsync(STOP_IDLE_SAMPLE_MS * 2);
