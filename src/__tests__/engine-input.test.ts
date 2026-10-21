@@ -2017,6 +2017,18 @@ describe('injected engine input hardening', () => {
       expect(stopButton.clickCount).toBe(1);
     });
 
+    it('clicks ChatGPT\'s composer stop button, which the bundled adapter does not list', async () => {
+      vi.useFakeTimers();
+      const env = createEnv({ inputKind: 'textarea' });
+      const composerStop = new FakeElement(env.document, 'button');
+      env.detectorElements.set('button[data-testid="composer-stop-button"]', [composerStop]);
+      const handler = await installEngine(env);
+      dispatchAdapter(handler, bundledChatGptAdapter());
+
+      expect(engineStop()).toEqual({ found: true, clicked: true, generating: true });
+      expect(composerStop.clickCount).toBe(1);
+    });
+
     it('reports a missing stop control instead of silently skipping it', async () => {
       vi.useFakeTimers();
       const env = createEnv({ inputKind: 'textarea' });

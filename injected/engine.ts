@@ -542,7 +542,11 @@ class InactiveSendOperationError extends Error {
         result.generating = providerBusyAtSendStart(adapter.provider);
         const liveGrokButton =
           adapter.provider === 'grok' ? queryFirstVisible([GROK_LIVE_STOP_BUTTON_SELECTOR]) : null;
-        const button = (liveGrokButton ?? queryFirstVisible(adapter.stopButtonSelectors ?? [])) as HTMLElement | null;
+        // The bundled ChatGPT adapter does not list the newer composer stop button, which the busy
+        // checks already recognize. Click any control those checks treat as a live stop button.
+        const chatGptStopButton =
+          adapter.provider === 'chatgpt' ? queryFirstVisible(CHATGPT_STRONG_STOP_SELECTORS) : null;
+        const button = (liveGrokButton ?? chatGptStopButton ?? queryFirstVisible(adapter.stopButtonSelectors ?? [])) as HTMLElement | null;
         result.found = button !== null;
         if (button && typeof button.click === 'function') {
           button.click();
