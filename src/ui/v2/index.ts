@@ -14,6 +14,7 @@ export { Icon, type IconProps } from './Icon';
 export { V2_ICON_PATHS, type V2IconName } from './iconPaths';
 export { cx } from './cx';
 export { resolveV2Mode, useDocumentDarkClass } from './themeMode';
+export { getV2Skin, setV2Skin, subscribeV2Skin, useV2Skin } from './skinPreference';
 export {
   V2_DEFAULT_SKIN,
   V2_SKINS,
