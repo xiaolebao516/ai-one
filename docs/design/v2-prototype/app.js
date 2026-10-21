@@ -511,7 +511,7 @@ function discBody(t) {
   let h = matrix(t.disc);
   if (t.result) {
     const r = t.result;
-    h += `<div class="result"${impl('plan', '汇总报告由 #18 提供')}>
+    h += `<div class="dresult"${impl('plan', '汇总报告由 #18 提供')}>
       <div class="blk"><h4>结论 · ${r.agree.length}</h4>${r.agree.map(([tx, who, ev], i) => `<div class="agree"><span class="n">${i + 1}</span><span>${esc(tx)}</span><span class="r">${avs(who)}<span class="chip claim" title="依据类型">${ev}</span></span></div>`).join('')}</div>
       <div class="blk"><h4>仍有分歧 · 1</h4><div style="font-weight:600;margin-bottom:8px">${esc(r.split.q)}</div><div class="sides" style="margin-top:0">${r.split.sides.map(([id, tx]) => `<div class="side-op" style="box-shadow:inset 0 0 0 1px var(--line)"><div class="who">${av(id, 's')}${R[id].name}</div>${esc(tx)}</div>`).join('')}</div></div>
       <div class="blk"><h4>待补证据</h4>${r.gaps.map((g) => `<div style="display:flex;gap:8px;align-items:center">${ico('search', 's')}${esc(g)}</div>`).join('')}</div>
@@ -932,9 +932,15 @@ function newTask() { S.comp.mode = 'lead'; go('home'); setTimeout(() => document
 function setComp(k, v) {
   if (k === 'stage') { S.comp.mode = 'stage'; S.comp.stage = v; }
   else if (k === 'flow') { S.comp.mode = 'flow'; S.comp.flow = v; S.menu = null; }
-  else if (k === 'repo') { S.comp.repo = v; S.menu = null; if (!v && ['lead', 'flow'].includes(S.comp.mode)) { S.comp.mode = 'stage'; S.comp.stage = 'grill'; } }
+  else if (k === 'repo') {
+    S.comp.repo = v; S.menu = null;
+    /* 不关联仓库时切到“想需求”；再选回仓库时恢复默认的“交给 CC” */
+    if (!v && ['lead', 'flow'].includes(S.comp.mode)) { S.comp.mode = 'stage'; S.comp.stage = 'grill'; S.comp.autoGrill = true; }
+    else if (v && S.comp.autoGrill) { S.comp.mode = 'lead'; S.comp.autoGrill = false; }
+  }
   else S.comp[k] = v;
   if (k === 'mode' && v === 'stage') S.comp.stage = S.comp.stage || 'grill';
+  if (k === 'mode' || k === 'stage' || k === 'flow') S.comp.autoGrill = false;
   render();
 }
 function compInput(el) {
@@ -1252,6 +1258,7 @@ function fromHash() {
   if (q.has('hud')) S.hud = true;
   if (q.has('grill')) { relogin('argon'); S.toasts = []; startGrill(GRILL_SCRIPT.topic); S.fast = true; }
   if (q.has('lead')) { startLead('设置页增加“只在需要我时通知”的开关', null); S.fast = true; }
+  if (q.has('open') && cur()) S.open[cur().id + q.get('open')] = true;
 }
 
 /* 界面里的 onclick / oninput 直接调用这些函数 */

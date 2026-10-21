@@ -320,6 +320,23 @@ src/views/        home / tasks / task / chat / flows / resources
 - 深链接：`#task/t42`、`#chat`、`#flows/lead`、`#res`、`#tasks`，可加 `?dark`、`?w=1280`、`?noimpl`。
 - 原型脚本是经典 `<script>`：`data.js` 把数据挂在 `window.AIONE_DATA`，`app.js` 把界面事件用到的函数挂到 `window`，浏览器全局在文件头用 `/* global */` 声明。这样能通过仓库现有的 `eslint .`，不需要改 eslint 配置。
 
+### 截图（模拟数据，Edge 无头渲染）
+
+不想启动本地服务时，可以直接看 [`v2-prototype/screenshots/`](v2-prototype/screenshots/)：
+
+| 文件 | 内容 |
+|---|---|
+| `01-home` / `02-home-impl-labels` | 总览（默认“交给 CC”）；同一屏打开实现标注 |
+| `03-cc-task-rework` | `ai-one #42`：CC 协调，GPT 执行会话按独立审计意见返工 |
+| `04-cc-run-build` | 新任务全过程：派工回执 → Prodex 超时恢复 → 本机验证 → 独立会话 REVISE → 返工 → 新 HEAD 复审 PASS → 待验收 |
+| `05-grill-result` | `/grill` 讨论矩阵与汇总 |
+| `06-blocked-login` / `07-decide` / `08-accept` | 阻塞（登录失效）、需要你决定、待验收 |
+| `09-cc-config` / `10-parallel-flow` | CC 协调设置（含派工通道）；“CC 设计 · 并行开发”流程与参与者小卡片 |
+| `11-chat` / `12-resources` / `13-takeover` | 自由聊天对比；资源与派工通道；接管 GPT 网页 |
+| `14-width-1280` / `15-width-1024` / `16-dark` | 1280 宽、1024 宽、深色主题 |
+
+![CC 协调的新任务全过程](v2-prototype/screenshots/04-cc-run-build.webp)
+
 ---
 
 ## 12. 主动做的取舍

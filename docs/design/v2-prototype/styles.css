@@ -436,13 +436,13 @@ svg.i.l { width: 18px; height: 18px; }
 .shimmer { display: block; height: 8px; border-radius: 4px; margin-top: 6px; background: linear-gradient(90deg, var(--sunken), var(--line-2), var(--sunken)); background-size: 200% 100%; animation: sh 1.4s infinite; }
 @keyframes sh { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
-.result { margin-top: 14px; padding: 18px 20px; border-radius: var(--r-l); background: var(--card); box-shadow: var(--shadow-1), 0 0 0 1px var(--line); }
-.result h4 { margin: 0 0 8px; font-size: 12px; color: var(--ink-3); font-weight: 650; letter-spacing: .3px; }
-.result .blk + .blk { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.dresult { margin-top: 14px; padding: 18px 20px; border-radius: var(--r-l); background: var(--card); box-shadow: var(--shadow-1), 0 0 0 1px var(--line); }
+.dresult h4 { margin: 0 0 8px; font-size: 12px; color: var(--ink-3); font-weight: 650; letter-spacing: .3px; }
+.dresult .blk + .blk { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .agree { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: start; padding: 5px 0; }
 .agree .n { color: var(--ink-3); font-weight: 650; font-size: 12px; padding-top: 1px; }
 .agree .r { display: flex; align-items: center; gap: 6px; }
-.result .acts { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; align-items: center; }
+.dresult .acts { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; align-items: center; }
 
 /* 并行子任务 */
 .lanes { display: grid; gap: 8px; margin-top: 10px; }
