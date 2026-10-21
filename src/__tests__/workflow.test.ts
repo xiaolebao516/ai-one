@@ -1,0 +1,1447 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AIProvider, BridgeMessage, ProviderState } from '../../shared/types';
+import {
+  AI_PROVIDERS,
+  BRAINSTORM_ROUND_COUNT,
+  brainstormPhaseForRound,
+  DEFAULT_CODING_ROLES,
+  DEFAULT_CONSULT_ROLES,
+  DEFAULT_DEBATE_ROLES,
+  DEFAULT_ROUNDTABLE_ROLES,
+  POLL_PULL_MS,
+  PROMPTS,
+} from '../../shared/constants';
+import { onBridgeMessage, publishBridgeMessage, resetBusForTests } from '../bridge/bus';
+import {
+  AWAITING_MAX_MS,
+  handleTitleMessage,
+  pullProvider,
+  resetBridgePullForTests,
+} from '../bridge/pull';
+import { host } from '../host';
+import { abortWorkflow, getInFlightProviders, resetCancelState } from '../workflow/cancel';
+import { hasPendingCheckpoint, onCheckpoint, resetCheckpointForTests, resolveCheckpoint, type PendingCheckpoint } from '../workflow/checkpoint';
+import { emitSystemError } from '../workflow/events';
+import { preflightSerialMode } from '../workflow/preflight';
+import { isSendable } from '../workflow/sendability';
+import { sendAndWait } from '../workflow/sendAndWait';
+import { flushSessionCheckpointForTests, resetSessionCheckpointForTests } from '../workflow/sessionCheckpoint';
+import { getLastSnapshot, resetSnapshotRecorderForTests } from '../workflow/snapshot/recorder';
+import { runStep, SEND_REJECTION_RETRY_DELAY_MS } from '../workflow/stepRunner';
+import { getActiveTurn, reserveTurn, resetWorkflowStateForTests, SKIP_RESPONSE } from '../workflow/state';
+import {
+  chooseStepTimeoutAction,
+  onStepTimeoutEvent,
+  resetStepTimeoutForTests,
+  type StepTimeoutEvent,
+} from '../workflow/stepTimeout';
+import { tearDownWaiters } from '../workflow/teardown';
+import {
+  STEP_ABSOLUTE_TIMEOUT_MS,
+  STEP_TIMEOUT_MS,
+  waitForResponse,
+  resetWaitForResponseForTests,
+  hasWaiter,
+} from '../workflow/waitForResponse';
+import { resetWorkflowRuntimeForTests, runWorkflow } from '../workflow';
+import { createResponseLanguagePolicy } from '../workflow/responseLanguage';
+import { activeProvidersForStandby, normalizeSettings } from '../ui/settingsModel';
+
+vi.mock('../host', () => ({
+  host: {
+    provider: {
+      send: vi.fn(),
+      fill: vi.fn(),
+      eval: vi.fn(),
+      evalWithCallback: vi.fn(),
+      stop: vi.fn(() => Promise.resolve()),
+    },
+    connections: {
+      get: vi.fn(),
+    },
+    bridge: {
+      subscribeTitle: vi.fn(),
+    },
+    sessionCheckpoint: {
+      save: vi.fn(),
+      load: vi.fn(),
+      clear: vi.fn(),
+    },
+  },
+}));
+
+const providers: AIProvider[] = ['chatgpt', 'claude', 'gemini', 'grok'];
+
+function providerName(provider: AIProvider): string {
+  return AI_PROVIDERS[provider].name;
+}
+
+function state(provider: AIProvider, sendable = true): ProviderState {
+  return {
+    provider,
+    webview: sendable ? 'loaded' : 'none',
+    dom: sendable ? 'ready' : 'unknown',
+    login: sendable ? 'logged_in' : 'unknown',
+    thinking: false,
+    lastStatusAt: 1,
+  };
+}
+
+function done(provider: AIProvider, payload = 'final', transport: BridgeMessage['transport'] = 'pull'): BridgeMessage {
+  return { v: 1, action: 'RESPONSE_DONE', provider, payload, transport };
+}
+
+describe('workflow engine', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    resetBusForTests();
+    resetBridgePullForTests();
+    resetWorkflowStateForTests();
+    resetWaitForResponseForTests();
+    resetWorkflowRuntimeForTests();
+    resetCancelState();
+    resetCheckpointForTests();
+    resetStepTimeoutForTests();
+    resetSnapshotRecorderForTests();
+    resetSessionCheckpointForTests();
+    vi.mocked(host.provider.send).mockResolvedValue(undefined);
+    vi.mocked(host.provider.fill).mockResolvedValue(undefined);
+    vi.mocked(host.provider.eval).mockResolvedValue(undefined);
+    vi.mocked(host.provider.evalWithCallback).mockResolvedValue(JSON.stringify([]));
+    vi.mocked(host.connections.get).mockResolvedValue(providers.map((provider) => state(provider)));
+    vi.mocked(host.sessionCheckpoint.save).mockResolvedValue(undefined);
+    vi.mocked(host.sessionCheckpoint.clear).mockResolvedValue(undefined);
+  });
+
+  afterEach(async () => {
+    await flushSessionCheckpointForTests();
+    await Promise.resolve();
+    resetBusForTests();
+    resetBridgePullForTests();
+    resetWorkflowStateForTests();
+    resetWaitForResponseForTests();
+    resetWorkflowRuntimeForTests();
+    resetCancelState();
+    resetCheckpointForTests();
+    resetStepTimeoutForTests();
+    resetSnapshotRecorderForTests();
+    resetSessionCheckpointForTests();
+    vi.clearAllTimers();
+    await Promise.resolve();
+    vi.useRealTimers();
+  });
+
+  it('uses the tri-state sendable predicate', () => {
+    expect(isSendable(state('chatgpt'))).toBe(true);
+    expect(isSendable({ ...state('chatgpt'), login: 'logged_out' })).toBe(false);
+  });
+
+  it('resolves only authoritative RESPONSE_DONE, never pull chunks or title DONE', async () => {
+    const promise = sendAndWait('chatgpt', 'hello');
+    await Promise.resolve();
+    publishBridgeMessage({ v: 1, action: 'RESPONSE_CHUNK', provider: 'chatgpt', payload: 'partial', transport: 'pull' });
+    publishBridgeMessage(done('chatgpt', 'title final', 'title'));
+    await vi.advanceTimersByTimeAsync(100);
+
+    let settled = false;
+    void promise.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    publishBridgeMessage(done('chatgpt', 'real final', 'pull'));
+    await expect(promise).resolves.toEqual({ response: 'real final', turn: 1 });
+  });
+
+  it('registers the waiter before sending so a synchronous DONE from send resolves', async () => {
+    vi.mocked(host.provider.send).mockImplementationOnce(async () => {
+      publishBridgeMessage(done('claude', 'fast'));
+    });
+    await expect(sendAndWait('claude', 'fast prompt')).resolves.toEqual({ response: 'fast', turn: 1 });
+  });
+
+  it('keeps the workflow inactivity timeout at the exact 600-second contract boundary', () => {
+    expect(STEP_TIMEOUT_MS).toBe(AWAITING_MAX_MS);
+  });
+
+  it('waitForResponse rejects at the 600-second workflow boundary', async () => {
+    const promise = waitForResponse('grok', 99);
+    await vi.advanceTimersByTimeAsync(STEP_TIMEOUT_MS - 1);
+    await expect(Promise.race([promise.then(() => 'settled'), Promise.resolve('pending')])).resolves.toBe('pending');
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(promise).rejects.toThrow('Grok response timed out after 600s');
+  });
+
+  it('successful empty pull polling yields to the workflow timeout without forging bridge degraded', async () => {
+    const promise = sendAndWait('gemini', 'silent');
+    const rejection = promise.catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(STEP_TIMEOUT_MS);
+
+    await expect(rejection).resolves.toEqual(new Error('Gemini response timed out after 600s'));
+    expect(host.provider.stop).not.toHaveBeenCalled();
+  });
+
+  it('keeps a long task alive while thinking status reports continue', async () => {
+    const promise = sendAndWait('claude', 'long review task');
+    await Promise.resolve();
+
+    await vi.advanceTimersByTimeAsync(AWAITING_MAX_MS - 1_000);
+    handleTitleMessage({
+      v: 1,
+      action: 'STATUS_REPORT',
+      provider: 'claude',
+      bootId: 'long-task',
+      seq: 1,
+      payload: { dom: 'ready', thinking: true },
+      transport: 'title',
+    });
+    await vi.advanceTimersByTimeAsync(AWAITING_MAX_MS - 1_000);
+
+    await expect(Promise.race([promise.then(() => 'settled'), Promise.resolve('pending')])).resolves.toBe('pending');
+    publishBridgeMessage(done('claude', 'reviewed'));
+    await expect(promise).resolves.toEqual({ response: 'reviewed', turn: 1 });
+  });
+
+  it('treats pulled response chunks as activity for the workflow timeout', async () => {
+    const promise = waitForResponse('chatgpt', 77);
+    await vi.advanceTimersByTimeAsync(STEP_TIMEOUT_MS - 1_000);
+    publishBridgeMessage({ v: 1, action: 'RESPONSE_CHUNK', provider: 'chatgpt', payload: 'new partial', transport: 'pull' });
+    await vi.advanceTimersByTimeAsync(STEP_TIMEOUT_MS - 1_000);
+
+    await expect(Promise.race([promise.then(() => 'settled'), Promise.resolve('pending')])).resolves.toBe('pending');
+    publishBridgeMessage(done('chatgpt', 'finished'));
+    await expect(promise).resolves.toBe('finished');
+  });
+
+  it('enforces an absolute workflow timeout despite regular thinking heartbeats', async () => {
+    const promise = waitForResponse('grok', 78);
+    const rejection = promise.catch((error: unknown) => error);
+    const startedAt = Date.now();
+    let heartbeat = 0;
+    while (Date.now() - startedAt + 9 * 60 * 1000 < STEP_ABSOLUTE_TIMEOUT_MS) {
+      await vi.advanceTimersByTimeAsync(9 * 60 * 1000);
+      heartbeat += 1;
+      publishBridgeMessage({
+        v: 1,
+        action: 'STATUS_REPORT',
+        provider: 'grok',
+        payload: { thinking: true, seq: heartbeat },
+        transport: 'title',
+      });
+    }
+    await vi.advanceTimersByTimeAsync(STEP_ABSOLUTE_TIMEOUT_MS - (Date.now() - startedAt));
+    await expect(rejection).resolves.toEqual(
+      new Error(`Grok response timed out after ${STEP_ABSOLUTE_TIMEOUT_MS / 1000}s`),
+    );
+  });
+
+  it('keeps polling armed after a pulled chunk', async () => {
+    const promise = sendAndWait('chatgpt', 'chunked');
+    await Promise.resolve();
+    vi.mocked(host.provider.evalWithCallback).mockResolvedValueOnce(
+      JSON.stringify([{ v: 1, action: 'RESPONSE_CHUNK', provider: 'chatgpt', bootId: 'b1', mid: 1, payload: 'partial' }]),
+    );
+    await pullProvider('chatgpt');
+    const callsAfterChunk = vi.mocked(host.provider.evalWithCallback).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(POLL_PULL_MS);
+    expect(vi.mocked(host.provider.evalWithCallback).mock.calls.length).toBeGreaterThan(callsAfterChunk);
+    publishBridgeMessage(done('chatgpt', 'final'));
+    await expect(promise).resolves.toEqual({ response: 'final', turn: 1 });
+  });
+
+  it('blocks serial preflight for unavailable providers and same-provider consult aliasing', async () => {
+    vi.mocked(host.connections.get).mockResolvedValue([state('chatgpt'), state('claude', false), state('gemini'), state('grok')]);
+    await expect(preflightSerialMode('debate', { pro: 'chatgpt', con: 'claude', judge: 'grok', summary: 'gemini' })).resolves.toMatchObject({
+      ok: false,
+      unavailable: ['claude'],
+    });
+    await expect(
+      preflightSerialMode('consult', { first: 'chatgpt', second: 'chatgpt', reviewer: 'claude', summary: 'gemini' }),
+    ).resolves.toMatchObject({ ok: false, aliased: ['chatgpt'] });
+  });
+
+  it.each([
+    { mode: 'debate' },
+    { mode: 'consult' },
+    { mode: 'coding' },
+    { mode: 'roundtable' },
+    { mode: 'free', presetId: 'brainstorm' },
+  ] as const)('blocks standby roles before any send despite stale Ready state: %j', async (workflow) => {
+    vi.mocked(host.connections.get).mockResolvedValue([...providers, 'meta' as const].map((provider) => state(provider)));
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+
+    await expect(runWorkflow({
+      ...workflow,
+      text: 'stale standby must not run',
+      activeProviders: activeProvidersForStandby('grok'),
+    })).resolves.toEqual({
+      ok: false,
+      preflight: { ok: false, unavailable: ['grok'], aliased: [] },
+    });
+    expect(host.provider.send).not.toHaveBeenCalled();
+  });
+
+  it.each(providers)('preserves all four debate steps when Meta replaces %s', async (standbyProvider) => {
+    const settings = normalizeSettings({ standbyProvider });
+    const activeProviders = activeProvidersForStandby(standbyProvider);
+    vi.mocked(host.connections.get).mockResolvedValue(activeProviders.map((provider) => state(provider)));
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+
+    await expect(runWorkflow({
+      text: 'four-seat debate',
+      mode: 'debate',
+      roles: settings.modeRoles.debate,
+      activeProviders,
+    })).resolves.toEqual({ ok: true });
+
+    const expected = Object.values(DEFAULT_DEBATE_ROLES).map((provider) => provider === standbyProvider ? 'meta' : provider);
+    expect(vi.mocked(host.provider.send).mock.calls.map(([provider]) => provider)).toEqual(expected);
+    expect(new Set(expected)).toEqual(new Set(activeProviders));
+  });
+
+  it.each(providers.flatMap((standbyProvider) =>
+    (['consult', 'coding', 'roundtable', 'brainstorm'] as const).map((workflow) => ({ standbyProvider, workflow })),
+  ))('preserves $workflow sequence and recorded roles when Meta replaces $standbyProvider', async ({ standbyProvider, workflow }) => {
+    const settings = normalizeSettings({ standbyProvider });
+    const activeProviders = activeProvidersForStandby(standbyProvider);
+    // Include a stale Ready standby to prove the saved lineup controls every send.
+    vi.mocked(host.connections.get).mockResolvedValue([...providers, 'meta' as const].map((provider) => state(provider)));
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+    const roles = settings.modeRoles[workflow === 'brainstorm' ? 'roundtable' : workflow];
+
+    await expect(runWorkflow({
+      text: 'four-seat workflow',
+      mode: workflow === 'brainstorm' ? 'free' : workflow,
+      ...(workflow === 'brainstorm' ? { presetId: 'brainstorm' as const } : {}),
+      roles,
+      activeProviders,
+    })).resolves.toEqual({ ok: true });
+
+    const roundtableSeats = Object.values(DEFAULT_ROUNDTABLE_ROLES);
+    const { planner, reviewer, coder, tester } = DEFAULT_CODING_ROLES;
+    const baseline: AIProvider[] = workflow === 'consult'
+      ? Object.values(DEFAULT_CONSULT_ROLES)
+      : workflow === 'coding'
+        ? [planner, reviewer, coder, reviewer, tester, coder, planner, coder]
+        : workflow === 'roundtable'
+          ? Array.from({ length: 5 }, () => roundtableSeats).flat()
+          : Array.from({ length: BRAINSTORM_ROUND_COUNT }, (_, round) =>
+            roundtableSeats.map((_, seat) => roundtableSeats[(round + seat) % 4]),
+          ).flat();
+    const expected = baseline.map((provider) => provider === standbyProvider ? 'meta' : provider);
+    expect(vi.mocked(host.provider.send).mock.calls.map(([provider]) => provider)).toEqual(expected);
+    expect(new Set(expected)).toEqual(new Set(activeProviders));
+    expect(getLastSnapshot()?.roleMap).toEqual(roles);
+    expect(getLastSnapshot()?.steps.map((step) => step.provider)).toEqual(expected);
+    expect(getLastSnapshot()?.steps.every((step) => step.status === 'done')).toBe(true);
+  });
+
+  it('free mode sends only selected sendable targets and treats an empty target list as no-op', async () => {
+    const statuses: string[] = [];
+    const unsubscribe = onBridgeMessage((message) => {
+      if (message.action === 'WORKFLOW_STATUS' && typeof message.payload === 'string') statuses.push(message.payload);
+    });
+    vi.mocked(host.connections.get).mockResolvedValue([state('chatgpt'), state('claude', false), state('gemini'), state('grok')]);
+    const run = runWorkflow({ text: 'q', mode: 'free', targets: ['chatgpt', 'claude'] });
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(1));
+    publishBridgeMessage(done('chatgpt', 'ok'));
+    await expect(run).resolves.toEqual({ ok: true });
+    expect(host.provider.send).toHaveBeenCalledTimes(1);
+    expect(host.provider.send).toHaveBeenCalledWith('chatgpt', 'q');
+    expect(statuses).toEqual([`⚡ ${providerName('chatgpt')} answering in parallel…`, '']);
+
+    vi.mocked(host.provider.send).mockClear();
+    statuses.length = 0;
+    await expect(runWorkflow({ text: 'q', mode: 'free', targets: [] })).resolves.toEqual({ ok: true });
+    unsubscribe();
+    expect(host.provider.send).not.toHaveBeenCalled();
+    expect(statuses).toEqual(['']);
+  });
+
+  it('drops an explicitly selected standby provider even when stale state says it is sendable', async () => {
+    const activeProviders: AIProvider[] = ['chatgpt', 'claude', 'gemini', 'meta'];
+    vi.mocked(host.connections.get).mockResolvedValue([
+      ...activeProviders.map((provider) => state(provider)),
+      state('grok'),
+    ]);
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+
+    await expect(runWorkflow({
+      text: 'standby filter',
+      mode: 'free',
+      targets: ['grok', 'meta'],
+      activeProviders,
+    })).resolves.toEqual({ ok: true });
+
+    expect(vi.mocked(host.provider.send).mock.calls.map(([provider]) => provider)).toEqual(['meta']);
+  });
+
+  it('uses the caller active lineup when Meta AI replaces a default free target', async () => {
+    const activeProviders: AIProvider[] = ['chatgpt', 'claude', 'gemini', 'meta'];
+    vi.mocked(host.connections.get).mockResolvedValue([
+      ...activeProviders.map((provider) => state(provider)),
+      state('grok', false),
+    ]);
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+
+    await expect(runWorkflow({ text: 'meta fallback', mode: 'free', activeProviders })).resolves.toEqual({ ok: true });
+
+    expect(vi.mocked(host.provider.send).mock.calls.map(([provider]) => provider)).toEqual(activeProviders);
+  });
+
+  it('routes Brainstorm through twelve rounds of four rotating seats and records graph v4', async () => {
+    const order: AIProvider[] = [];
+    const prompts: string[] = [];
+    const statuses: string[] = [];
+    const unsubscribe = onBridgeMessage((message) => {
+      if (message.action === 'WORKFLOW_STATUS' && typeof message.payload === 'string') statuses.push(message.payload);
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      const turn = order.length + 1;
+      order.push(provider);
+      prompts.push(prompt);
+      publishBridgeMessage(done(provider, `answer-${turn}`));
+    });
+
+    await expect(
+      runWorkflow({
+        text: 'Invent a better new-user tutorial',
+        mode: 'free',
+        presetId: 'brainstorm',
+        locale: 'de',
+      }),
+    ).resolves.toEqual({ ok: true });
+    unsubscribe();
+
+    const { first, second, third, fourth } = DEFAULT_ROUNDTABLE_ROLES;
+    const baseOrder = [first, second, third, fourth] satisfies AIProvider[];
+    const expectedOrder = Array.from({ length: BRAINSTORM_ROUND_COUNT }, (_, roundIndex) =>
+      Array.from({ length: baseOrder.length }, (_, speakerIndex) => baseOrder[(roundIndex + speakerIndex) % baseOrder.length]),
+    ).flat();
+    expect(order).toEqual(expectedOrder);
+    expectedOrder.forEach((provider, index) => {
+      const round = Math.floor(index / baseOrder.length) + 1;
+      const speakerPosition = (index % baseOrder.length) + 1;
+      const history = expectedOrder.slice(0, index).map((priorProvider, priorIndex) => ({
+        name: AI_PROVIDERS[priorProvider].name,
+        round: Math.floor(priorIndex / baseOrder.length) + 1,
+        text: `answer-${priorIndex + 1}`,
+      }));
+      expect(prompts[index]).toBe(
+        PROMPTS.brainstorm.buildPrompt('Invent a better new-user tutorial', round, speakerPosition, provider, history),
+      );
+    });
+    expect(host.provider.send).toHaveBeenCalledTimes(48);
+    expect(statuses).toEqual([
+      ...expectedOrder.map((provider, index) => {
+        const round = Math.floor(index / baseOrder.length) + 1;
+        const speakerPosition = (index % baseOrder.length) + 1;
+        const phase = brainstormPhaseForRound(round);
+        return `✨ Brainstorming-Runde ${round}/12 · Phase ${phase}/5 · Beitrag ${speakerPosition}/4 — ${AI_PROVIDERS[provider].name} denkt nach…`;
+      }),
+      '',
+    ]);
+    expect(getLastSnapshot()?.graphId).toBe('brainstorm');
+    expect(getLastSnapshot()?.graphVersion).toBe(4);
+    expect(getLastSnapshot()?.steps).toHaveLength(48);
+    expect(getLastSnapshot()?.userQuestion).toMatchObject({ kind: 'inline', text: 'Invent a better new-user tutorial' });
+  });
+
+  it('lets Brainstorm skip a provider limit and continue without relaying the error text', async () => {
+    const prompts: string[] = [];
+    const timeoutEvents: { provider: string; remainingMs: number; timedOut: boolean }[] = [];
+    const bridgeMessages: BridgeMessage[] = [];
+    const unsubscribeTimeout = onStepTimeoutEvent((event) => timeoutEvents.push(event));
+    const unsubscribeBridge = onBridgeMessage((message) => bridgeMessages.push(message));
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      prompts.push(prompt);
+      const response = prompts.length === 1 ? '[Error: provider rate limited]' : `answer-${prompts.length}`;
+      publishBridgeMessage(done(provider, response));
+    });
+
+    const run = runWorkflow({
+      text: 'Generate launch ideas',
+      mode: 'free',
+      presetId: 'brainstorm',
+    });
+    await vi.waitFor(() => expect(timeoutEvents.some((event) => event.timedOut)).toBe(true));
+    expect(host.provider.send).toHaveBeenCalledTimes(1);
+
+    chooseStepTimeoutAction('skip');
+    await expect(run).resolves.toEqual({ ok: true });
+    unsubscribeTimeout();
+    unsubscribeBridge();
+
+    expect(host.provider.send).toHaveBeenCalledTimes(48);
+    expect(prompts[1]).toContain(SKIP_RESPONSE);
+    expect(prompts[1]).not.toContain('[Error: provider rate limited]');
+    expect(bridgeMessages).not.toContainEqual(
+      expect.objectContaining({ provider: 'system', payload: expect.stringContaining('provider rate limited') }),
+    );
+    expect(getLastSnapshot()?.graphVersion).toBe(4);
+    expect(getLastSnapshot()?.steps).toHaveLength(48);
+    expect(getLastSnapshot()?.steps[0]).toMatchObject({
+      nodeId: 'round1_first',
+      status: 'skipped',
+      outputRef: { text: SKIP_RESPONSE },
+    });
+  });
+
+  it('blocks Brainstorm before turn one when a required provider is unavailable', async () => {
+    vi.mocked(host.connections.get).mockResolvedValue([state('chatgpt'), state('claude', false), state('gemini'), state('grok')]);
+
+    await expect(
+      runWorkflow({
+        text: 'Generate launch ideas',
+        mode: 'free',
+        presetId: 'brainstorm',
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      preflight: { ok: false, unavailable: ['claude'], aliased: [] },
+    });
+    expect(host.provider.send).not.toHaveBeenCalled();
+  });
+
+  it('applies the same Auto response-language policy to every free and serial provider prompt', async () => {
+    const policy = createResponseLanguagePolicy('auto', 'zh-TW');
+    const freePrompts: string[] = [];
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      freePrompts.push(prompt);
+      publishBridgeMessage(done(provider, `${provider}-free-answer`));
+    });
+
+    await expect(
+      runWorkflow({
+        text: 'Explain dependency injection in simple terms.',
+        mode: 'free',
+        targets: ['chatgpt', 'gemini'],
+        responseLanguagePolicy: policy,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(freePrompts).toHaveLength(2);
+    for (const prompt of freePrompts) {
+      expect(prompt).toContain('Explain dependency injection in simple terms.');
+      expect(prompt).toContain('<response-language-policy version="1" setting="auto" interface-locale="zh-TW">');
+      expect(prompt).toContain('primary language of the user-authored prose');
+      expect(prompt).toContain('Traditional Chinese (zh-TW) (the app interface language fallback)');
+      expect(prompt.startsWith('<response-language-policy')).toBe(true);
+      expect(prompt.endsWith('Explain dependency injection in simple terms.')).toBe(true);
+    }
+
+    vi.mocked(host.provider.send).mockClear();
+    const serialPrompts: string[] = [];
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      serialPrompts.push(prompt);
+      publishBridgeMessage(done(provider, `${provider}-serial-answer`));
+    });
+
+    await expect(
+      runWorkflow({
+        text: 'Should cities ban private cars downtown?',
+        mode: 'debate',
+        roles: DEFAULT_DEBATE_ROLES,
+        responseLanguagePolicy: policy,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(serialPrompts).toHaveLength(4);
+    expect(
+      serialPrompts.every((prompt) =>
+        prompt.includes('<response-language-policy version="1" setting="auto" interface-locale="zh-TW">'),
+      ),
+    ).toBe(true);
+    expect(serialPrompts.every((prompt) => prompt.includes('Do not infer it from these workflow instructions, other AI responses'))).toBe(true);
+    expect(serialPrompts.every((prompt) => prompt.startsWith('<response-language-policy'))).toBe(true);
+  });
+
+  it('replays restored conversation context without replacing the current snapshot question', async () => {
+    let sentPrompt = '';
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      sentPrompt = prompt;
+      publishBridgeMessage(done(provider, 'continued answer'));
+    });
+
+    await expect(
+      runWorkflow({
+        text: 'What should we improve next?',
+        context: 'User:\nReview this repository.\n\nClaude:\nStart with session continuity.',
+        mode: 'free',
+        targets: ['claude'],
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(sentPrompt).toContain('Prior multi-AI conversation context from this same app conversation:');
+    expect(sentPrompt).toContain('Claude:\nStart with session continuity.');
+    expect(sentPrompt).toContain('Current user question:\nWhat should we improve next?');
+    expect(getLastSnapshot()?.userQuestion.text).toBe('What should we improve next?');
+  });
+
+  it('send failures tear down their waiter and polling for serial and free-mode sends', async () => {
+    vi.mocked(host.provider.send).mockRejectedValueOnce(new Error('send failed'));
+    const serial = runStep('chatgpt', 'serial');
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(1));
+    expect(hasWaiter('chatgpt', 1)).toBe(false);
+    chooseStepTimeoutAction('cancel');
+    await expect(serial).rejects.toThrow('send failed');
+    await vi.advanceTimersByTimeAsync(POLL_PULL_MS * 2);
+    expect(host.provider.evalWithCallback).not.toHaveBeenCalled();
+
+    vi.mocked(host.provider.send).mockRejectedValueOnce(new Error('free failed'));
+    await expect(runWorkflow({ text: 'free', mode: 'free', targets: ['chatgpt'] })).resolves.toEqual({ ok: true });
+    expect(hasWaiter('chatgpt', 2)).toBe(false);
+    await vi.advanceTimersByTimeAsync(POLL_PULL_MS * 2);
+    expect(host.provider.evalWithCallback).not.toHaveBeenCalled();
+  });
+
+  it('waits for a timeout action supplied after the timeout event and then skips', async () => {
+    const events: StepTimeoutEvent[] = [];
+    const unsubscribe = onStepTimeoutEvent((event) => events.push(event));
+    const step = runStep('chatgpt', 'late skip');
+    let settled = false;
+    void step.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(1));
+    vi.mocked(host.provider.evalWithCallback).mockRejectedValue(new Error('callback failed'));
+    const degrade = pullProvider('chatgpt');
+    await vi.advanceTimersByTimeAsync(1000);
+    await degrade;
+    await vi.advanceTimersByTimeAsync(STEP_TIMEOUT_MS);
+
+    expect(events.find((event) => event.timedOut)).toMatchObject({ failureKind: 'timeout' });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    chooseStepTimeoutAction('skip');
+    await expect(step).resolves.toEqual({ response: SKIP_RESPONSE, turn: -1 });
+    unsubscribe();
+  });
+
+  it('supersedes an old recovery waiter without letting it abort the next workflow', async () => {
+    const timeoutEvents: StepTimeoutEvent[] = [];
+    const unsubscribe = onStepTimeoutEvent((event) => timeoutEvents.push(event));
+    const sentPrompts: string[] = [];
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      sentPrompts.push(prompt);
+      publishBridgeMessage(done(provider, prompt === 'old recovery' ? '[Error: adapter not installed]' : `${provider}-answer`));
+    });
+
+    const oldOutcome = runStep('chatgpt', 'old recovery', undefined, { recoverProviderErrors: true }).catch(
+      (error: unknown) => error,
+    );
+    await vi.waitFor(() => expect(timeoutEvents.some((event) => event.timedOut)).toBe(true));
+
+    const nextRun = runWorkflow({ text: 'new workflow', mode: 'debate' });
+    await expect(oldOutcome).resolves.toMatchObject({ message: 'Step timeout action superseded by a new workflow' });
+    await expect(nextRun).resolves.toEqual({ ok: true });
+    unsubscribe();
+
+    expect(sentPrompts.filter((prompt) => prompt !== 'old recovery')).toHaveLength(4);
+  });
+
+  it('enforces one live waiter per provider so newer sends supersede older turns', async () => {
+    const oldWaiter = waitForResponse('chatgpt', 1).catch((error: Error) => error.message);
+    const newWaiter = waitForResponse('chatgpt', 2);
+    expect(hasWaiter('chatgpt', 1)).toBe(false);
+    expect(hasWaiter('chatgpt', 2)).toBe(true);
+    publishBridgeMessage(done('chatgpt', 'new turn'));
+    await expect(oldWaiter).resolves.toBe('superseded by a newer send');
+    await expect(newWaiter).resolves.toBe('new turn');
+    expect(hasWaiter('chatgpt', 2)).toBe(false);
+  });
+
+  it('retry stop-clicks before re-sending the same provider and prompt', async () => {
+    vi.mocked(host.provider.send).mockRejectedValueOnce(new Error('first attempt failed')).mockResolvedValue(undefined);
+    chooseStepTimeoutAction('retry');
+    const step = runStep('chatgpt', 'retry prompt');
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(2));
+    expect(host.provider.stop).toHaveBeenCalledWith('chatgpt');
+    expect(host.provider.send).toHaveBeenNthCalledWith(1, 'chatgpt', 'retry prompt');
+    expect(host.provider.send).toHaveBeenNthCalledWith(2, 'chatgpt', 'retry prompt');
+    expect(vi.mocked(host.provider.stop).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(host.provider.send).mock.invocationCallOrder[1],
+    );
+    expect(hasWaiter('chatgpt', 1)).toBe(false);
+    expect(hasWaiter('chatgpt', 2)).toBe(true);
+    publishBridgeMessage(done('chatgpt', 'retry final'));
+    await expect(step).resolves.toEqual({ response: 'retry final', turn: 2 });
+  });
+
+  it('retry with a reserved turn preserves that turn across the re-send', async () => {
+    vi.mocked(host.provider.send).mockRejectedValueOnce(new Error('first attempt failed')).mockResolvedValue(undefined);
+    chooseStepTimeoutAction('retry');
+    const step = runStep('chatgpt', 'reserved retry prompt', 42);
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(2));
+    expect(hasWaiter('chatgpt', 42)).toBe(true);
+    publishBridgeMessage(done('chatgpt', 'reserved retry final'));
+    await expect(step).resolves.toEqual({ response: 'reserved retry final', turn: 42 });
+  });
+
+  it('reactivates a reserved turn so cancellation tears down a provider-error retry', async () => {
+    vi.mocked(host.provider.send).mockImplementationOnce(async (provider) => {
+      publishBridgeMessage(done(provider, '[Error: provider rate limited]'));
+    }).mockResolvedValueOnce(undefined);
+
+    const step = runStep('chatgpt', 'retry after provider limit', 42, { recoverProviderErrors: true });
+    const rejection = step.catch((error: unknown) => error);
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(1));
+    chooseStepTimeoutAction('retry');
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(2));
+
+    expect(getActiveTurn('chatgpt')).toBe(42);
+    expect(hasWaiter('chatgpt', 42)).toBe(true);
+    abortWorkflow();
+    await tearDownWaiters(getInFlightProviders(), { stopClick: true });
+
+    await expect(rejection).resolves.toMatchObject({ message: 'Workflow cancelled by user' });
+    expect(hasWaiter('chatgpt', 42)).toBe(false);
+    expect(getActiveTurn('chatgpt')).toBeUndefined();
+  });
+
+  it('retry after degraded clears degraded state, re-arms polling, and resolves via real pull', async () => {
+    const step = runStep('claude', 'degraded retry');
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(1));
+    vi.mocked(host.provider.evalWithCallback).mockRejectedValue(new Error('callback failed'));
+    const degrade = pullProvider('claude');
+    await vi.advanceTimersByTimeAsync(1000);
+    await degrade;
+
+    chooseStepTimeoutAction('retry');
+    await vi.advanceTimersByTimeAsync(STEP_TIMEOUT_MS);
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(2));
+    const callsAfterRetry = vi.mocked(host.provider.evalWithCallback).mock.calls.length;
+    vi.mocked(host.provider.evalWithCallback).mockResolvedValue(
+      JSON.stringify([{ v: 1, action: 'RESPONSE_DONE', provider: 'claude', bootId: 'retry', mid: 1, payload: 'recovered' }]),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_PULL_MS);
+    expect(vi.mocked(host.provider.evalWithCallback).mock.calls.length).toBeGreaterThan(callsAfterRetry);
+    await expect(step).resolves.toEqual({ response: 'recovered', turn: 2 });
+  });
+
+  it('retries a rejected provider send once after the turn boundary settles', async () => {
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      const response = vi.mocked(host.provider.send).mock.calls.length === 1
+        ? `[Error: ${provider} send was not accepted; draft is still in composer]`
+        : 'accepted response';
+      publishBridgeMessage(done(provider, response));
+    });
+
+    const step = runStep('gemini', 'retry rejected send');
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(SEND_REJECTION_RETRY_DELAY_MS);
+    await expect(step).resolves.toEqual({ response: 'accepted response', turn: 2 });
+    expect(host.provider.send).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops after one automatic retry when the provider still rejects the send', async () => {
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `[Error: ${provider} send was not accepted; draft is still in composer]`));
+    });
+
+    const step = runStep('gemini', 'retry rejected send');
+    const rejection = step.catch((error: unknown) => error);
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(SEND_REJECTION_RETRY_DELAY_MS);
+    await expect(rejection).resolves.toMatchObject({
+      message: 'gemini send was not accepted; draft is still in composer',
+    });
+    expect(host.provider.send).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels during the rejected-send retry delay without sending again', async () => {
+    vi.mocked(host.provider.send).mockImplementationOnce(async (provider) => {
+      publishBridgeMessage(done(provider, `[Error: ${provider} send was not accepted; draft is still in composer]`));
+    });
+
+    const step = runStep('gemini', 'cancel rejected send retry');
+    const rejection = step.catch((error: unknown) => error);
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(1));
+    abortWorkflow();
+    await expect(rejection).resolves.toMatchObject({ message: 'Workflow cancelled by user' });
+    await vi.advanceTimersByTimeAsync(SEND_REJECTION_RETRY_DELAY_MS);
+    expect(host.provider.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('skip returns the canonical substitution and flows it into the next serial prompt', async () => {
+    const sentPrompts: string[] = [];
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      sentPrompts.push(prompt);
+      if (sentPrompts.length === 1) throw new Error('skip this step');
+      publishBridgeMessage(done(provider, `answer-${sentPrompts.length}`));
+    });
+    const run = runWorkflow({ text: 'question', mode: 'debate', roles: DEFAULT_DEBATE_ROLES });
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(1));
+    chooseStepTimeoutAction('skip');
+    await expect(run).resolves.toEqual({ ok: true });
+    expect(sentPrompts[1]).toBe(PROMPTS.debate.con('question', SKIP_RESPONSE));
+  });
+
+  it('cancel action aborts, stop-clicks, tears down waiters, and rejects the step', async () => {
+    const step = runStep('gemini', 'cancel prompt');
+    const stepError = step.catch((error: Error) => error);
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(1));
+    vi.mocked(host.provider.evalWithCallback).mockRejectedValue(new Error('callback failed'));
+    const degrade = pullProvider('gemini');
+    await vi.advanceTimersByTimeAsync(1000);
+    await degrade;
+    chooseStepTimeoutAction('cancel');
+    await vi.advanceTimersByTimeAsync(STEP_TIMEOUT_MS);
+    await expect(stepError).resolves.toMatchObject({ message: 'Gemini response timed out after 600s' });
+    expect(host.provider.stop).toHaveBeenCalledWith('gemini');
+    expect(hasWaiter('gemini', 1)).toBe(false);
+    publishBridgeMessage(done('gemini', 'late'));
+    expect(hasWaiter('gemini', 1)).toBe(false);
+  });
+
+  it('CANCEL_WORKFLOW stop-clicks in-flight providers, rejects waiters, and stops after cancellation', async () => {
+    const seen: BridgeMessage[] = [];
+    const unsubscribe = onBridgeMessage((message) => seen.push(message));
+    const run = runWorkflow({ text: 'q', mode: 'debate' });
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(1));
+    expect(hasWaiter(DEFAULT_DEBATE_ROLES.pro, 1)).toBe(true);
+    publishBridgeMessage({ v: 1, action: 'CANCEL_WORKFLOW', transport: 'local' });
+    await expect(run).resolves.toEqual({ ok: true });
+    expect(host.provider.stop).toHaveBeenCalledWith(DEFAULT_DEBATE_ROLES.pro);
+    expect(hasWaiter(DEFAULT_DEBATE_ROLES.pro, 1)).toBe(false);
+    const sendCount = vi.mocked(host.provider.send).mock.calls.length;
+    publishBridgeMessage(done(DEFAULT_DEBATE_ROLES.pro, 'late cancelled'));
+    unsubscribe();
+    expect(vi.mocked(host.provider.send).mock.calls.length).toBe(sendCount);
+    expect(seen.filter((message) => message.action === 'ROLE_ASSIGNMENT')).toHaveLength(1);
+  });
+
+  it('teardown bumps the turn epoch and clears active turns', async () => {
+    const firstTurn = reserveTurn('chatgpt');
+    expect(getActiveTurn('chatgpt')).toBe(firstTurn);
+    await tearDownWaiters(['chatgpt']);
+    expect(getActiveTurn('chatgpt')).toBeUndefined();
+    expect(reserveTurn('chatgpt')).toBe(firstTurn + 2);
+  });
+
+  it('consult emits both parallel role assignments before either send', async () => {
+    const order: string[] = [];
+    const statuses: string[] = [];
+    const unsubscribe = onBridgeMessage((message) => {
+      if (message.action === 'ROLE_ASSIGNMENT') order.push(`role:${message.provider}`);
+      if (message.action === 'WORKFLOW_STATUS' && typeof message.payload === 'string') statuses.push(message.payload);
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      order.push(`send:${provider}`);
+      publishBridgeMessage(done(provider));
+    });
+    await expect(runWorkflow({ text: 'q', mode: 'consult' })).resolves.toEqual({ ok: true });
+    unsubscribe();
+    const { first: consultFirst, second: consultSecond } = DEFAULT_CONSULT_ROLES;
+    expect(order.slice(0, 4)).toEqual([
+      `role:${consultFirst}`,
+      `role:${consultSecond}`,
+      `send:${consultFirst}`,
+      `send:${consultSecond}`,
+    ]);
+    expect(statuses).toEqual([
+      `🔍 ${providerName(DEFAULT_CONSULT_ROLES.first)} and ${providerName(DEFAULT_CONSULT_ROLES.second)} answering in parallel…`,
+      `🔍 ${providerName(DEFAULT_CONSULT_ROLES.reviewer)} — Review in progress…`,
+      `🔍 ${providerName(DEFAULT_CONSULT_ROLES.summary)} — Summary in progress…`,
+      '',
+    ]);
+  });
+
+  it('lets Brainstorm retry a provider error and complete the same workflow', async () => {
+    const sent: { provider: AIProvider; prompt: string }[] = [];
+    const timeoutEvents: StepTimeoutEvent[] = [];
+    const unsubscribe = onStepTimeoutEvent((event) => timeoutEvents.push(event));
+    let firstSend = true;
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      sent.push({ provider, prompt });
+      const response = firstSend ? '[Error: adapter not installed]' : `${provider}-answer-${sent.length}`;
+      firstSend = false;
+      publishBridgeMessage(done(provider, response));
+    });
+
+    const run = runWorkflow({ text: 'recover this workflow', mode: 'free', presetId: 'brainstorm' });
+    await vi.waitFor(() => expect(timeoutEvents.some((event) => event.timedOut)).toBe(true));
+    expect(timeoutEvents.find((event) => event.timedOut)).toMatchObject({ failureKind: 'provider-error' });
+    const failedSend = sent[0];
+
+    chooseStepTimeoutAction('retry');
+    await expect(run).resolves.toEqual({ ok: true });
+    unsubscribe();
+
+    expect(sent.filter((item) => item.provider === failedSend.provider && item.prompt === failedSend.prompt)).toHaveLength(2);
+    expect(host.provider.stop).toHaveBeenCalledWith(failedSend.provider);
+    expect(getLastSnapshot()?.steps.some((step) => step.status === 'error')).toBe(false);
+  });
+
+  it.each([
+    ['Debate', { mode: 'debate' }, 1],
+    ['Consult', { mode: 'consult' }, 2],
+    ['Coding', { mode: 'coding' }, 1],
+    ['Roundtable', { mode: 'roundtable' }, 1],
+  ] as const)(
+    '%s treats an unattended provider error as terminal without opening recovery',
+    async (_label, workflow, expectedSendCount) => {
+      const timeoutEvents: StepTimeoutEvent[] = [];
+      const unsubscribe = onStepTimeoutEvent((event) => timeoutEvents.push(event));
+      vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+        publishBridgeMessage(done(provider, '[Error: adapter not installed]'));
+      });
+
+      await expect(runWorkflow({ text: 'stop on provider error', ...workflow })).resolves.toEqual({ ok: true });
+      unsubscribe();
+
+      expect(host.provider.send).toHaveBeenCalledTimes(expectedSendCount);
+      expect(timeoutEvents.some((event) => event.timedOut)).toBe(false);
+      expect(getLastSnapshot()?.steps).toHaveLength(expectedSendCount);
+      expect(getLastSnapshot()?.steps.every((step) => step.status === 'error')).toBe(true);
+    },
+  );
+
+  it('keeps free fan-out provider errors isolated without opening serial recovery UI', async () => {
+    const timeoutEvents: { provider: string; remainingMs: number; timedOut: boolean }[] = [];
+    const unsubscribe = onStepTimeoutEvent((event) => timeoutEvents.push(event));
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, provider === 'chatgpt' ? '[Error: adapter not installed]' : `${provider}-usable`));
+    });
+
+    await expect(
+      runWorkflow({ text: 'independent fan-out', mode: 'free', targets: ['chatgpt', 'claude'] }),
+    ).resolves.toEqual({ ok: true });
+    unsubscribe();
+
+    expect(host.provider.send).toHaveBeenCalledTimes(2);
+    expect(timeoutEvents.some((event) => event.timedOut)).toBe(false);
+    expect(getLastSnapshot()?.steps.map((step) => step.status).sort()).toEqual(['done', 'error']);
+  });
+
+  it('stops an unfinished Consult sibling immediately after another structured step fails', async () => {
+    const timeoutEvents: StepTimeoutEvent[] = [];
+    const unsubscribe = onStepTimeoutEvent((event) => timeoutEvents.push(event));
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      if (provider === DEFAULT_CONSULT_ROLES.first) {
+        publishBridgeMessage(done(provider, '[Error: adapter not installed]'));
+      }
+    });
+
+    const run = runWorkflow({ text: 'q', mode: 'consult' });
+    await vi.waitFor(() => expect(host.provider.send).toHaveBeenCalledTimes(2));
+    await expect(run).resolves.toEqual({ ok: true });
+    unsubscribe();
+
+    expect(timeoutEvents.some((event) => event.timedOut)).toBe(false);
+    expect(host.provider.stop).toHaveBeenCalledWith(DEFAULT_CONSULT_ROLES.second);
+    expect(getInFlightProviders()).toEqual([]);
+  });
+
+  it('does not queue recovery actions when both parallel Consult providers fail', async () => {
+    const timeoutEvents: StepTimeoutEvent[] = [];
+    const unsubscribe = onStepTimeoutEvent((event) => timeoutEvents.push(event));
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, '[Error: adapter not installed]'));
+    });
+
+    await expect(runWorkflow({ text: 'stop both consult failures', mode: 'consult' })).resolves.toEqual({ ok: true });
+    unsubscribe();
+
+    expect(timeoutEvents.some((event) => event.timedOut)).toBe(false);
+    expect(host.provider.send).toHaveBeenCalledTimes(2);
+    expect(getInFlightProviders()).toEqual([]);
+  });
+
+  it('waits for Brainstorm recovery cancellation cleanup before starting the next workflow', async () => {
+    const timeoutEvents: StepTimeoutEvent[] = [];
+    const unsubscribe = onStepTimeoutEvent((event) => timeoutEvents.push(event));
+    let releaseSlowStop: (() => void) | undefined;
+    const slowStop = new Promise<void>((resolve) => {
+      releaseSlowStop = resolve;
+    });
+    const failedProvider = DEFAULT_ROUNDTABLE_ROLES.first;
+    vi.mocked(host.provider.stop).mockImplementation((provider) => (provider === failedProvider ? slowStop : Promise.resolve()));
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, '[Error: adapter not installed]'));
+    });
+
+    const run = runWorkflow({ text: 'wait for Brainstorm cancel cleanup', mode: 'free', presetId: 'brainstorm' });
+    let settled = false;
+    void run.then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(timeoutEvents.filter((event) => event.timedOut)).toHaveLength(1));
+    publishBridgeMessage({ v: 1, action: 'CANCEL_WORKFLOW', transport: 'local' });
+    await vi.waitFor(() => expect(host.provider.stop).toHaveBeenCalledWith(failedProvider));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    vi.mocked(host.provider.send).mockClear();
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `${provider}-new-answer`));
+    });
+    const nextRun = runWorkflow({ text: 'new workflow after cancellation', mode: 'debate' });
+    await Promise.resolve();
+    expect(host.provider.send).not.toHaveBeenCalled();
+
+    releaseSlowStop?.();
+    await expect(run).resolves.toEqual({ ok: true });
+    await expect(nextRun).resolves.toEqual({ ok: true });
+    unsubscribe();
+
+    expect(host.provider.send).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    ['en', 'Pro argument'],
+    ['zh-TW', '正方論述'],
+    ['ja', '賛成側の論述'],
+    ['de', 'Pro-Argument'],
+  ] as const)('localizes serial workflow status and role labels in %s', async (locale, expectedLabel) => {
+    const statuses: string[] = [];
+    const labels: string[] = [];
+    const unsubscribe = onBridgeMessage((message) => {
+      if (message.action === 'WORKFLOW_STATUS' && typeof message.payload === 'string') statuses.push(message.payload);
+      if (message.action === 'ROLE_ASSIGNMENT') {
+        const payload = message.payload as { label?: unknown };
+        if (typeof payload.label === 'string') labels.push(payload.label);
+      }
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+
+    await expect(
+      runWorkflow({ text: 'localized debate', mode: 'debate', roles: DEFAULT_DEBATE_ROLES, locale }),
+    ).resolves.toEqual({ ok: true });
+    unsubscribe();
+
+    expect(labels[0]).toBe(expectedLabel);
+    expect(statuses[0]).toContain(expectedLabel);
+  });
+
+  it('debate preserves pro to con to judge to summary ordering and threaded prompts', async () => {
+    const order: string[] = [];
+    const prompts: string[] = [];
+    const unsubscribe = onBridgeMessage((message) => {
+      if (message.action === 'ROLE_ASSIGNMENT') order.push(`role:${message.provider}`);
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      order.push(`send:${provider}`);
+      prompts.push(prompt);
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+    await expect(runWorkflow({ text: 'debate question', mode: 'debate', roles: DEFAULT_DEBATE_ROLES })).resolves.toEqual({ ok: true });
+    unsubscribe();
+    const { pro, con, judge, summary } = DEFAULT_DEBATE_ROLES;
+    expect(order).toEqual([
+      `role:${pro}`,
+      `send:${pro}`,
+      `role:${con}`,
+      `send:${con}`,
+      `role:${judge}`,
+      `send:${judge}`,
+      `role:${summary}`,
+      `send:${summary}`,
+    ]);
+    expect(prompts[1]).toBe(PROMPTS.debate.con('debate question', `${pro}-answer`));
+    expect(prompts[2]).toBe(PROMPTS.debate.judge('debate question', `${pro}-answer`, `${con}-answer`));
+    expect(prompts[3]).toBe(PROMPTS.debate.summary('debate question', `${pro}-answer`, `${con}-answer`, `${judge}-answer`));
+  });
+
+  it('does not checkpoint default debate runs', async () => {
+    const checkpoints: PendingCheckpoint[] = [];
+    const unsubscribeCheckpoint = onCheckpoint((pending) => {
+      if (pending) checkpoints.push(pending);
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+
+    await expect(runWorkflow({ text: 'default checkpoint off', mode: 'debate', roles: DEFAULT_DEBATE_ROLES })).resolves.toEqual({ ok: true });
+
+    unsubscribeCheckpoint();
+    expect(checkpoints).toEqual([]);
+    expect(host.provider.send).toHaveBeenCalledTimes(4);
+    expect(host.provider.fill).not.toHaveBeenCalled();
+  });
+
+  it('checkpoints debate, sends an edited confirmed draft, and records the human edit', async () => {
+    const checkpoints: PendingCheckpoint[] = [];
+    const unsubscribeCheckpoint = onCheckpoint((pending) => {
+      if (!pending) return;
+      checkpoints.push(pending);
+      if (pending.nodeId !== 'pro') resolveCheckpoint(pending.nodeId, { action: 'confirm', draft: pending.draft });
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+
+    const run = runWorkflow({ text: 'checkpoint question', mode: 'debate', roles: DEFAULT_DEBATE_ROLES, checkpoints: true });
+    await vi.waitFor(() => expect(checkpoints.map((checkpoint) => checkpoint.nodeId)).toContain('pro'));
+    expect(host.provider.send).not.toHaveBeenCalled();
+    expect(checkpoints[0]).toMatchObject({
+      nodeId: 'pro',
+      sourceNodeId: 'pro',
+      provider: DEFAULT_DEBATE_ROLES.pro,
+      draft: PROMPTS.debate.pro('checkpoint question'),
+    });
+
+    resolveCheckpoint('pro', { action: 'confirm', draft: 'edited pro draft' });
+    await expect(run).resolves.toEqual({ ok: true });
+
+    unsubscribeCheckpoint();
+    expect(host.provider.send).toHaveBeenNthCalledWith(1, DEFAULT_DEBATE_ROLES.pro, 'edited pro draft');
+    expect(host.provider.fill).not.toHaveBeenCalled();
+    expect(getLastSnapshot()?.humanEdits).toHaveLength(1);
+    expect(getLastSnapshot()?.humanEdits[0]).toMatchObject({
+      checkpointId: 'pro',
+      sourceNodeId: 'pro',
+      targetNodeId: 'pro',
+      beforeRef: { text: PROMPTS.debate.pro('checkpoint question') },
+      afterRef: { text: 'edited pro draft' },
+    });
+  });
+
+  it('native-edit checkpoint fills the provider draft, captures the native response, and continues', async () => {
+    const checkpoints: PendingCheckpoint[] = [];
+    const statuses: string[] = [];
+    const sent: { provider: AIProvider; prompt: string }[] = [];
+    const unsubscribeStatus = onBridgeMessage((message) => {
+      if (message.action === 'WORKFLOW_STATUS' && typeof message.payload === 'string') statuses.push(message.payload);
+    });
+    const unsubscribeCheckpoint = onCheckpoint((pending) => {
+      if (!pending) return;
+      checkpoints.push(pending);
+      if (pending.nodeId !== 'pro') resolveCheckpoint(pending.nodeId, { action: 'confirm', draft: pending.draft });
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      sent.push({ provider, prompt });
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+
+    const run = runWorkflow({ text: 'native checkpoint question', mode: 'debate', roles: DEFAULT_DEBATE_ROLES, checkpoints: true });
+    await vi.waitFor(() => expect(checkpoints.map((checkpoint) => checkpoint.nodeId)).toContain('pro'));
+    resolveCheckpoint('pro', { action: 'native-edit', draft: checkpoints[0].draft });
+    await vi.waitFor(() => expect(host.provider.fill).toHaveBeenCalledTimes(1));
+
+    expect(host.provider.send).not.toHaveBeenCalled();
+    expect(host.provider.fill).toHaveBeenCalledWith(DEFAULT_DEBATE_ROLES.pro, PROMPTS.debate.pro('native checkpoint question'));
+
+    publishBridgeMessage(done(DEFAULT_DEBATE_ROLES.pro, 'native pro answer'));
+    await expect(run).resolves.toEqual({ ok: true });
+
+    unsubscribeCheckpoint();
+    unsubscribeStatus();
+    expect(host.provider.send).not.toHaveBeenCalledWith(DEFAULT_DEBATE_ROLES.pro, expect.any(String));
+    expect(statuses).toContain(
+      `Draft inserted for ${providerName(DEFAULT_DEBATE_ROLES.pro)}. Edit and send it in the provider within 10 minutes.`,
+    );
+    expect(sent[0]).toEqual({
+      provider: DEFAULT_DEBATE_ROLES.con,
+      prompt: PROMPTS.debate.con('native checkpoint question', 'native pro answer'),
+    });
+    const proStep = getLastSnapshot()?.steps.find((step) => step.nodeId === 'pro');
+    expect(proStep).toMatchObject({
+      inputRef: { text: PROMPTS.debate.pro('native checkpoint question') },
+      outputRef: { text: 'native pro answer' },
+      status: 'done',
+    });
+  });
+
+  it('CANCEL_WORKFLOW during native-edit wait clears the native waiter without sending for that provider', async () => {
+    const checkpoints: PendingCheckpoint[] = [];
+    const unsubscribeCheckpoint = onCheckpoint((pending) => {
+      if (pending) checkpoints.push(pending);
+    });
+    const run = runWorkflow({ text: 'native cancel question', mode: 'debate', roles: DEFAULT_DEBATE_ROLES, checkpoints: true });
+
+    await vi.waitFor(() => expect(checkpoints.map((checkpoint) => checkpoint.nodeId)).toContain('pro'));
+    resolveCheckpoint('pro', { action: 'native-edit', draft: checkpoints[0].draft });
+    await vi.waitFor(() => expect(host.provider.fill).toHaveBeenCalledTimes(1));
+
+    expect(host.provider.fill).toHaveBeenCalledWith(DEFAULT_DEBATE_ROLES.pro, PROMPTS.debate.pro('native cancel question'));
+    expect(hasWaiter(DEFAULT_DEBATE_ROLES.pro, 1)).toBe(true);
+    expect(getInFlightProviders()).toEqual([DEFAULT_DEBATE_ROLES.pro]);
+
+    publishBridgeMessage({ v: 1, action: 'CANCEL_WORKFLOW', transport: 'local' });
+    await expect(run).resolves.toEqual({ ok: true });
+
+    unsubscribeCheckpoint();
+    expect(hasWaiter(DEFAULT_DEBATE_ROLES.pro, 1)).toBe(false);
+    expect(getInFlightProviders()).toEqual([]);
+    expect(host.provider.send).not.toHaveBeenCalledWith(DEFAULT_DEBATE_ROLES.pro, expect.any(String));
+  });
+
+  it('records native-edit fill rejection as an error step and settles at workflow level', async () => {
+    const fillError = new Error('fill rejected');
+    const checkpoints: PendingCheckpoint[] = [];
+    const seen: BridgeMessage[] = [];
+    const unsubscribeBridge = onBridgeMessage((message) => seen.push(message));
+    const unsubscribeCheckpoint = onCheckpoint((pending) => {
+      if (pending) checkpoints.push(pending);
+    });
+    vi.mocked(host.provider.fill).mockRejectedValueOnce(fillError);
+
+    const run = runWorkflow({ text: 'native fill failure', mode: 'debate', roles: DEFAULT_DEBATE_ROLES, checkpoints: true });
+    await vi.waitFor(() => expect(checkpoints.map((checkpoint) => checkpoint.nodeId)).toContain('pro'));
+    resolveCheckpoint('pro', { action: 'native-edit', draft: checkpoints[0].draft });
+    await vi.waitFor(() => expect(host.provider.fill).toHaveBeenCalledTimes(1));
+
+    await expect(run).resolves.toEqual({ ok: true });
+
+    unsubscribeCheckpoint();
+    unsubscribeBridge();
+    const proStep = getLastSnapshot()?.steps.find((step) => step.nodeId === 'pro');
+    expect(proStep).toMatchObject({
+      provider: DEFAULT_DEBATE_ROLES.pro,
+      inputRef: { text: PROMPTS.debate.pro('native fill failure') },
+      status: 'error',
+      outputRef: { text: '[Error: fill rejected]' },
+    });
+    expect(proStep?.completedAt).toEqual(expect.any(String));
+    expect(hasWaiter(DEFAULT_DEBATE_ROLES.pro, 1)).toBe(false);
+    expect(getInFlightProviders()).toEqual([]);
+    expect(seen).toContainEqual({ v: 1, action: 'RESPONSE_DONE', provider: 'system', payload: 'Error: fill rejected', transport: 'local' });
+  });
+
+  it('native-edit records control-pane draft edits before filling the provider', async () => {
+    const unsubscribeCheckpoint = onCheckpoint((pending) => {
+      if (!pending) return;
+      resolveCheckpoint(pending.nodeId, {
+        action: pending.nodeId === 'pro' ? 'native-edit' : 'confirm',
+        draft: pending.nodeId === 'pro' ? 'edited native draft' : pending.draft,
+      });
+    });
+    vi.mocked(host.provider.fill).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `${provider}-native`));
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+
+    await expect(runWorkflow({ text: 'native edit human edit', mode: 'debate', roles: DEFAULT_DEBATE_ROLES, checkpoints: true })).resolves.toEqual({
+      ok: true,
+    });
+
+    unsubscribeCheckpoint();
+    expect(host.provider.fill).toHaveBeenCalledWith(DEFAULT_DEBATE_ROLES.pro, 'edited native draft');
+    expect(getLastSnapshot()?.humanEdits).toHaveLength(1);
+    expect(getLastSnapshot()?.humanEdits[0]).toMatchObject({
+      checkpointId: 'pro',
+      beforeRef: { text: PROMPTS.debate.pro('native edit human edit') },
+      afterRef: { text: 'edited native draft' },
+    });
+    const proStep = getLastSnapshot()?.steps.find((step) => step.nodeId === 'pro');
+    expect(proStep).toMatchObject({ inputRef: { text: 'edited native draft' }, outputRef: { text: 'chatgpt-native' } });
+  });
+
+  it('checkpoint skip does not send and flows SKIP_RESPONSE downstream with skipped status', async () => {
+    const sent: { provider: AIProvider; prompt: string }[] = [];
+    const unsubscribeCheckpoint = onCheckpoint((pending) => {
+      if (!pending) return;
+      if (pending.nodeId === 'pro') resolveCheckpoint(pending.nodeId, { action: 'skip' });
+      else resolveCheckpoint(pending.nodeId, { action: 'confirm', draft: pending.draft });
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      sent.push({ provider, prompt });
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+
+    await expect(
+      runWorkflow({ text: 'skip checkpoint question', mode: 'debate', roles: DEFAULT_DEBATE_ROLES, checkpoints: true }),
+    ).resolves.toEqual({ ok: true });
+
+    unsubscribeCheckpoint();
+    expect(sent[0]).toEqual({
+      provider: DEFAULT_DEBATE_ROLES.con,
+      prompt: PROMPTS.debate.con('skip checkpoint question', SKIP_RESPONSE),
+    });
+    expect(sent.some((item) => item.provider === DEFAULT_DEBATE_ROLES.pro)).toBe(false);
+    expect(host.provider.fill).not.toHaveBeenCalled();
+    const skipped = getLastSnapshot()?.steps.find((step) => step.nodeId === 'pro');
+    expect(skipped).toMatchObject({ status: 'skipped', outputRef: { text: SKIP_RESPONSE } });
+  });
+
+  it('does not checkpoint consult parallel first/second steps when checkpoints are enabled', async () => {
+    const sent: { provider: AIProvider; prompt: string }[] = [];
+    const checkpoints: PendingCheckpoint[] = [];
+    const unsubscribeCheckpoint = onCheckpoint((pending) => {
+      if (!pending) return;
+      checkpoints.push(pending);
+      resolveCheckpoint(pending.nodeId, { action: 'confirm', draft: pending.draft });
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      sent.push({ provider, prompt });
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+
+    await expect(runWorkflow({ text: 'consult checkpoint question', mode: 'consult', checkpoints: true })).resolves.toEqual({ ok: true });
+
+    unsubscribeCheckpoint();
+    expect(sent.slice(0, 2).map((item) => item.provider)).toEqual([DEFAULT_CONSULT_ROLES.first, DEFAULT_CONSULT_ROLES.second]);
+    expect(checkpoints.map((checkpoint) => checkpoint.nodeId)).toEqual(['reviewer', 'summary']);
+  });
+
+  it('CANCEL_WORKFLOW rejects a pending checkpoint and settles without sending', async () => {
+    const checkpoints: PendingCheckpoint[] = [];
+    const unsubscribeCheckpoint = onCheckpoint((pending) => {
+      if (pending) checkpoints.push(pending);
+    });
+    const run = runWorkflow({ text: 'cancel checkpoint question', mode: 'debate', roles: DEFAULT_DEBATE_ROLES, checkpoints: true });
+
+    await vi.waitFor(() => expect(checkpoints.map((checkpoint) => checkpoint.nodeId)).toContain('pro'));
+    expect(hasPendingCheckpoint('pro')).toBe(true);
+    publishBridgeMessage({ v: 1, action: 'CANCEL_WORKFLOW', transport: 'local' });
+
+    await expect(run).resolves.toEqual({ ok: true });
+    unsubscribeCheckpoint();
+    expect(hasPendingCheckpoint('pro')).toBe(false);
+    expect(host.provider.send).not.toHaveBeenCalled();
+  });
+
+  it('roundtable runs 5x4 with exact history growth and round labels', async () => {
+    const historyLengths: number[] = [];
+    const statuses: string[] = [];
+    const roleLabels: string[] = [];
+    let terminalHistory: { name: string; round: number; text: string }[] | undefined;
+    const originalBuildPrompt = PROMPTS.roundtable.buildPrompt;
+    const buildPromptSpy = vi.spyOn(PROMPTS.roundtable, 'buildPrompt').mockImplementation((question, round, speakerName, history) => {
+      historyLengths.push(history.length);
+      terminalHistory = history;
+      return originalBuildPrompt(question, round, speakerName, history);
+    });
+    const unsubscribe = onBridgeMessage((message) => {
+      if (message.action === 'WORKFLOW_STATUS' && typeof message.payload === 'string') statuses.push(message.payload);
+      if (message.action === 'ROLE_ASSIGNMENT') {
+        const payload = message.payload as { label?: unknown };
+        if (typeof payload.label === 'string') roleLabels.push(payload.label);
+      }
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `round-answer-${vi.mocked(host.provider.send).mock.calls.length}`));
+    });
+    await expect(
+      runWorkflow({ text: 'roundtable question', mode: 'roundtable', roles: DEFAULT_ROUNDTABLE_ROLES, locale: 'en' }),
+    ).resolves.toEqual({ ok: true });
+    unsubscribe();
+    buildPromptSpy.mockRestore();
+    expect(host.provider.send).toHaveBeenCalledTimes(20);
+    expect(historyLengths).toEqual(Array.from({ length: 20 }, (_, index) => index));
+    expect(terminalHistory).toHaveLength(20);
+    expect(roleLabels.slice(0, 5)).toEqual(['Round 1', 'Round 1', 'Round 1', 'Round 1', 'Round 2']);
+    for (const label of ['Opening positions', 'Cross-examination', 'Deepening the debate', 'Core convergence', 'Final synthesis']) {
+      expect(statuses.some((status) => status.includes(label))).toBe(true);
+    }
+    expect(statuses.join('\n')).not.toMatch(/第\d+輪|開場立論|交叉質疑|攻防深化|核心收斂|真理浮現/);
+  });
+
+  it('coding runs the eight ported steps with distinct turns for repeated providers', async () => {
+    const coderTurns: number[] = [];
+    const roleAssignments: { role: string; label: string }[] = [];
+    const statuses: string[] = [];
+    const sent: { provider: AIProvider; prompt: string }[] = [];
+    const sends: string[] = [];
+    const responses = [
+      'spec',
+      'spec-review',
+      'code-v1',
+      'code-review',
+      'test-report',
+      'code-v2',
+      'acceptance',
+      'final-code',
+    ];
+    const unsubscribe = onBridgeMessage((message) => {
+      if (message.action === 'WORKFLOW_STATUS' && typeof message.payload === 'string') statuses.push(message.payload);
+      if (message.action === 'ROLE_ASSIGNMENT') {
+        const payload = message.payload as { role: string; label: string; turn: number };
+        roleAssignments.push({ role: payload.role, label: payload.label });
+        if (message.provider === DEFAULT_CODING_ROLES.coder) {
+          coderTurns.push(payload.turn);
+        }
+      }
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      sent.push({ provider, prompt });
+      sends.push(`${provider}:${prompt}`);
+      publishBridgeMessage(done(provider, responses[sends.length - 1]));
+    });
+    await expect(runWorkflow({ text: 'feature', mode: 'coding', roles: DEFAULT_CODING_ROLES })).resolves.toEqual({ ok: true });
+    unsubscribe();
+    expect(sends).toHaveLength(8);
+    expect(sends[0]).toContain('需求：feature');
+    expect(new Set(coderTurns).size).toBe(3);
+    expect(statuses).toEqual([
+      `💻 Step 1/8 — ${providerName(DEFAULT_CODING_ROLES.planner)}: Write specification…`,
+      `💻 Step 2/8 — ${providerName(DEFAULT_CODING_ROLES.reviewer)}: Review specification…`,
+      `💻 Step 3/8 — ${providerName(DEFAULT_CODING_ROLES.coder)}: Write v1…`,
+      `💻 Step 4/8 — ${providerName(DEFAULT_CODING_ROLES.reviewer)}: Code review…`,
+      `💻 Step 5/8 — ${providerName(DEFAULT_CODING_ROLES.tester)}: Test analysis…`,
+      `💻 Step 6/8 — ${providerName(DEFAULT_CODING_ROLES.coder)}: Revise to v2…`,
+      `💻 Step 7/8 — ${providerName(DEFAULT_CODING_ROLES.planner)}: Acceptance review…`,
+      `💻 Step 8/8 — ${providerName(DEFAULT_CODING_ROLES.coder)}: Final revision…`,
+      '',
+    ]);
+    expect(roleAssignments).toEqual([
+      { role: 'planner', label: 'Write specification' },
+      { role: 'reviewer', label: 'Review specification' },
+      { role: 'coder', label: 'Write v1' },
+      { role: 'reviewer', label: 'Code review' },
+      { role: 'tester', label: 'Test analysis' },
+      { role: 'coder', label: 'Revise to v2' },
+      { role: 'planner', label: 'Acceptance review' },
+      { role: 'coder', label: 'Final revision' },
+    ]);
+    expect(sent.map((item) => item.prompt)).toEqual([
+      PROMPTS.coding.plannerSpec('feature'),
+      PROMPTS.coding.reviewerSpec('feature', responses[0], providerName(DEFAULT_CODING_ROLES.planner)),
+      PROMPTS.coding.coderV1(
+        'feature',
+        responses[0],
+        providerName(DEFAULT_CODING_ROLES.planner),
+        responses[1],
+        providerName(DEFAULT_CODING_ROLES.reviewer),
+      ),
+      PROMPTS.coding.reviewerCode('feature', responses[2], providerName(DEFAULT_CODING_ROLES.coder)),
+      PROMPTS.coding.testerCases('feature', responses[2], providerName(DEFAULT_CODING_ROLES.coder)),
+      PROMPTS.coding.coderV2(
+        'feature',
+        responses[2],
+        responses[3],
+        providerName(DEFAULT_CODING_ROLES.reviewer),
+        responses[4],
+        providerName(DEFAULT_CODING_ROLES.tester),
+      ),
+      PROMPTS.coding.plannerAcceptance('feature', responses[5], providerName(DEFAULT_CODING_ROLES.coder), responses[0]),
+      PROMPTS.coding.coderFinal('feature', responses[5], responses[6], providerName(DEFAULT_CODING_ROLES.planner)),
+    ]);
+  });
+
+  it('emits the distinct terminal system error shape and pins the skip string codepoint', () => {
+    const messages: BridgeMessage[] = [];
+    const unsubscribe = onBridgeMessage((message: BridgeMessage) => messages.push(message));
+    emitSystemError('boom');
+    unsubscribe();
+    expect(messages[0]).toMatchObject({ action: 'RESPONSE_DONE', provider: 'system', payload: 'Error: boom', transport: 'local' });
+    expect(SKIP_RESPONSE).toBe('(no response — skipped)');
+    expect(SKIP_RESPONSE.charCodeAt('(no response '.length)).toBe(0x2014);
+  });
+});

@@ -1,0 +1,23 @@
+{
+  "$schema": "./schema.json",
+  "schemaVersion": 1,
+  "adapterVersion": 9,
+  "provider": "chatgpt",
+  "displayName": "ChatGPT",
+  "urls": {
+    "app": "https://chatgpt.com",
+    "login": "https://chatgpt.com/auth/login",
+    "match": ["chatgpt.com/*", "chat.openai.com/*"],
+    "ssoMatch": ["auth.openai.com/*", "auth0.openai.com/*", "gsi.google.com/*", "https://www.google.com/accounts", "accounts.google.com.tw/*"]
+  },
+  "inputSelectors": [".ProseMirror[contenteditable=\"true\"]", "#prompt-textarea", "[id=\"prompt-textarea\"]", "div[contenteditable=\"true\"][data-placeholder]"],
+  "sendButtonSelectors": ["[data-testid=\"send-button\"]", "button[aria-label=\"Send prompt\"]", "button[aria-label=\"Send\"]"],
+  "responseSelectors": ["[data-message-author-role=\"assistant\"] .markdown", "[data-message-author-role=\"assistant\"]", "[data-markdown-text-style=\"assistant-message\"]:not([data-markdown-text-tone=\"tertiary\"])"],
+  "loginDetectors": [".ProseMirror[contenteditable=\"true\"]", "#prompt-textarea", "[data-testid=\"send-button\"]"],
+  "loggedOutDetectors": ["[data-testid=\"login-button\"]", "[data-testid=\"signup-button\"]", "[data-testid=\"login-form\"]"],
+  "thinkingDetectors": ["[data-testid=\"stop-button\"]", "button[aria-label=\"Stop generating\"]", "button[aria-label=\"Stop streaming\"]", "button[aria-label=\"Stop\"]"],
+  "stopButtonSelectors": ["[data-testid=\"stop-button\"]", "button[aria-label=\"Stop generating\"]", "button[aria-label=\"Stop streaming\"]", "button[aria-label=\"Stop\"]"],
+  "inputStrategy": "prosemirror-paste",
+  "sendStrategy": "click",
+  "timing": { "doneDelayMs": 3000, "chunkDebounceMs": 800, "statusIntervalMs": 10000, "backupPollMs": 3000 }
+}

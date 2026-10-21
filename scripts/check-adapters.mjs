@@ -1,0 +1,222 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import Ajv from 'ajv';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const adapterDir = path.join(root, 'adapters');
+const schema = JSON.parse(await readFile(path.join(adapterDir, 'schema.json'), 'utf8'));
+const ajv = new Ajv({ allErrors: true, strict: false, validateFormats: false });
+const validate = ajv.compile(schema);
+
+const expected = {
+  chatgpt: {
+    schemaVersion: 1,
+    adapterVersion: 9,
+    urls: {
+      app: 'https://chatgpt.com',
+      login: 'https://chatgpt.com/auth/login',
+      match: ['chatgpt.com/*', 'chat.openai.com/*'],
+      ssoMatch: ['auth.openai.com/*', 'auth0.openai.com/*', 'gsi.google.com/*', 'https://www.google.com/accounts', 'accounts.google.com.tw/*'],
+    },
+    inputStrategy: 'prosemirror-paste',
+    doneDelayMs: 3000,
+    chunkDebounceMs: 800,
+    inputSelectors: ['.ProseMirror[contenteditable="true"]', '#prompt-textarea', '[id="prompt-textarea"]', 'div[contenteditable="true"][data-placeholder]'],
+    sendButtonSelectors: ['[data-testid="send-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send"]'],
+    responseSelectors: ['[data-message-author-role="assistant"] .markdown', '[data-message-author-role="assistant"]', '[data-markdown-text-style="assistant-message"]:not([data-markdown-text-tone="tertiary"])'],
+    loginDetectors: ['.ProseMirror[contenteditable="true"]', '#prompt-textarea', '[data-testid="send-button"]'],
+    loggedOutDetectors: ['[data-testid="login-button"]', '[data-testid="signup-button"]', '[data-testid="login-form"]'],
+    thinkingDetectors: ['[data-testid="stop-button"]', 'button[aria-label="Stop generating"]', 'button[aria-label="Stop streaming"]', 'button[aria-label="Stop"]'],
+    stopButtonSelectors: ['[data-testid="stop-button"]', 'button[aria-label="Stop generating"]', 'button[aria-label="Stop streaming"]', 'button[aria-label="Stop"]'],
+  },
+  claude: {
+    schemaVersion: 1,
+    adapterVersion: 5,
+    urls: {
+      app: 'https://claude.ai',
+      login: 'https://claude.ai/login',
+      match: ['claude.ai/*'],
+      ssoMatch: ['auth.anthropic.com/*', 'accounts.google.com/*', 'gsi.google.com/*', 'https://www.google.com/accounts', 'accounts.google.com.tw/*'],
+    },
+    inputStrategy: 'prosemirror-paste',
+    doneDelayMs: 5000,
+    chunkDebounceMs: 500,
+    inputSelectors: ['.ProseMirror[contenteditable="true"]', '[contenteditable="true"].ProseMirror', 'div.ProseMirror', 'fieldset div[contenteditable="true"]'],
+    sendButtonSelectors: ['button[aria-label="Send Message"]', 'button[aria-label="Send message"]', 'button[aria-label="Send"]', 'fieldset button[type="button"]:last-of-type'],
+    responseSelectors: ['[data-cds="AssistantMessage"] [data-perf-reply-text]', '.font-claude-response', '[data-is-streaming] .font-claude-response', '.font-claude-message'],
+    loginDetectors: ['.ProseMirror[contenteditable="true"]', '[contenteditable="true"].ProseMirror'],
+    loggedOutDetectors: ['input[type="email"]', 'input[autocomplete="email"]'],
+    thinkingDetectors: ['[data-is-streaming="true"]', 'button[aria-label="Stop Response"]', 'button[aria-label="Stop response"]', 'button[aria-label="Stop"]'],
+    stopButtonSelectors: ['button[aria-label="Stop Response"]', 'button[aria-label="Stop response"]', 'button[aria-label="Stop"]'],
+  },
+  gemini: {
+    schemaVersion: 1,
+    adapterVersion: 2,
+    urls: {
+      app: 'https://gemini.google.com/app',
+      login: 'https://gemini.google.com/app',
+      match: ['gemini.google.com/*'],
+      ssoMatch: ['https://www.google.com/sorry'],
+    },
+    inputStrategy: 'quill-angular',
+    doneDelayMs: 4000,
+    chunkDebounceMs: 600,
+    inputSelectors: ['.ql-editor[contenteditable="true"]', 'rich-textarea .ql-editor', 'div[contenteditable="true"][aria-label="Enter a prompt here"]', 'div[contenteditable="true"][aria-label]', '.input-area [contenteditable="true"]', 'rich-textarea [contenteditable="true"]'],
+    sendButtonSelectors: ['button.send-button', 'button[aria-label="Send message"]', 'button[aria-label="Send"]', 'button[aria-label="傳送訊息"]', 'button[aria-label="送出"]', 'button[data-mat-icon-name="send"]', '.send-button-container button', 'button mat-icon[data-mat-icon-name="send"]', '.action-wrapper button[aria-label]', '.input-area-container button.send', 'button.send-message-button'],
+    responseSelectors: ['.model-response-text .markdown', '.model-response-text', 'model-response .markdown', 'model-response message-content', '.response-content .markdown', '.message-content[data-message-id]'],
+    loginDetectors: ['.ql-editor[contenteditable="true"]', 'rich-textarea [contenteditable="true"]', 'div[contenteditable="true"][aria-label="Enter a prompt here"]'],
+    loggedOutDetectors: [],
+    thinkingDetectors: ['.loading-indicator', '.thinking-indicator', 'mat-progress-bar', 'button[aria-label="Stop response"]', 'button[aria-label="Stop"]', 'button[aria-label="停止回應"]', '.response-streaming', '[data-test-id="response-loading"]'],
+    stopButtonSelectors: ['button[aria-label="Stop response"]', 'button[aria-label="Stop"]', 'button[aria-label="停止回應"]'],
+  },
+  grok: {
+    schemaVersion: 2,
+    adapterVersion: 8,
+    urls: {
+      app: 'https://grok.com',
+      login: 'https://grok.com',
+      match: ['grok.com/*'],
+      ssoMatch: ['x.com/*', 'twitter.com/*', 'accounts.x.ai/*', 'auth.grokusercontent.com/*', 'auth.grok.com/*', 'challenges.cloudflare.com/*', 'accounts.google.com.tw/*', 'auth.grokipedia.com/*', 'gsi.google.com/*', 'https://www.google.com/accounts'],
+    },
+    inputStrategy: 'prosemirror-paste',
+    doneDelayMs: 8000,
+    chunkDebounceMs: 600,
+    inputSelectors: ['[data-testid="chat-input"] .ProseMirror[contenteditable="true"]', '[data-testid="chat-input"] [contenteditable="true"]', '.ProseMirror[contenteditable="true"]', '[contenteditable="true"].ProseMirror', 'div.ProseMirror[contenteditable="true"]'],
+    sendButtonSelectors: ['button[data-testid="chat-submit"]', 'button[aria-label="Submit"]', 'form button[type="submit"]', 'button[type="submit"]'],
+    responseSelectors: ['[data-testid="assistant-message"] .response-content-markdown', '[data-testid="assistant-message"]', '.response-content-markdown', '.message-bubble.assistant'],
+    loginDetectors: ['[data-testid="chat-input"] .ProseMirror[contenteditable="true"]', '.ProseMirror[contenteditable="true"]', '[data-testid="chat-submit"]'],
+    loggedOutDetectors: [{ selector: 'button', textIncludes: 'Sign in' }, { selector: 'button', textIncludes: 'Sign up' }, { selector: 'button', textIncludes: 'Log in' }, { selector: 'button', textIncludes: '登入' }, { selector: 'button', textIncludes: '註冊' }, { selector: 'button', textIncludes: '登录' }, { selector: 'button', textIncludes: '注册' }, { selector: 'button', textIncludes: 'ログイン' }, { selector: 'button', textIncludes: '登録' }, { selector: 'button', textIncludes: 'Anmelden' }, { selector: 'button', textIncludes: 'Registrieren' }, '[data-testid="anon-paywall-sign-up-card"]', 'a[href^="/sign-in"]', 'a[href^="/sign-up"]'],
+    thinkingDetectors: ['button[data-testid="chat-stop"]', 'button[aria-label="Stop"]', 'button[aria-label="Stop generating"]', 'button[aria-label="Stop response"]', '[data-streaming="true"]', { selector: '.thinking-container', textIncludes: 'Thinking', textExcludes: 'Thought for' }],
+    stopButtonSelectors: ['button[data-testid="chat-stop"]', 'button[aria-label="Stop"]', 'button[aria-label="Stop generating"]', 'button[aria-label="Stop response"]'],
+  },
+  meta: {
+    schemaVersion: 1,
+    adapterVersion: 3,
+    urls: {
+      app: 'https://www.meta.ai',
+      login: 'https://www.meta.ai',
+      match: ['www.meta.ai/*', 'meta.ai/*'],
+      ssoMatch: [
+        'auth.meta.com/*',
+        'auth.meta.ai/*',
+        'www.facebook.com/*',
+        'm.facebook.com/*',
+        'facebook.com/*',
+        'www.instagram.com/*',
+        'instagram.com/*',
+      ],
+    },
+    inputStrategy: 'default',
+    doneDelayMs: 5000,
+    chunkDebounceMs: 600,
+    inputSelectors: [
+      'input[aria-label="Ask Meta AI"]',
+      'textarea[aria-label="Ask Meta AI"]',
+      'textarea[data-ecto-composer-prehydration-input]',
+      '[contenteditable="true"][aria-label="Ask Meta AI"]',
+      '[contenteditable="true"][role="textbox"]',
+    ],
+    sendButtonSelectors: ['[data-testid="composer-send-button"]', 'button[aria-label="Send"]'],
+    responseSelectors: ['[data-message-item]:not([data-user-message])', '[data-testid="assistant-message"]'],
+    loginDetectors: [
+      'input[aria-label="Ask Meta AI"]',
+      'textarea[aria-label="Ask Meta AI"]',
+      'textarea[data-ecto-composer-prehydration-input]',
+      '[contenteditable="true"][aria-label="Ask Meta AI"]',
+      '[contenteditable="true"][role="textbox"]',
+      'button[aria-label="Send"]',
+    ],
+    loggedOutDetectors: [
+      '[inert] input[aria-label="Ask Meta AI"]',
+      '[inert] textarea[data-ecto-composer-prehydration-input]',
+      '[data-testid="login-button"]',
+    ],
+    thinkingDetectors: ['[data-testid="composer-stop-button"]', 'button[aria-label="Stop"]'],
+    stopButtonSelectors: ['[data-testid="composer-stop-button"]', 'button[aria-label="Stop"]'],
+  },
+};
+
+const assertEqual = (actual, expectedValue, label) => {
+  const actualJson = JSON.stringify(actual);
+  const expectedJson = JSON.stringify(expectedValue);
+  if (actualJson !== expectedJson) {
+    throw new Error(`${label} mismatch\nactual:   ${actualJson}\nexpected: ${expectedJson}`);
+  }
+};
+
+for (const provider of Object.keys(expected)) {
+  const adapter = JSON.parse(await readFile(path.join(adapterDir, `${provider}.json`), 'utf8'));
+  if (!validate(adapter)) {
+    throw new Error(`${provider}.json schema errors: ${JSON.stringify(validate.errors, null, 2)}`);
+  }
+
+  const spec = expected[provider];
+  assertEqual(adapter.provider, provider, `${provider}.provider`);
+  assertEqual(adapter.schemaVersion, spec.schemaVersion, `${provider}.schemaVersion`);
+  assertEqual(adapter.adapterVersion, spec.adapterVersion, `${provider}.adapterVersion`);
+  assertEqual(adapter.urls, spec.urls, `${provider}.urls`);
+  assertEqual(adapter.inputStrategy, spec.inputStrategy, `${provider}.inputStrategy`);
+  assertEqual(adapter.sendStrategy, 'click', `${provider}.sendStrategy`);
+  assertEqual(adapter.timing.doneDelayMs, spec.doneDelayMs, `${provider}.doneDelayMs`);
+  assertEqual(adapter.timing.chunkDebounceMs, spec.chunkDebounceMs, `${provider}.chunkDebounceMs`);
+  assertEqual(adapter.inputSelectors, spec.inputSelectors, `${provider}.inputSelectors`);
+  assertEqual(adapter.sendButtonSelectors, spec.sendButtonSelectors, `${provider}.sendButtonSelectors`);
+  assertEqual(adapter.responseSelectors, spec.responseSelectors, `${provider}.responseSelectors`);
+  assertEqual(adapter.loginDetectors, spec.loginDetectors, `${provider}.loginDetectors`);
+  assertEqual(adapter.loggedOutDetectors ?? [], spec.loggedOutDetectors, `${provider}.loggedOutDetectors`);
+  assertEqual(adapter.thinkingDetectors, spec.thinkingDetectors, `${provider}.thinkingDetectors`);
+  assertEqual(adapter.stopButtonSelectors, spec.stopButtonSelectors, `${provider}.stopButtonSelectors`);
+}
+
+const grokAdapter = JSON.parse(await readFile(path.join(adapterDir, 'grok.json'), 'utf8'));
+const legacyGrok = { ...grokAdapter, schemaVersion: 1, loggedOutDetectors: ['button[data-testid="login"]'] };
+if (!validate(legacyGrok)) {
+  throw new Error(`schema v1 string detector compatibility failed: ${JSON.stringify(validate.errors, null, 2)}`);
+}
+if (validate({ ...grokAdapter, schemaVersion: 1 })) {
+  throw new Error('schema v1 unexpectedly accepted object loggedOutDetectors');
+}
+if (validate({ ...grokAdapter, loggedOutDetectors: [{ selector: 'button', textIncludes: '' }] })) {
+  throw new Error('schema unexpectedly accepted an empty detector text filter');
+}
+
+// Meta app surface stays on meta.ai. Facebook/Instagram are SSO-only so a live Log in
+// redirect stays in the isolated Meta profile instead of the system browser.
+const metaAdapter = JSON.parse(await readFile(path.join(adapterDir, 'meta.json'), 'utf8'));
+assertEqual(metaAdapter.urls.match, ['www.meta.ai/*', 'meta.ai/*'], 'meta.initialSeed.appScopes');
+assertEqual(
+  metaAdapter.urls.ssoMatch,
+  [
+    'auth.meta.com/*',
+    'auth.meta.ai/*',
+    'www.facebook.com/*',
+    'm.facebook.com/*',
+    'facebook.com/*',
+    'www.instagram.com/*',
+    'instagram.com/*',
+  ],
+  'meta.initialSeed.ssoScopes',
+);
+assertEqual(
+  metaAdapter.responseSelectors,
+  ['[data-message-item]:not([data-user-message])', '[data-testid="assistant-message"]'],
+  'meta.initialSeed.responseSelectors',
+);
+assertEqual(
+  metaAdapter.thinkingDetectors,
+  ['[data-testid="composer-stop-button"]', 'button[aria-label="Stop"]'],
+  'meta.initialSeed.thinkingDetectors',
+);
+assertEqual(
+  metaAdapter.stopButtonSelectors,
+  ['[data-testid="composer-stop-button"]', 'button[aria-label="Stop"]'],
+  'meta.initialSeed.stopButtonSelectors',
+);
+assertEqual(
+  metaAdapter.timing,
+  { doneDelayMs: 5000, chunkDebounceMs: 600, statusIntervalMs: 10000, backupPollMs: 3000 },
+  'meta.initialSeed.timing',
+);
+
+console.log('Adapter schema and bundled seed checks passed.');
