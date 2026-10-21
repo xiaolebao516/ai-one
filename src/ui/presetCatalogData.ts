@@ -126,7 +126,10 @@ export function defaultRolesForPreset(
   assignments: ModeRoleAssignments = DEFAULT_MODE_ROLE_ASSIGNMENTS,
 ): ModeRoles | undefined {
   if (presetId === 'brainstorm') return { ...assignments.roundtable };
-  if (presetId === 'deliberation') return { ...assignments.consult, first: 'chatgpt', second: 'gemini', auditor: assignments.consult.reviewer };
+  if (presetId === 'deliberation') {
+    const roles = { ...assignments.consult, first: 'chatgpt' as const, second: 'gemini' as const, auditor: assignments.consult.reviewer };
+    return roles;
+  }
   if (mode === 'free') return undefined;
   if (mode === 'debate') return { ...assignments.debate };
   if (mode === 'consult') return { ...assignments.consult };
