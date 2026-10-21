@@ -18,6 +18,7 @@ function checkConclusion(checks, statuses, incomplete) {
   if (incomplete) return 'unknown';
   if (checks.length + statuses.length === 0) return 'missing';
   if (checks.some((c) => !['success', 'neutral', 'skipped'].includes(c.conclusion)) || statuses.some((s) => s.state !== 'success')) return 'unknown';
+  if (!checks.some((c) => c.conclusion === 'success') && !statuses.some((s) => s.state === 'success')) return 'no_success';
   return 'success';
 }
 

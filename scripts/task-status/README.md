@@ -36,8 +36,11 @@ CI includes the exact PR `headSha`, individual checks and legacy commit statuses
 This is a non-atomic snapshot, not a live monitor. Re-run after new commits.
 
 - CI precedence: failure, pending, unknown for incomplete evidence, missing
-  when both endpoints return no checks, otherwise success for completed
-  success/neutral/skipped checks plus successful legacy statuses. This is
+  when both endpoints return no checks, `no_success` when all completed checks
+  are neutral/skipped and no legacy status succeeded, otherwise success for
+  completed success/neutral/skipped checks plus successful legacy statuses.
+  `no_success` never suggests human acceptance; at least one actual success
+  is needed (without overriding failure/pending/incomplete evidence). This is
   **observed CI**, not required-branch-check validation. Failure/pending may
   still have `completeness: partial`.
 - Checks for other SHAs are excluded. Combined status for another SHA is

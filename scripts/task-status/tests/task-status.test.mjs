@@ -56,7 +56,11 @@ for (const [name, checks, statuses, expected] of [
   ['pending legacy status', [], [{ context: 'build', state: 'pending' }], 'pending'],
   ['failed legacy status overrides green check', [check], [{ context: 'build', state: 'error' }], 'failure'],
   ['unknown conclusion', [{ ...check, conclusion: 'new_state' }], [], 'unknown'],
-  ['neutral and skipped', [{ ...check, conclusion: 'neutral' }, { ...check, conclusion: 'skipped' }], [], 'success'],
+  ['neutral and skipped', [{ ...check, conclusion: 'neutral' }, { ...check, conclusion: 'skipped' }], [], 'no_success'],
+  ['only skipped', [{ ...check, conclusion: 'skipped' }], [], 'no_success'],
+  ['only neutral', [{ ...check, conclusion: 'neutral' }], [], 'no_success'],
+  ['success with neutral and skipped', [check, { ...check, conclusion: 'neutral' }, { ...check, conclusion: 'skipped' }], [], 'success'],
+  ['legacy success with skipped check', [{ ...check, conclusion: 'skipped' }], [{ state: 'success' }], 'success'],
 ]) test(name, async () => {
   const s = await collect(fixture({ checks, statuses }));
   assert.equal(s.pullRequests[0].ci.conclusion, expected);
@@ -163,7 +167,9 @@ test('needs-user labels suggest inspection, never alter factual state', async ()
 });
 test('terminal text neutralizes control codes from remote titles', async () => {
   const s = await collect(fixture({ issues: [{ ...issue, title: '\u001b[31mEVIL\nFORGED\u202e' }] }));
-  assert.doesNotMatch(renderText(s), /\u001b|\u202e|\nFORGED/);
+  const rendered = renderText(s);
+  assert.equal(rendered.includes(String.fromCharCode(27)), false);
+  assert.doesNotMatch(rendered, /\u202e|\nFORGED/);
 });
 test('client uses gh executable with GET/read-only GraphQL and no shell', async () => {
   const calls = [];
