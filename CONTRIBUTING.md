@@ -1,6 +1,8 @@
 # Contributing
 
-Before opening a pull request, read [`SECURITY.md`](./SECURITY.md) and the current evidence in [`docs/COMPATIBILITY.md`](./docs/COMPATIBILITY.md). Never attach cookies, tokens, account data, conversation text, provider HTML, or local profile files.
+Before opening a pull request, read [`AGENTS.md`](./AGENTS.md) (Issue/PR/Handoff workflow and Git safety rules) and the current evidence in [`docs/COMPATIBILITY.md`](./docs/COMPATIBILITY.md). Never attach cookies, tokens, account data, conversation text, provider HTML, or local profile files.
+
+ai-one has not imported the upstream `SECURITY.md` (see [`NOTICE.md`](./NOTICE.md)) and has no dedicated private security contact yet. Until one exists, do not post vulnerability details or credentials in a public Issue or PR; ask the repository owner for a private channel first.
 
 ## Adapter PR SOP
 
@@ -17,7 +19,7 @@ For selector updates:
 
 New providers are not adapter-only in v1. The catalog contains `chatgpt`, `claude`, `gemini`, `grok`, and `meta`; exactly four are active, with Meta AI as the default standby. Adding another provider or changing the four-active invariant requires coordinated adapter, host, UI, test, and security-review changes.
 
-Use the repository's adapter issue form and pull-request checklist so reports remain reproducible and privacy-safe. Vulnerabilities must be reported privately according to [`SECURITY.md`](./SECURITY.md), not through a public adapter issue.
+Open adapter changes as a `[Task]` Issue and a PR that follows [`.github/pull_request_template.md`](./.github/pull_request_template.md) so reports remain reproducible and privacy-safe. The app's "Report adapter problem" button currently opens the upstream project's Issue page (see `README.md`), which is not ai-one's tracker. Vulnerabilities must not go through a public adapter issue; see the security note at the top of this file.
 
 ## Agent Source Contract SOP
 

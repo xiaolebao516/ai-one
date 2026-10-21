@@ -119,4 +119,4 @@ Gemini may redirect an embedded session to `https://www.google.com/sorry/index?.
 
 ## 回報方式
 
-若你有 macOS 或 Linux 實機，最有價值的回報是：OS/CPU、app 版本、安裝方式、是否能第一次開啟、四家 provider 的登入／自動送出／完成偵測，以及不含私人內容的 debug bundle。Adapter 問題請使用 GitHub 的 **Adapter broken** 表單；安全問題請依 [`SECURITY.md`](../SECURITY.md) 私下回報。
+若你有 macOS 或 Linux 實機，最有價值的回報是：OS/CPU、app 版本、安裝方式、是否能第一次開啟、四家 provider 的登入／自動送出／完成偵測，以及不含私人內容的 debug bundle。Adapter 問題請開 ai-one 的 `[Task]` Issue（ai-one 沒有上游的 **Adapter broken** 表單）；安全問題請勿公開張貼，說明見 [`CONTRIBUTING.md`](../CONTRIBUTING.md)。

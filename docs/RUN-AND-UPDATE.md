@@ -1,6 +1,6 @@
 # 執行與更新指南
 
-本文件整理 Multi-AI Chat Desktop 的日常執行與更新流程。詳細背景見 [README.zh-TW.md](../README.zh-TW.md)。
+本文件整理 Multi-AI Chat Desktop 的日常執行與更新流程。詳細背景見[上游 `6bcf904` 的 README](https://github.com/TED-H-com/multi-ai-chat-desktop/blob/6bcf904dfce890f7ebe198cbfc329bf8d685ce62/README.zh-TW.md)（ai-one 未導入上游 README，見 [`NOTICE.md`](../NOTICE.md)）。
 
 ## 前置需求
 
