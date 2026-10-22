@@ -123,10 +123,12 @@ export interface ImportPlan {
   stages: {
     add: StageDef[];
     conflicts: ImportConflict<StageDef>[];
+    crossTypeIdConflicts: Array<{ item: StageDef; existing: FlowDef }>;
   };
   flows: {
     add: FlowDef[];
     conflicts: ImportConflict<FlowDef>[];
+    crossTypeIdConflicts: Array<{ item: FlowDef; existing: StageDef }>;
   };
 }
 
@@ -704,14 +706,24 @@ export function buildExport(file: FlowsFile, flowId: string): FlowExport | null 
 export function planImport(current: FlowsFile, incoming: FlowsFile | FlowExport): ImportPlan {
   const stagePlan = planItems(current.stages, incoming.stages);
   const flowPlan = planItems(current.flows, incoming.flows);
+  const stageCrossTypeIdConflicts = incoming.stages.flatMap((item) =>
+    current.flows.filter((flow) => flow.id === item.id).map((existing) => ({ item, existing })),
+  );
+  const flowCrossTypeIdConflicts = incoming.flows.flatMap((item) =>
+    current.stages.filter((stage) => stage.id === item.id).map((existing) => ({ item, existing })),
+  );
+  const stageCrossTypeIds = new Set(stageCrossTypeIdConflicts.map((conflict) => conflict.item.id));
+  const flowCrossTypeIds = new Set(flowCrossTypeIdConflicts.map((conflict) => conflict.item.id));
   return {
     stages: {
-      add: stagePlan.add,
+      add: stagePlan.add.filter((item) => !stageCrossTypeIds.has(item.id)),
       conflicts: stagePlan.conflicts,
+      crossTypeIdConflicts: stageCrossTypeIdConflicts,
     },
     flows: {
-      add: flowPlan.add,
+      add: flowPlan.add.filter((item) => !flowCrossTypeIds.has(item.id)),
       conflicts: flowPlan.conflicts,
+      crossTypeIdConflicts: flowCrossTypeIdConflicts,
     },
   };
 }
@@ -758,6 +770,15 @@ export function applyImport(
     const conflicts = stages.filter((stage) =>
       stage.id === item.id || normalizeName(stage.name) === normalizeName(item.name),
     );
+    const crossTypeIdMatch = flows.find((flow) => flow.id === item.id);
+    if (crossTypeIdMatch) {
+      // A stage cannot overwrite a flow with the same ID; preserve both with a new stage ID.
+      const newId = uniqueId(item.id + '-import', [...occupiedStageIds, ...occupiedFlowIds]);
+      stages.push({ ...item, id: newId, name: uniqueName(item.name, stages), builtin: false });
+      occupiedStageIds.add(newId);
+      stageIdMap.set(item.id, newId);
+      return;
+    }
 
     if (resolution === 'overwrite') {
       if (item.builtin && idMatch?.builtin) {
@@ -815,6 +836,14 @@ export function applyImport(
     const conflicts = flows.filter((flow) =>
       flow.id === item.id || normalizeName(flow.name) === normalizeName(item.name),
     );
+    const crossTypeIdMatch = stages.find((stage) => stage.id === item.id);
+    if (crossTypeIdMatch) {
+      // A flow cannot overwrite a stage with the same ID; preserve both with a new flow ID.
+      const newId = uniqueId(item.id + '-import', [...occupiedStageIds, ...occupiedFlowIds]);
+      flows.push({ ...item, id: newId, name: uniqueName(item.name, flows), builtin: false });
+      occupiedFlowIds.add(newId);
+      return;
+    }
 
     if (resolution === 'overwrite') {
       if (item.builtin && idMatch?.builtin) return;

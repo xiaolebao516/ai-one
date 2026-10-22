@@ -73,11 +73,12 @@ describe('flow model validation', () => {
 
   it('checks unique IDs, missing stage references, and forbidden next', () => {
     const file = validFile();
-    file.stages.push(customStage('flow.quick', 'id collision'));
+    file.stages.push(customStage('stage.grill', 'id collision'));
     file.flows.push({
       ...customFlow('flow.bad', 'Bad', 'not-there'),
       stages: [{ stageId: 'not-there' }, { stageId: 'stage.plan', next: 'stage.ship' } as unknown as { stageId: string }],
     });
+    file.flows.push(customFlow('flow.quick', 'Duplicate flow ID', 'stage.plan'));
     const issues = validateFile(file);
     expect(issues.some((item) => item.code === 'duplicate-id')).toBe(true);
     expect(issues.some((item) => item.code === 'unknown-stage')).toBe(true);
@@ -215,6 +216,27 @@ describe('flow import/export', () => {
     expect(merged.flows.find((flow) => flow.id === 'flow.custom')?.name).toBe('Updated custom flow');
     expect(merged.stages.find((stage) => stage.id === 'stage.grill')?.name).toBe('想需求');
     expect(merged.flows.find((flow) => flow.id === 'flow.quick')?.name).toBe('快速开发');
+  });
+
+  it('reports cross-type ID conflicts and preserves both items even for overwrite', () => {
+    const current: FlowsFile = {
+      schemaVersion: 1,
+      stages: [customStage('stage.shared', 'Existing stage')],
+      flows: [customFlow('flow.current', 'Existing flow', 'stage.shared')],
+    };
+    const incoming: FlowsFile = {
+      schemaVersion: 1,
+      stages: [customStage('flow.current', 'Incoming stage')],
+      flows: [customFlow('stage.shared', 'Incoming flow', 'flow.current')],
+    };
+    const plan = planImport(current, incoming);
+    expect(plan.stages.crossTypeIdConflicts).toHaveLength(1);
+    expect(plan.flows.crossTypeIdConflicts).toHaveLength(1);
+
+    const merged = applyImport(current, incoming, 'overwrite');
+    expect(merged.stages.some((stage) => stage.id === 'flow.current-import' && stage.name === 'Incoming stage (2)')).toBe(true);
+    expect(merged.flows.some((flow) => flow.id === 'stage.shared-import' && flow.stages[0].stageId === 'flow.current-import')).toBe(true);
+    expect(validateFile(merged)).toEqual([]);
   });
 
   it('keeps a name-only conflict instead of overwriting an unrelated ID', () => {
