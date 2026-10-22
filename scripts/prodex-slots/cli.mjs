@@ -5,6 +5,11 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeOwnership, parseCheck, processAlive, readClaim, releaseClaim, slotEnv, slotsHome, sweepSlots } from './slots.mjs';
 
+// Argument mistakes (bad flags, missing values, unknown commands) are usage errors: the reason
+// plus the full usage block. Anything that fails at runtime carries its own next step and is
+// printed without the usage block - see the catch in main().
+export class UsageError extends Error {}
+
 export const usage = [
   'Usage: node scripts/prodex-slots/cli.mjs <command> [options]',
   '  list [--json]                         slots, browser state, claims and who they serve',
@@ -89,7 +94,7 @@ export function resolveProdexEntry(env = process.env) {
   const npm = spawnSync('npm root -g', { encoding: 'utf8', shell: true, windowsHide: true });
   if (npm.status === 0) candidates.push(path.join(String(npm.stdout).trim(), '@youdie006', 'prodex', 'prodex.mjs'));
   const found = candidates.find((file) => fs.existsSync(file));
-  if (!found) throw new Error('Cannot find prodex.mjs; set PRODEX_ENTRY to its absolute path');
+  if (!found) throw new Error(`Cannot find prodex.mjs. Set PRODEX_ENTRY to its absolute path (PowerShell: $env:PRODEX_ENTRY = "<folder>\\prodex.mjs"). Looked at: ${candidates.join(', ') || 'PRODEX_ENTRY only (npm root -g produced nothing)'}`);
   return found;
 }
 
@@ -227,7 +232,9 @@ function renderSlots(rows) {
 async function runCommand(options, passthrough, deps, err) {
   const config = loadConfig(deps.home);
   const wanted = options.slot === 'auto' ? config.slots : config.slots.filter((s) => s.id === options.slot);
-  if (!wanted.length) throw new Error(`No such slot: ${options.slot}`);
+  if (!wanted.length) {
+    throw new Error(`No such slot: ${options.slot}. Registered slots: ${config.slots.map((s) => s.id).join(', ')} (ports ${config.slots.map((s) => s.port).join(', ')})`);
+  }
   const deadline = deps.now() + options.waitMs;
   const notReady = new Map();
   for (;;) {
@@ -244,7 +251,7 @@ async function runCommand(options, passthrough, deps, err) {
         err(`prodex-slots: using slot ${slot.id} (port ${slot.port})${label ? ` for ${label}` : ''}`);
         // The ask's own exit code is not part of this tool's 0/1/3/4 contract: any failure is 1.
         const code = await deps.runAsk(slot, passthrough);
-        if (code !== 0) err(`prodex-slots: prodex ask exited with code ${code}`);
+        if (code !== 0) err(`prodex-slots: prodex ask exited with code ${code}; its own output above shows the reason. On a request_mismatch, take the answer back with \`prodex pro browser recover --port <port> --target-url <thread-url> --request-id <id>\` and do not resend blindly`);
         return code === 0 ? EXIT.OK : EXIT.ERROR;
       } finally {
         claim.release();
@@ -270,7 +277,13 @@ async function runCommand(options, passthrough, deps, err) {
 export async function main(args, { deps = realDeps(), out = (s) => process.stdout.write(`${s}\n`), err = (s) => process.stderr.write(`${s}\n`) } = {}) {
   try {
     if (!args.length || args[0] === '--help') { out(usage); return EXIT.OK; }
-    const { command, options, passthrough } = parseArgs(args);
+    let parsed;
+    try {
+      parsed = parseArgs(args);
+    } catch (error) {
+      throw new UsageError(error.message);
+    }
+    const { command, options, passthrough } = parsed;
     const show = (rows) => out(options.json ? JSON.stringify(rows, null, 2) : renderSlots(rows));
     // list/run/ensure/release all read or take claim state, so they sweep first; `add` only
     // registers, and a sweep there would report slots that are about to be created.
@@ -301,9 +314,13 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
     }
     if (command === 'run') return await runCommand(options, passthrough, deps, err);
     // The command is an argv token this tool did not recognise, so it is not repeated either.
-    throw new Error('Unknown command. The first argument must be one of: list, add, ensure, run, release (or --help)');
+    throw new UsageError('Unknown command. The first argument must be one of: list, add, ensure, run, release (or --help)');
   } catch (error) {
-    err(`${error.message}\n${usage}`);
+    if (error instanceof UsageError) {
+      err(`${error.message}\n${usage}`);
+    } else {
+      err(`prodex-slots: ${error.message}`);
+    }
     return EXIT.ERROR;
   }
 }

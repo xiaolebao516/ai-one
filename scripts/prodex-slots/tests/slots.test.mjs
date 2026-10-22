@@ -767,3 +767,51 @@ test('a stale .reap no longer blocks list: the slot is reported as blocked with 
   assert.equal(fs.existsSync(reap), true);
   assert.equal(readClaim(h.home, 1).pid, 111);
 });
+
+test('argument mistakes print the usage block; runtime failures do not', async () => {
+  const usage = harness();
+  assert.equal(await usage.run(['run']), EXIT.ERROR);
+  assert.match(usage.log.err.join('\n'), /Usage: node scripts\/prodex-slots\/cli\.mjs/);
+
+  const runtime = harness({ states: { 1: 'ready' } });
+  addSlots(runtime.home, 1);
+  assert.equal(await runtime.run(['run', '--slot', '99', '--', '--new-chat']), EXIT.ERROR);
+  const runtimeErr = runtime.log.err.join('\n');
+  assert.match(runtimeErr, /No such slot: 99\. Registered slots: 1, 2 \(ports 9333, 9334\)/);
+  assert.ok(!runtimeErr.includes('Usage: node scripts/prodex-slots/cli.mjs'), 'a runtime failure must not dump the usage block');
+});
+
+test('a failed ask points at recover instead of leaving a dead end', async () => {
+  const h = harness({ askExit: 1 });
+  assert.equal(await h.run(['run', '--', '--new-chat']), EXIT.ERROR);
+  const stderr = h.log.err.join('\n');
+  assert.match(stderr, /prodex ask exited with code 1/);
+  assert.match(stderr, /prodex pro browser recover --port <port> --target-url <thread-url> --request-id <id>/);
+  assert.ok(!stderr.includes('Usage: node scripts/prodex-slots/cli.mjs'));
+});
+
+test('a deletion blocked by an external policy names the file and the command', () => {
+  const realRmSync = fs.rmSync;
+  const temp = path.join(tempHome(), 'slot-claims', 'slot-1.json.x.tmp');
+  fs.rmSync = (target, options) => {
+    if (String(target).endsWith('.tmp')) {
+      const error = new Error('operation not permitted');
+      error.code = 'EPERM';
+      throw error;
+    }
+    return realRmSync(target, options);
+  };
+  try {
+    let message = '';
+    try {
+      claimSlot(tempHome(), 1, { pid: 5, alive: () => true });
+    } catch (error) {
+      message = error.message;
+    }
+    assert.match(message, /could not delete .+\.tmp \(EPERM\)/);
+    assert.match(message, /blocked by an external policy/);
+    assert.match(message, /Remove-Item -LiteralPath/);
+  } finally {
+    fs.rmSync = realRmSync;
+  }
+});
