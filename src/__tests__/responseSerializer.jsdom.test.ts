@@ -119,14 +119,14 @@ describe('serializeResponseText with browser-parsed jsdom nodes', () => {
 
   it('drops hidden content, buttons, SVG, scripts and template UI chrome', () => {
     const root = document.createElement('div');
-    root.innerHTML = `
-      <p>Result: <span aria-hidden="true">hidden icon</span><button>Copy</button>
-      <svg><text>decorative</text></svg><span>ready</span></p>
-      <div aria-hidden="true">overlay</div>
-      <script>debug()</script><style>.ui { color: red; }</style>
-      <template><p>internal copy control</p></template>
-      <!-- an HTML comment -->
-    `;
+    root.innerHTML =
+      '<p>Result: <span aria-hidden="true">hidden icon</span>' +
+      '<button>Copy</button><svg><text>decorative</text></svg>' +
+      '<span>ready</span></p>' +
+      '<div aria-hidden="true">overlay</div>' +
+      '<script>debug()</script><style>.ui { color: red; }</style>' +
+      '<template><p>internal copy control</p></template>' +
+      '<!-- an HTML comment -->';
 
     expect(serializeResponseText(root)).toBe('Result: ready');
   });
