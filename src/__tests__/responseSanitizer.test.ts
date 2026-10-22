@@ -12,6 +12,11 @@ const POLICY = [
   'Apply this policy to any natural-language text in your response.',
   '</response-language-policy>',
 ].join('\n');
+const FOOTER = [
+  '<response-language-policy version="1" setting="auto" interface-locale="zh-TW">',
+  'Otherwise, write all natural-language text and follow-up questions in Simplified Chinese (zh-CN).',
+  '</response-language-policy>',
+].join('\n');
 
 afterEach(() => resetBusForTests());
 
@@ -34,6 +39,21 @@ describe('response language policy echo sanitizer', () => {
   it('hides an unfinished cumulative streaming echo', () => {
     expect(stripResponseLanguagePolicyEcho('<response-language-policy version="1" setting="auto" interface-locale="zh-TW">\nApply')).toEqual({
       text: '',
+      removedPolicy: true,
+    });
+  });
+
+  it('removes both policy blocks while preserving the answer between them', () => {
+    expect(stripResponseLanguagePolicyEcho(`${POLICY}\n\n真正的回答\n\n${FOOTER}`)).toEqual({
+      text: '真正的回答',
+      removedPolicy: true,
+    });
+  });
+
+  it('keeps the completed answer when a streaming footer echo is unfinished', () => {
+    const partialFooter = FOOTER.slice(0, FOOTER.indexOf('</response-language-policy>'));
+    expect(stripResponseLanguagePolicyEcho(`${POLICY}\n\n真正的回答\n\n${partialFooter}`)).toEqual({
+      text: '真正的回答',
       removedPolicy: true,
     });
   });

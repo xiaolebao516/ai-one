@@ -46,6 +46,7 @@ import {
 import { resetWorkflowRuntimeForTests, runWorkflow } from '../workflow';
 import { createResponseLanguagePolicy } from '../workflow/responseLanguage';
 import { activeProvidersForStandby, normalizeSettings } from '../ui/settingsModel';
+import { readDeliberationAuditTrace } from '../dev/deliberationPromptTrace';
 
 vi.mock('../host', () => ({
   host: {
@@ -538,10 +539,14 @@ describe('workflow engine', () => {
     for (const prompt of freePrompts) {
       expect(prompt).toContain('Explain dependency injection in simple terms.');
       expect(prompt).toContain('<response-language-policy version="1" setting="auto" interface-locale="zh-TW">');
-      expect(prompt).toContain('primary language of the user-authored prose');
-      expect(prompt).toContain('Traditional Chinese (zh-TW) (the app interface language fallback)');
+      // The inferred English target replaces the generic rules, so the zh-TW fallback is never named.
+      expect(prompt).not.toContain('Traditional Chinese');
       expect(prompt.startsWith('<response-language-policy')).toBe(true);
-      expect(prompt.endsWith('Explain dependency injection in simple terms.')).toBe(true);
+      const header = prompt.slice(0, prompt.indexOf('</response-language-policy>'));
+      expect(header).toContain('Otherwise, write all natural-language text and follow-up questions in English (en).');
+      const footer = prompt.slice(prompt.lastIndexOf('<response-language-policy'));
+      expect(footer).toContain('Otherwise, write all natural-language text and follow-up questions in English (en).');
+      expect(footer.endsWith('</response-language-policy>')).toBe(true);
     }
 
     vi.mocked(host.provider.send).mockClear();
@@ -566,8 +571,38 @@ describe('workflow engine', () => {
         prompt.includes('<response-language-policy version="1" setting="auto" interface-locale="zh-TW">'),
       ),
     ).toBe(true);
-    expect(serialPrompts.every((prompt) => prompt.includes('Do not infer it from these workflow instructions, other AI responses'))).toBe(true);
+    expect(serialPrompts.every((prompt) => !prompt.includes('Traditional Chinese'))).toBe(true);
     expect(serialPrompts.every((prompt) => prompt.startsWith('<response-language-policy'))).toBe(true);
+    for (const prompt of serialPrompts) {
+      const footer = prompt.slice(prompt.lastIndexOf('<response-language-policy'));
+      expect(footer).toContain('Otherwise, write all natural-language text and follow-up questions in English (en).');
+      expect(footer.endsWith('</response-language-policy>')).toBe(true);
+    }
+  });
+
+  it('infers the response language only from the current question rather than restored conversation context', async () => {
+    const prompts: string[] = [];
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      prompts.push(prompt);
+      publishBridgeMessage(done(provider, 'An English answer that must not change the next prompt language.'));
+    });
+
+    await expect(runWorkflow({
+      text: '请解释这些方案的证据和局限。',
+      context: 'User:\nPlease continue in English.\n\nGemini:\n請使用繁體中文討論。',
+      mode: 'debate',
+      roles: DEFAULT_DEBATE_ROLES,
+      responseLanguagePolicy: createResponseLanguagePolicy('auto', 'zh-TW'),
+    })).resolves.toEqual({ ok: true });
+
+    expect(prompts).toHaveLength(4);
+    for (const prompt of prompts) {
+      expect(prompt).toContain('Please continue in English.');
+      const footer = prompt.slice(prompt.lastIndexOf('<response-language-policy'));
+      expect(footer).toContain('全部自然语言内容和后续问题都使用简体中文');
+      expect(footer).not.toContain('Traditional Chinese');
+      expect(footer).not.toContain('English (en)');
+    }
   });
 
   it('replays restored conversation context without replacing the current snapshot question', async () => {
@@ -866,6 +901,25 @@ describe('workflow engine', () => {
       `🔍 ${providerName(DEFAULT_CONSULT_ROLES.summary)} — Summary in progress…`,
       '',
     ]);
+  });
+
+  it('automatically captures sanitized deliberation audit evidence and restores the sender after the run', async () => {
+    const originalSend = host.provider.send;
+    vi.mocked(originalSend).mockImplementation(async (provider) => {
+      const response = provider === 'claude'
+        ? 'Evidence-backed findings: PRIVATE_AUDIT\nShared conclusions: NONE\nDisagreements: NONE\nEvidence gaps: NONE\nNext steps: NONE\n[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:AGREED]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]'
+        : 'PRIVATE_PARTICIPANT_REPLY';
+      publishBridgeMessage(done(provider, response));
+    });
+    await expect(runWorkflow({
+      text: '请比较两种方案。PRIVATE_QUESTION', mode: 'consult', presetId: 'deliberation',
+      roles: DEFAULT_CONSULT_ROLES,
+      responseLanguagePolicy: createResponseLanguagePolicy('auto', 'zh-TW'),
+    })).resolves.toEqual({ ok: true });
+    expect(readDeliberationAuditTrace()).toHaveLength(1);
+    expect(readDeliberationAuditTrace()[0]).toMatchObject({ templateMatched: true, languagePolicyPresent: true, questionBlockPresent: true, dispatch: 'dispatched' });
+    expect(JSON.stringify(readDeliberationAuditTrace())).not.toContain('PRIVATE_');
+    expect(host.provider.send).toBe(originalSend);
   });
 
   it('lets Brainstorm retry a provider error and complete the same workflow', async () => {
