@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { Locale } from '../i18n/resolve';
 import {
   ALL,
@@ -28,6 +28,24 @@ import {
   type StatusFilter,
 } from './taskHudModel';
 import { TASK_HUD_MOCK_TASKS } from './taskHudMockData';
+import type { GitHubRepoTasks } from './taskHudGithub';
+import { loadGitHubTasksFromHost } from './taskHudGithubLoader';
+import {
+  MAX_HUD_REPOS,
+  errorMessages,
+  githubOverall,
+  githubTasks,
+  mayHaveMore,
+  parseRepoInput,
+  refreshGitHubData,
+  setHudPrefs,
+  useGitHubData,
+  useHudPrefs,
+  type GitHubDataState,
+  type GitHubLoader,
+  type HudPrefs,
+  type HudSource,
+} from './taskHudSource';
 import { taskHudText, type TaskHudText } from './taskHudText';
 import {
   Badge,
@@ -35,6 +53,8 @@ import {
   Card,
   EmptyState,
   Icon,
+  IconButton,
+  LoadingState,
   Notice,
   SectionHeader,
   SegmentedControl,
@@ -48,9 +68,11 @@ import {
 export interface TaskHudProps {
   locale: Locale;
   onClose: () => void;
-  /** Defaults to the labelled demo data; real data is a later task. */
+  /** Fixed task list (tests / previews). When given, the HUD shows it as demo data and hides the source switch. */
   tasks?: readonly HudTask[];
   initialState?: Partial<HudState>;
+  /** GitHub loader; defaults to #52's adapter over #51's read-only bridge. */
+  githubLoader?: GitHubLoader;
 }
 
 const ID = 'task-hud';
@@ -62,10 +84,19 @@ const CI_TONE: Record<CiView['state'], V2BadgeTone> = { success: 'done', failure
  * Task HUD (#40): a full-window v2 view over the chat. The chat stays mounted underneath (made
  * inert by App), so leaving the HUD returns to exactly the same conversation, draft and provider.
  */
-export function TaskHud({ locale, onClose, tasks = TASK_HUD_MOCK_TASKS, initialState }: TaskHudProps) {
+export function TaskHud({ locale, onClose, tasks, initialState, githubLoader = loadGitHubTasksFromHost }: TaskHudProps) {
   const [state, dispatch] = useReducer(hudReducer, initialState, (overrides) => initialHudState(overrides));
   const text = taskHudText(locale);
-  const data = state.scenario === 'empty' ? [] : tasks;
+  const prefs = useHudPrefs();
+  const gh = useGitHubData();
+  const source: HudSource = tasks ? 'demo' : prefs.source;
+  const data = source === 'github' ? githubTasks(gh) : state.scenario === 'empty' ? [] : (tasks ?? TASK_HUD_MOCK_TASKS);
+  const refresh = useCallback((repos: readonly string[]) => void refreshGitHubData(repos, githubLoader), [githubLoader]);
+
+  // Read GitHub once when its source is shown with nothing read yet. No polling: later reads are user-initiated.
+  useEffect(() => {
+    if (source === 'github' && gh.phase === 'idle' && prefs.repos.length > 0) refresh(prefs.repos);
+  }, [source, gh.phase, prefs.repos, refresh]);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -119,20 +150,55 @@ export function TaskHud({ locale, onClose, tasks = TASK_HUD_MOCK_TASKS, initialS
           className="border-b-0"
         />
         <span className="flex-1" />
-        <Badge tone="you" variant="outline" size="md" title={text.t('mockBody')}>
-          {text.t('mockTitle')}
-        </Badge>
-        <Select
-          id={`${ID}-scenario`}
-          label={text.t('scenarioLabel')}
-          size="sm"
-          value={state.scenario}
-          onChange={(scenario) => dispatch({ type: 'scenario', scenario: scenario === 'empty' ? 'empty' : 'sample' })}
-          options={[
-            { value: 'sample', label: text.t('scenarioSample') },
-            { value: 'empty', label: text.t('scenarioEmpty') },
-          ]}
-        />
+        {tasks ? null : (
+          <SegmentedControl
+            label={text.t('sourceLabel')}
+            idBase={`${ID}-source`}
+            value={source}
+            onChange={(value) => {
+              setHudPrefs({ source: value === 'github' ? 'github' : 'demo' });
+              dispatch({ type: 'overview' });
+            }}
+            options={[
+              { value: 'demo', label: text.t('sourceDemo') },
+              { value: 'github', label: text.t('sourceGithubOption') },
+            ]}
+          />
+        )}
+        {source === 'demo' ? (
+          <>
+            <Badge tone="you" variant="outline" size="md" title={text.t('mockBody')}>
+              {text.t('mockTitle')}
+            </Badge>
+            <Select
+              id={`${ID}-scenario`}
+              label={text.t('scenarioLabel')}
+              size="sm"
+              value={state.scenario}
+              onChange={(scenario) => dispatch({ type: 'scenario', scenario: scenario === 'empty' ? 'empty' : 'sample' })}
+              options={[
+                { value: 'sample', label: text.t('scenarioSample') },
+                { value: 'empty', label: text.t('scenarioEmpty') },
+              ]}
+            />
+          </>
+        ) : (
+          <>
+            <Badge tone="run" variant="outline" size="md" title={text.t('githubBody')}>
+              {text.t('githubBadge')}
+            </Badge>
+            <Button
+              size="sm"
+              icon={<Icon name="refresh" size={14} />}
+              loading={gh.phase === 'loading'}
+              disabled={prefs.repos.length === 0}
+              disabledReason={text.t('noRepos')}
+              onClick={() => refresh(prefs.repos)}
+            >
+              {gh.phase === 'loading' ? text.t('refreshing') : text.t('refresh')}
+            </Button>
+          </>
+        )}
       </header>
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto bg-v2-panel">
@@ -143,9 +209,28 @@ export function TaskHud({ locale, onClose, tasks = TASK_HUD_MOCK_TASKS, initialS
           className="mx-auto flex max-w-[1120px] flex-col gap-v2-xl px-v2-page py-v2-xl"
         >
           {state.view === 'overview' ? (
-            <Overview tasks={data} locale={locale} text={text} dispatch={dispatch} headingRef={headingRef} />
+            <Overview
+              tasks={data}
+              locale={locale}
+              text={text}
+              dispatch={dispatch}
+              headingRef={headingRef}
+              source={source === 'github' ? <GitHubPanel prefs={prefs} gh={gh} locale={locale} text={text} onRefresh={refresh} /> : <DemoNotice text={text} />}
+              subline={source === 'github' ? githubSubline(gh, locale, text) : text.t('subline')}
+              emptyHeadline={source === 'github' && gh.phase === 'loading' ? text.t('refreshing') : text.t('headlineEmpty')}
+              empty={source === 'github' ? <GitHubEmpty prefs={prefs} gh={gh} text={text} onRefresh={refresh} /> : <DemoEmpty text={text} />}
+            />
           ) : state.view === 'list' ? (
-            <TaskList tasks={data} state={state} locale={locale} text={text} dispatch={dispatch} headingRef={headingRef} />
+            <TaskList
+              tasks={data}
+              state={state}
+              locale={locale}
+              text={text}
+              dispatch={dispatch}
+              headingRef={headingRef}
+              source={source === 'github' ? <GitHubPanel prefs={prefs} gh={gh} locale={locale} text={text} onRefresh={refresh} /> : null}
+              empty={source === 'github' ? <GitHubEmpty prefs={prefs} gh={gh} text={text} onRefresh={refresh} /> : <DemoEmpty text={text} />}
+            />
           ) : (
             <TaskDetail task={task} backTo={state.backTo} locale={locale} text={text} dispatch={dispatch} headingRef={headingRef} />
           )}
@@ -162,26 +247,41 @@ interface ViewProps {
   headingRef: RefObject<HTMLHeadingElement>;
 }
 
-function Overview({ tasks, locale, text, dispatch, headingRef }: ViewProps & { tasks: readonly HudTask[] }) {
+interface SourceSlots {
+  /** Data-source banner: demo notice or the GitHub panel. */
+  source: ReactNode;
+  /** Shown instead of the task sections when there are no tasks. */
+  empty: ReactNode;
+}
+
+function Overview({
+  tasks,
+  locale,
+  text,
+  dispatch,
+  headingRef,
+  source,
+  subline,
+  emptyHeadline,
+  empty,
+}: ViewProps & SourceSlots & { tasks: readonly HudTask[]; subline: string; emptyHeadline: string }) {
   const summary = summarize(tasks);
   const needs = needsYouTasks(tasks);
   const active = inProgressTasks(tasks);
   const others = otherTasks(tasks);
   const headline =
     tasks.length === 0
-      ? text.t('headlineEmpty')
+      ? emptyHeadline
       : text.t(summary.needsYou > 0 ? 'headline' : 'headlineNoNeeds', { inProgress: summary.inProgress, needsYou: summary.needsYou });
 
   return (
     <>
-      <Notice tone="you" title={text.t('mockTitle')}>
-        {text.t('mockBody')}
-      </Notice>
+      {source}
       <div className="flex flex-col gap-v2-sm">
         <h1 ref={headingRef} tabIndex={-1} className="m-0 text-v2-ink">
           <span className="text-v2-title">{headline}</span>
         </h1>
-        <p className="m-0 text-v2-meta text-v2-ink-2">{text.t('subline')}</p>
+        <p className="m-0 text-v2-meta text-v2-ink-2">{subline}</p>
         {tasks.length > 0 ? (
           <div className="mt-v2-xs flex flex-wrap gap-v2-sm" role="group" aria-label={text.t('counterHint')}>
             <CounterButton tone="run" count={summary.inProgress} label={text.t('counterInProgress')} hint={text.t('counterHint')} onClick={() => dispatch({ type: 'list', status: 'inProgress' })} />
@@ -192,7 +292,7 @@ function Overview({ tasks, locale, text, dispatch, headingRef }: ViewProps & { t
       </div>
 
       {tasks.length === 0 ? (
-        <EmptyState title={text.t('emptyTitle')} description={text.t('emptyBody')} />
+        empty
       ) : (
         <>
           {needs.length > 0 ? (
@@ -312,7 +412,7 @@ function TaskRow({ task, locale, text, onOpen }: { task: HudTask; locale: Locale
   );
 }
 
-function TaskList({ tasks, state, locale, text, dispatch, headingRef }: ViewProps & { tasks: readonly HudTask[]; state: HudState }) {
+function TaskList({ tasks, state, locale, text, dispatch, headingRef, source, empty }: ViewProps & SourceSlots & { tasks: readonly HudTask[]; state: HudState }) {
   const repos = useMemo(() => repoList(tasks), [tasks]);
   const visible = filterTasks(tasks, state.repo, state.status);
   const filterLabel = (filter: StatusFilter) =>
@@ -328,6 +428,7 @@ function TaskList({ tasks, state, locale, text, dispatch, headingRef }: ViewProp
 
   return (
     <>
+      {source}
       <div className="flex flex-col gap-v2-md">
         <h1 ref={headingRef} tabIndex={-1} className="m-0 text-v2-ink">
           <span className="text-v2-heading">{text.t('tabList')}</span>
@@ -352,7 +453,7 @@ function TaskList({ tasks, state, locale, text, dispatch, headingRef }: ViewProp
         </div>
       </div>
       {tasks.length === 0 ? (
-        <EmptyState title={text.t('emptyTitle')} description={text.t('emptyBody')} />
+        empty
       ) : visible.length === 0 ? (
         <EmptyState
           title={text.t('noMatchTitle')}
@@ -578,5 +679,149 @@ function ReviewValue({ task, locale, text }: { task: HudTask; locale: Locale; te
       {review.headSha ? <span className="text-v2-micro text-v2-ink-3">{text.t('onSha', { sha: shortSha(review.headSha) })}</span> : null}
       {!current ? <span className="text-v2-micro text-v2-ink-2">{text.t('reviewStale')}</span> : null}
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Data source (#53)
+
+function DemoNotice({ text }: { text: TaskHudText }) {
+  return (
+    <Notice tone="you" title={text.t('mockTitle')}>
+      {text.t('mockBody')}
+    </Notice>
+  );
+}
+
+function DemoEmpty({ text }: { text: TaskHudText }) {
+  return <EmptyState title={text.t('emptyTitle')} description={text.t('emptyBody')} />;
+}
+
+function minutesSince(iso: string | undefined): number | undefined {
+  if (!iso) return undefined;
+  const elapsed = Date.now() - Date.parse(iso);
+  return Number.isFinite(elapsed) ? Math.max(0, Math.floor(elapsed / 60000)) : undefined;
+}
+
+function githubSubline(gh: GitHubDataState, locale: Locale, text: TaskHudText): string {
+  return gh.finishedAt ? text.t('githubSubline', { age: formatAge(minutesSince(gh.finishedAt), locale) }) : text.t('githubNotLoaded');
+}
+
+/** Nothing to list: say whether that is a failure, a load in progress or genuinely no open items. */
+export function GitHubEmpty({ prefs, gh, text, onRefresh }: { prefs: HudPrefs; gh: GitHubDataState; text: TaskHudText; onRefresh: (repos: readonly string[]) => void }) {
+  const retry = (
+    <Button size="sm" icon={<Icon name="refresh" size={14} />} onClick={() => onRefresh(prefs.repos)}>
+      {text.t('refresh')}
+    </Button>
+  );
+  if (prefs.repos.length === 0) return <EmptyState tone="unknown" title={text.t('noRepos')} />;
+  if (gh.phase === 'loading') return <LoadingState label={text.t('refreshing')} />;
+  if (gh.phase === 'idle') return <EmptyState tone="unknown" title={text.t('githubNotLoaded')} action={retry} />;
+  const overall = githubOverall(gh);
+  if (overall === 'error') return <EmptyState tone="unknown" title={text.t('githubErrorTitle')} description={text.t('githubErrorBody')} action={retry} />;
+  // A partial read with no tasks is not "nothing open": keep the unknown tone.
+  if (overall === 'partial') return <EmptyState tone="unknown" title={text.t('githubErrorTitle')} description={text.t('repoMore')} action={retry} />;
+  return <EmptyState title={text.t('githubEmptyTitle')} description={text.t('githubEmptyBody')} />;
+}
+
+const REPO_STATUS_TONE: Record<GitHubRepoTasks['status'], V2BadgeTone> = { complete: 'done', partial: 'you', error: 'block' };
+
+export function GitHubPanel({
+  prefs,
+  gh,
+  locale,
+  text,
+  onRefresh,
+}: {
+  prefs: HudPrefs;
+  gh: GitHubDataState;
+  locale: Locale;
+  text: TaskHudText;
+  onRefresh: (repos: readonly string[]) => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const [problem, setProblem] = useState<string | undefined>();
+  const byRepo = new Map(gh.results.map((result) => [result.repo, result]));
+
+  const updateRepos = (repos: string[]) => {
+    setHudPrefs({ repos });
+    onRefresh(repos);
+  };
+  const add = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const repo = parseRepoInput(draft);
+    if (!repo) return setProblem(text.t('repoInvalid'));
+    if (prefs.repos.some((existing) => existing.toLowerCase() === repo.toLowerCase())) return setProblem(text.t('repoDuplicate'));
+    if (prefs.repos.length >= MAX_HUD_REPOS) return setProblem(text.t('repoLimit', { n: MAX_HUD_REPOS }));
+    setProblem(undefined);
+    setDraft('');
+    updateRepos([...prefs.repos, repo]);
+  };
+
+  return (
+    <Card as="section" aria-labelledby={`${ID}-github`} className="flex flex-col gap-v2-md">
+      <SectionHeader
+        id={`${ID}-github`}
+        title={text.t('githubTitle')}
+        description={gh.finishedAt ? text.t('readAt', { age: formatAge(minutesSince(gh.finishedAt), locale) }) : text.t('githubNotLoaded')}
+      />
+      <p className="m-0 text-v2-meta text-v2-ink-2">{text.t('githubBody')}</p>
+      <ul aria-label={text.t('reposLabel')} className="m-0 flex list-none flex-col gap-v2-xs p-0">
+        {prefs.repos.map((repo) => {
+          const result = byRepo.get(repo);
+          return (
+            <li key={repo} className="flex flex-wrap items-center gap-x-v2-sm gap-y-1 rounded-v2-md bg-v2-sunken px-v2-sm py-1">
+              <span className="font-v2-mono text-v2-meta text-v2-ink">{repo}</span>
+              {result && gh.phase === 'done' ? (
+                <>
+                  <Badge tone={REPO_STATUS_TONE[result.status]}>
+                    {text.t(result.status === 'complete' ? 'repoComplete' : result.status === 'partial' ? 'repoPartial' : 'repoError')}
+                  </Badge>
+                  <span className="text-v2-micro text-v2-ink-3">{text.t('repoTasks', { n: result.tasks.length })}</span>
+                  {mayHaveMore(result) ? <span className="text-v2-micro text-v2-ink-2">{text.t('repoMore')}</span> : null}
+                  {errorMessages(result).map((message) => (
+                    <span key={message} className="w-full text-v2-micro text-v2-ink-2">
+                      {message}
+                    </span>
+                  ))}
+                </>
+              ) : (
+                <span className="text-v2-micro text-v2-ink-3">{gh.phase === 'loading' ? text.t('refreshing') : text.t('githubNotLoaded')}</span>
+              )}
+              <span className="flex-1" />
+              <IconButton
+                size="sm"
+                label={text.t('removeRepo', { repo })}
+                icon={<Icon name="close" size={14} />}
+                disabled={gh.phase === 'loading'}
+                onClick={() => updateRepos(prefs.repos.filter((existing) => existing !== repo))}
+              />
+            </li>
+          );
+        })}
+      </ul>
+      <form onSubmit={add} className="flex flex-wrap items-center gap-v2-sm">
+        <label htmlFor={`${ID}-add-repo`} className="sr-only">
+          {text.t('addRepoLabel')}
+        </label>
+        <input
+          id={`${ID}-add-repo`}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder={text.t('addRepoPlaceholder')}
+          aria-invalid={problem ? true : undefined}
+          aria-describedby={problem ? `${ID}-add-repo-problem` : undefined}
+          className="h-v2-control-sm w-64 rounded-v2-sm bg-v2-surface px-2.5 text-v2-meta text-v2-ink ring-1 ring-inset ring-v2-line-strong placeholder:text-v2-ink-3"
+        />
+        <Button size="sm" type="submit" disabled={gh.phase === 'loading'}>
+          {text.t('addRepo')}
+        </Button>
+        {problem ? (
+          <span id={`${ID}-add-repo-problem`} role="alert" className="text-v2-micro text-v2-ink-2">
+            {problem}
+          </span>
+        ) : null}
+      </form>
+    </Card>
   );
 }

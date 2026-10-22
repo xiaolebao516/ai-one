@@ -3,7 +3,8 @@ import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { TaskHud } from '../ui/TaskHud';
-import { TaskHudEntry, type TaskHudEntryProps } from '../ui/TaskHudEntry';
+import { TaskHudEntry, TaskHudEntryView, type TaskHudEntryViewProps } from '../ui/TaskHudEntry';
+import { TASK_HUD_MOCK_TASKS } from '../ui/taskHudMockData';
 import type { HudState } from '../ui/taskHudModel';
 
 function hud(initialState?: Partial<HudState>, locale: 'en' | 'zh-TW' = 'en') {
@@ -134,15 +135,16 @@ describe('Task HUD detail', () => {
 });
 
 describe('Task HUD entry', () => {
-  const renderEntry = (props: TaskHudEntryProps) =>
-    (TaskHudEntry as unknown as { render: (p: TaskHudEntryProps, ref: null) => ReactElement }).render(props, null);
+  // The outer TaskHudEntry reads the data-source stores (hooks); the view is the pure part.
+  const renderEntry = (props: TaskHudEntryViewProps) =>
+    (TaskHudEntryView as unknown as { render: (p: TaskHudEntryViewProps, ref: null) => ReactElement }).render(props, null);
 
   it('summarises the demo counts in its accessible name and opens the HUD', () => {
     const html = renderToStaticMarkup(<TaskHudEntry locale="en" onOpen={() => {}} />);
     expect(html).toContain('aria-label="Open the task HUD (demo data): 4 in progress, 3 need you, 4 failed or unknown"');
     expect(visibleText(html)).toContain('Demo');
     const onOpen = vi.fn();
-    const scope = renderEntry({ locale: 'en', onOpen });
+    const scope = renderEntry({ locale: 'en', onOpen, source: 'demo', tasks: TASK_HUD_MOCK_TASKS });
     const button = (scope.props as { children: ReactElement<{ onClick: () => void }> }).children;
     button.props.onClick();
     expect(onOpen).toHaveBeenCalledTimes(1);
