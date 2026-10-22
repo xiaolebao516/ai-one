@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitHubEmpty, GitHubPanel, TaskHud } from '../ui/TaskHud';
 import { TaskHudEntryView, type TaskHudEntryViewProps } from '../ui/TaskHudEntry';
 import type { GitHubRepoTasks } from '../ui/taskHudGithub';
@@ -23,10 +23,18 @@ import {
 } from '../ui/taskHudSource';
 import { taskHudText } from '../ui/taskHudText';
 
-afterEach(() => resetGitHubData());
-
 const text = taskHudText('en');
 const NOW = new Date('2026-10-22T08:00:00.000Z');
+
+// Relative times ("3 min ago") are computed from the clock: pin it so the assertions do not age.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
+});
+afterEach(() => {
+  resetGitHubData();
+  vi.useRealTimers();
+});
 
 function task(id: string, status: HudTask['status']): HudTask {
   return { id, dataSource: 'github', repo: 'o/r', title: { en: id, zh: id }, status, stages: [], summary: { en: 's', zh: 's' }, evidence: [] };
@@ -149,8 +157,8 @@ describe('GitHub source UI', () => {
     const view = visibleText(html);
     expect(view).toContain('GitHub read-back · read-only');
     expect(view).toContain('read 3 min ago');
-    expect(view).toMatch(/xiaolebao516\/ai-one Partial 1 tasks read (?:just now|\d+ (?:min|h) ago) Only the first page was read/);
-    expect(view).toMatch(/o\/broken Failed 0 tasks read (?:just now|\d+ (?:min|h) ago) gh is not installed/);
+    expect(view).toContain('xiaolebao516/ai-one Partial 1 tasks read just now Only the first page was read');
+    expect(view).toContain('o/broken Failed 0 tasks read just now gh is not installed');
     expect(html).toContain('aria-label="Remove o/broken"');
     expect(html).toContain('placeholder="owner/repo or GitHub URL"');
     expect(html).not.toContain('href=');
@@ -186,12 +194,18 @@ describe('review fixes on PR #56 (d8176aa)', () => {
     const switching = refreshGitHubData(['o/b'], slow);
     expect(getGitHubData().phase).toBe('loading');
     expect(githubTasks(getGitHubData())).toEqual([]);
+    // o/a's read time must not be shown as if it were o/b's.
+    expect(getGitHubData().finishedAt).toBeUndefined();
+    const switchingPanel = visibleText(renderToStaticMarkup(<GitHubPanel prefs={{ source: 'github', repos: ['o/b'] }} gh={getGitHubData()} locale="en" text={text} onRefresh={() => {}} />));
+    expect(switchingPanel).toContain('Reading GitHub');
+    expect(switchingPanel).not.toMatch(/read (?:just now|\d+ (?:min|h|d) ago)/);
     release([repoResult('o/b', 'complete', [task('b1', 'review')])]);
     await switching;
     expect(githubTasks(getGitHubData()).map((item) => item.id)).toEqual(['b1']);
 
     const refreshing = refreshGitHubData(['o/b'], slow);
     expect(githubTasks(getGitHubData()).map((item) => item.id)).toEqual(['b1']);
+    expect(getGitHubData().finishedAt).toBeDefined();
     const panel = visibleText(renderToStaticMarkup(<GitHubPanel prefs={{ source: 'github', repos: ['o/b'] }} gh={getGitHubData()} locale="en" text={text} onRefresh={() => {}} />));
     expect(panel).toContain('last read, refreshing');
     release([repoResult('o/b', 'complete')]);

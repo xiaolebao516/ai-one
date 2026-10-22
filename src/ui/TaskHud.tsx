@@ -722,7 +722,7 @@ function minutesSince(iso: string | undefined): number | undefined {
 }
 
 function githubSubline(gh: GitHubDataState, locale: Locale, text: TaskHudText): string {
-  if (gh.phase === 'loading' && gh.results.length > 0) return text.t('githubRefreshingStale');
+  if (gh.phase === 'loading') return gh.results.length > 0 ? text.t('githubRefreshingStale') : text.t('refreshing');
   return gh.finishedAt ? text.t('githubSubline', { age: formatAge(minutesSince(gh.finishedAt), locale) }) : text.t('githubNotLoaded');
 }
 
@@ -786,7 +786,9 @@ export function GitHubPanel({
       <SectionHeader
         id={`${ID}-github`}
         title={text.t('githubTitle')}
-        description={gh.finishedAt ? text.t('readAt', { age: formatAge(minutesSince(gh.finishedAt), locale) }) : text.t('githubNotLoaded')}
+        description={
+          gh.finishedAt ? text.t('readAt', { age: formatAge(minutesSince(gh.finishedAt), locale) }) : gh.phase === 'loading' ? text.t('refreshing') : text.t('githubNotLoaded')
+        }
       />
       <p className="m-0 text-v2-meta text-v2-ink-2">{text.t('githubBody')}</p>
       <ul aria-label={text.t('reposLabel')} className="m-0 flex list-none flex-col gap-v2-xs p-0">

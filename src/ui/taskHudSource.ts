@@ -125,8 +125,9 @@ export async function refreshGitHubData(repos: readonly string[], loader: GitHub
   const list = [...repos];
   // Drop results for repositories that are no longer requested, so a removed repository's tasks
   // never show while the new read runs. Same-repository refreshes keep their last result, which the
-  // UI labels as "last read, refreshing".
-  setGitHub({ ...github, phase: 'loading', repos: list, results: github.results.filter((result) => list.includes(result.repo)) });
+  // UI labels as "last read, refreshing". The previous read time is kept only with those results.
+  const kept = github.results.filter((result) => list.includes(result.repo));
+  setGitHub({ phase: 'loading', repos: list, results: kept, finishedAt: kept.length > 0 ? github.finishedAt : undefined });
   let results: GitHubRepoTasks[];
   try {
     results = await loader(list);
