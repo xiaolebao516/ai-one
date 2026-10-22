@@ -408,6 +408,7 @@ export function SettingsModal({
                 >
                   <option value="system">{t('settings.language.system')}</option>
                   <option value="en">{t('settings.language.en')}</option>
+                  <option value="zh-CN">{t('settings.language.zhCN')}</option>
                   <option value="zh-TW">{t('settings.language.zhTW')}</option>
                   <option value="ja">{t('settings.language.ja')}</option>
                   <option value="de">{t('settings.language.de')}</option>
@@ -428,6 +429,7 @@ export function SettingsModal({
                 >
                   <option value="auto">{t('settings.responseLanguage.auto')}</option>
                   <option value="en">{t('settings.language.en')}</option>
+                  <option value="zh-CN">{t('settings.language.zhCN')}</option>
                   <option value="zh-TW">{t('settings.language.zhTW')}</option>
                   <option value="ja">{t('settings.language.ja')}</option>
                   <option value="de">{t('settings.language.de')}</option>

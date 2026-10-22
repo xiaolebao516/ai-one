@@ -283,6 +283,7 @@ export const ja: Record<I18nKey, string> = {
   'settings.language': 'インターフェース言語',
   'settings.language.system': 'システム',
   'settings.language.en': '英語',
+  'settings.language.zhCN': '簡体字中国語',
   'settings.language.zhTW': '繁体字中国語',
   'settings.language.ja': '日本語',
   'settings.language.de': 'ドイツ語',

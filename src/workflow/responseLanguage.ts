@@ -22,7 +22,7 @@ const LOCALE_NAMES: Record<QuestionLanguage, string> = {
   de: 'German (de)',
 };
 
-const LOCALES = new Set<Locale>(['en', 'zh-TW', 'ja', 'de']);
+const LOCALES = new Set<Locale>(['en', 'zh-CN', 'zh-TW', 'ja', 'de']);
 const POLICY_TAG_PATTERN = /<response-language-policy version="(\d+)" setting="([^"]+)" interface-locale="([^"]+)">/g;
 
 // Script evidence, not a converter: shared characters and mixed scripts stay unresolved.
