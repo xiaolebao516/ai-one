@@ -9,8 +9,9 @@ title: "[Spec] "
 - Stage: DESIGN_PENDING <!-- DESIGN_PENDING / PLANNED / IN_PROGRESS / ACCEPTANCE -->
 - 需求负责人：
 - 最终验收人：
-- 调度 agent：
-- 工作树 / 分支：<!-- <repo>-<Spec号>-<简述> / <类型>/<Spec号>-<简述>，开工时填写 -->
+- 调度 agent：<!-- 待认领 / 工具名（Claude Code、Codex、WorkBuddy、Antigravity…），接手时填写 -->
+- 工作树路径：<!-- <repo>-<Spec号>-<简述>，开工时填写；子 Task 沿用 -->
+- 分支：<!-- <类型>/<Spec号>-<简述>，开工时填写；子 Task 沿用 -->
 
 ## 背景、目标与预期成果
 <!-- 解决什么问题，交付后有哪些可见的结果 -->
