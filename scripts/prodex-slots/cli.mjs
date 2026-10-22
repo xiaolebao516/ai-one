@@ -39,10 +39,13 @@ export function parseArgs(args) {
     seen.add(arg);
     if (arg === '--json') { options.json = true; continue; }
     if (!(arg in VALUE_OPTIONS)) {
-      // Report the option name only. "--session=Bearer XYZ" would otherwise be echoed whole, and
-      // a value that landed in the wrong place is exactly what must not be repeated.
+      // Report at most the option name, and only when it is one this tool knows. A token pasted
+      // in the wrong place arrives here as an "option" too, so nothing unrecognized is repeated.
       const name = arg.split('=')[0];
-      throw new Error(`Unknown option: ${name}. Options take their value as the next argument (${name} <value>); the "=" form is not accepted here`);
+      if (name in VALUE_OPTIONS || name === '--json') {
+        throw new Error(`Unknown option: ${name}. Options take their value as the next argument (${name} <value>); the "=" form is not accepted here`);
+      }
+      throw new Error('Unknown option. Expected one of: --json, --slot, --count, --wait-ms, --task, --session, --thread-url, each with its value as the next argument; the "=" form is not accepted');
     }
     const value = rest[++index];
     if (value === undefined || value.startsWith('--')) throw new Error(`Missing value: ${arg}`);
@@ -64,8 +67,10 @@ export function parseArgs(args) {
   const provided = Object.keys(OWNERSHIP_FLAGS).filter((key) => options[key] !== undefined);
   if (provided.length) {
     // Ownership is recorded in the claim, so only a command that takes a claim can carry it.
+    // The command is not validated (it may be a token pasted in the wrong place), so the message
+    // names the flags and the rule, not the command.
     if (command !== 'run') {
-      throw new Error(`${provided.map((key) => OWNERSHIP_FLAGS[key]).join(' / ')} only apply to run; ${command ?? 'no command'} cannot record ownership`);
+      throw new Error(`${provided.map((key) => OWNERSHIP_FLAGS[key]).join(' / ')} only apply to run`);
     }
     options.ownership = normalizeOwnership({
       task: options.task,

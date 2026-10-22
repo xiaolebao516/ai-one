@@ -520,6 +520,52 @@ test('an unknown command is refused without repeating it', async () => {
   assert.ok(!stderr.includes('SENTINEL'), 'the command was echoed back');
 });
 
+test('a token in a wrong place is never echoed, in any form', async () => {
+  const sentinel = 'SENTINEL-token-9f';
+  const thread = 'https://chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013';
+  const cases = [
+    // a bare token where an option was expected
+    ['run', sentinel, '--', '--new-chat'],
+    // an unknown command together with ownership flags
+    [sentinel, '--task', '71'],
+    // the "=" form for each ownership field
+    [`--session=${sentinel}`, 'run', '--', '--new-chat'],
+    [`--task=${sentinel}`, 'run', '--', '--new-chat'],
+    [`--thread-url=${thread}/${sentinel}`, 'run', '--', '--new-chat'],
+  ];
+  for (const argv of cases) {
+    const h = harness();
+    const code = await h.run(argv);
+    assert.notEqual(code, EXIT.OK, `${argv.join(' ')} should not have succeeded`);
+    assert.equal(h.log.asks.length, 0, 'nothing was sent');
+    const stderr = h.log.err.join('\n');
+    assert.ok(!stderr.includes(sentinel), `stderr echoed the value for: ${argv.join(' ')}`);
+    assert.ok(!h.log.out.join('\n').includes(sentinel), `stdout echoed the value for: ${argv.join(' ')}`);
+  }
+});
+
+test('a probe detail never carries a token in a URL', () => {
+  const { detail } = parseCheck(`chatgpt: blocked logged_in=false url=https://chatgpt.com/c/x?token=SENTINEL-9f`);
+  assert.ok(!detail.includes('SENTINEL-9f'), detail);
+  assert.match(detail, /url=<redacted>/);
+  const plain = parseCheck('chatgpt: something_new url=https://chatgpt.com/');
+  assert.match(plain.detail, /https:\/\/chatgpt\.com\//, 'a plain URL stays readable');
+});
+
+test('a broken slots.json is reported without its contents', () => {
+  const home = tempHome();
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(home, 'slots.json'), '{"count": 5, "note": "SENTINEL-json-9f');
+  let message = '';
+  try {
+    loadConfig(home);
+  } catch (error) {
+    message = error.message;
+  }
+  assert.match(message, /not valid JSON/);
+  assert.ok(!message.includes('SENTINEL-json-9f'), `the parse error quoted the file: ${message}`);
+});
+
 test('a hand-edited claim cannot smuggle text or a credential into the listing', async () => {
   const h = harness();
   addSlots(h.home, 1);

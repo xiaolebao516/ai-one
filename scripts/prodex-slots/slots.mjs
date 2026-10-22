@@ -176,12 +176,22 @@ export function withMutex(file, fn, { timeoutMs = 5000, staleMs = 10_000 } = {})
 
 export function loadConfig(home) {
   let count = 1;
+  let raw;
   try {
-    const raw = JSON.parse(fs.readFileSync(configPath(home), 'utf8'));
-    if (Number.isInteger(raw.count) && raw.count >= 1 && raw.count <= MAX_SLOTS) count = raw.count;
+    raw = fs.readFileSync(configPath(home), 'utf8');
   } catch (error) {
-    if (error.code !== 'ENOENT') throw new Error(`Cannot read ${configPath(home)}: ${error.message}`, { cause: error });
+    if (error.code === 'ENOENT') return { count, slots: Array.from({ length: count }, (_, index) => slotDefinition(index + 1, home)) };
+    throw new Error(`Cannot read ${configPath(home)}: ${error.message}`, { cause: error });
   }
+  // A JSON parse error can quote the file it failed on, and a hand-edited slots.json is exactly
+  // where someone might have pasted something; report the file, not its contents.
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${configPath(home)} is not valid JSON; fix or delete that file by hand`);
+  }
+  if (Number.isInteger(parsed.count) && parsed.count >= 1 && parsed.count <= MAX_SLOTS) count = parsed.count;
   return { count, slots: Array.from({ length: count }, (_, index) => slotDefinition(index + 1, home)) };
 }
 
@@ -214,12 +224,20 @@ export function slotEnv(slot, base = process.env) {
 }
 
 // `prodex pro browser check` prints `chatgpt: <status> ...`; only that line is interpreted.
+// Detail is Prodex's own status text, printed to the user and to logs. URLs are the one part of
+// it that could carry a token, so any URL with a query or credentials is redacted; a plain URL
+// stays. The tail is capped so a chatty probe cannot flood a line.
+export function redactDetail(text) {
+  const redacted = String(text).replace(/https?:\/\/\S+/g, (url) => (/[?@]/.test(url) ? 'url=<redacted>' : url));
+  return redacted.length > 200 ? `${redacted.slice(0, 200)}...` : redacted;
+}
+
 export function parseCheck(text) {
   const match = /^chatgpt:\s*(\S+)(.*)$/m.exec(String(text));
   // No status line at all means the probe itself failed, which is not something a login fixes.
   if (!match) return { state: 'error', detail: 'check printed no chatgpt status line' };
   const [, status, rest] = match;
-  const detail = `${status}${rest}`.trim();
+  const detail = redactDetail(`${status}${rest}`.trim());
   if (status === 'browser_unreachable') return { state: 'down' };
   if (status === 'ok' && /logged_in=true/.test(rest) && /composer=true/.test(rest)) return { state: 'ready' };
   // Logged in and answering a previous request: usable once that finishes.
