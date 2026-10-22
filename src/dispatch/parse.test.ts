@@ -47,6 +47,13 @@ describe('dispatch metadata parser', () => {
       expect(model.slots[0].task).toBe('#81');
     }
   });
+  it('preserves slot keys allowed by the slot CLI without widening Prodex session keys', () => {
+    for (const key of ['_audit', '.audit', ':audit', '-audit']) {
+      const model = parseDispatchSnapshot({ ...snapshot([{ ...session, session_key: key }]), slots: [{ id: 1, port: 9333, claim_present: true, session_key: key }] });
+      expect(model.slots[0].sessionKey).toBe(key);
+      expect(model.events[0].sessionKey).toBeUndefined();
+    }
+  });
   it('does not infer Issue ownership from arbitrary task names or session text', () => {
     expect(parseDispatchSnapshot(snapshot([{ ...session, session_key: 'maybe-issue-80' }])).events[0].issue).toBeUndefined();
   });

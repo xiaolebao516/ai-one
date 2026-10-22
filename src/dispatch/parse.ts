@@ -6,6 +6,7 @@ const text = (value: unknown, pattern: RegExp) => typeof value === 'string' && p
 const taskId = (value: unknown) => text(value, /^task_\d{8}_\d{6}_[a-z0-9-]{1,100}$/);
 const sessionId = (value: unknown) => text(value, /^sess_\d{8}_\d{6}_[a-z0-9-]{1,100}$/);
 const sessionKey = (value: unknown) => text(value, /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/);
+const slotSessionKey = (value: unknown) => text(value, /^[A-Za-z0-9._:-]{1,64}$/);
 const requestId = (value: unknown) => text(value, /^[a-f0-9]{32}$/);
 const issue = (value: unknown) => text(value, /^#\d{1,6}$/);
 const date = (value: unknown) => typeof value === 'string' && /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(value) && Number.isFinite(Date.parse(value)) ? value : undefined;
@@ -58,7 +59,7 @@ export function parseDispatchSnapshot(input: unknown): DispatchSnapshot {
     const row = object(value);
     const id = positiveInt(row.id);
     if (!id || id > 8 || row.port !== 9332 + id) continue;
-    const slot: DispatchSlot = { id, port: 9332 + id, state: row.invalid === true ? 'unknown' : row.claim_present === true ? row.stale === true ? 'stale' : 'claimed' : 'idle', browserState: 'unprobed', pid: positiveInt(row.pid), task: issue(row.task), sessionKey: sessionKey(row.session_key), threadUrl: threadUrl(row.thread), startedAt: typeof row.started_at === 'number' && row.started_at > 0 && row.started_at < 8.64e15 ? new Date(row.started_at).toISOString() : undefined };
+    const slot: DispatchSlot = { id, port: 9332 + id, state: row.invalid === true ? 'unknown' : row.claim_present === true ? row.stale === true ? 'stale' : 'claimed' : 'idle', browserState: 'unprobed', pid: positiveInt(row.pid), task: issue(row.task), sessionKey: slotSessionKey(row.session_key), threadUrl: threadUrl(row.thread), startedAt: typeof row.started_at === 'number' && row.started_at > 0 && row.started_at < 8.64e15 ? new Date(row.started_at).toISOString() : undefined };
     slots.push(slot);
   }
   // A live claim describes current slot ownership, not the Issue of a historical dispatch.

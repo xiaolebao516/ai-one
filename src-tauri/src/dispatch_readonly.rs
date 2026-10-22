@@ -179,6 +179,13 @@ fn valid_session(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"._:@/-".contains(&b))
 }
+fn valid_slot_session(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+}
 fn valid_thread(value: &str) -> bool {
     let Some(rest) = value.strip_prefix("https://chatgpt.com/") else {
         return false;
@@ -374,9 +381,7 @@ fn collect(root: &Path, home: &Path) -> Result<Snapshot, ()> {
                             !n.is_empty() && n.len() <= 6 && n.bytes().all(|b| b.is_ascii_digit())
                         })
                     });
-                    keep(&mut claim.session_key, |s| {
-                        valid_session(s) && s.len() <= 64 && !s.contains(['@', '/'])
-                    });
+                    keep(&mut claim.session_key, valid_slot_session);
                     keep(&mut claim.thread, valid_thread);
                     slot.pid = claim.pid.filter(|p| *p > 0);
                     slot.started_at = claim
@@ -414,6 +419,17 @@ mod tests {
         let row = receipt_metadata(serde_json::from_str(r#"{"kind":"consult_answer_saved","summary":"PRIVATE_REPLY","metadata":{"request_id":"invalid","token":"PRIVATE_TOKEN","thread":"https://chatgpt.com/c/123?token=PRIVATE"}}"#).unwrap());
         assert!(!serde_json::to_string(&row).unwrap().contains("PRIVATE"));
         assert!(row.thread.is_none());
+    }
+    #[test]
+    fn slot_session_keys_follow_the_slot_cli_rule() {
+        for key in ["_audit", ".audit", ":audit", "-audit", "a-1.b:c_d"] {
+            assert!(valid_slot_session(key));
+        }
+        for key in ["", "a/b", "a@b", "space here", "cookie=x"] {
+            assert!(!valid_slot_session(key));
+        }
+        assert!(!valid_slot_session(&"a".repeat(65)));
+        assert!(!valid_session("_audit"));
     }
     #[test]
     fn validates_metadata_before_ipc() {
