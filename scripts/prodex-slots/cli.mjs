@@ -38,7 +38,12 @@ export function parseArgs(args) {
     if (seen.has(arg)) throw new Error(`Duplicate option: ${arg}`);
     seen.add(arg);
     if (arg === '--json') { options.json = true; continue; }
-    if (!(arg in VALUE_OPTIONS)) throw new Error(`Unknown option: ${arg}`);
+    if (!(arg in VALUE_OPTIONS)) {
+      // Report the option name only. "--session=Bearer XYZ" would otherwise be echoed whole, and
+      // a value that landed in the wrong place is exactly what must not be repeated.
+      const name = arg.split('=')[0];
+      throw new Error(`Unknown option: ${name}. Options take their value as the next argument (${name} <value>); the "=" form is not accepted here`);
+    }
     const value = rest[++index];
     if (value === undefined || value.startsWith('--')) throw new Error(`Missing value: ${arg}`);
     if (!NUMERIC_OPTIONS.has(arg)) { options[VALUE_OPTIONS[arg]] = value; continue; }
@@ -52,7 +57,7 @@ export function parseArgs(args) {
       throw new Error('Do not pass --port: the slot decides the browser');
     }
   } else if (passthrough.length) {
-    throw new Error(`${command ?? ''} takes no arguments after --`);
+    throw new Error('Only `run` takes arguments after `--`');
   }
   if (command === 'add' && !options.count) throw new Error('add needs --count N');
   if (command === 'release' && options.slot === 'auto') throw new Error('release needs --slot N');
@@ -264,7 +269,8 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
       return EXIT.OK;
     }
     if (command === 'run') return await runCommand(options, passthrough, deps, err);
-    throw new Error(`Unknown command: ${command}`);
+    // The command is an argv token this tool did not recognise, so it is not repeated either.
+    throw new Error('Unknown command. The first argument must be one of: list, add, ensure, run, release (or --help)');
   } catch (error) {
     err(`${error.message}\n${usage}`);
     return EXIT.ERROR;

@@ -289,7 +289,19 @@ test('parseArgs validates options and refuses --port passthrough', () => {
   assert.throws(() => parseArgs(['list', '--slot', 'x']), /Invalid integer/);
   assert.throws(() => parseArgs(['list', '--json', '--json']), /Duplicate/);
   assert.throws(() => parseArgs(['release']), /--slot/);
-  assert.throws(() => parseArgs(['list', '--', 'x']), /no arguments/);
+  assert.throws(() => parseArgs(['list', '--', 'x']), /Only `run` takes arguments/);
+  // Options take their value as the next argument; the "=" form is refused without repeating it.
+  assert.throws(() => parseArgs(['run', '--session=X-1', '--', '--new-chat']), /Unknown option: --session/);
+  for (const argv of [['run', '--session=SENTINEL', '--', '--new-chat'], ['list', '--task=SENTINEL']]) {
+    let message = '';
+    try {
+      parseArgs(argv);
+    } catch (error) {
+      message = error.message;
+    }
+    assert.ok(message, `${argv.join(' ')} should have been refused`);
+    assert.ok(!message.includes('SENTINEL'), `the message repeated the value: ${message}`);
+  }
 });
 
 test('run auto takes the first ready idle slot and always releases its claim', async () => {
@@ -500,6 +512,14 @@ test('ownership flags are refused on commands that cannot record them', async ()
   assert.match(h.log.err.join('\n'), /--task.*only.*run/i);
 });
 
+test('an unknown command is refused without repeating it', async () => {
+  const h = harness();
+  assert.equal(await h.run(['SENTINEL-cmd']), EXIT.ERROR);
+  const stderr = h.log.err.join('\n');
+  assert.match(stderr, /Unknown command/);
+  assert.ok(!stderr.includes('SENTINEL'), 'the command was echoed back');
+});
+
 test('a hand-edited claim cannot smuggle text or a credential into the listing', async () => {
   const h = harness();
   addSlots(h.home, 1);
@@ -530,18 +550,24 @@ test('a rejected ownership value writes no claim and is never echoed', async () 
     // A rejected value can be any text, so a token can arrive through the other two fields too.
     ['--session', `Bearer ${sentinel}`],
     ['--task', sentinel],
+    // The "=" form is not accepted, and refusing it must not repeat what came after the "=".
+    [`--session=${sentinel}`, ''],
+    [`--task=${sentinel}`, ''],
+    [`--thread-url=https://chatgpt.com/${sentinel}`, ''],
   ];
   for (const [flag, value] of cases) {
     const h = harness();
-    assert.equal(await h.run(['run', flag, value, '--', '--new-chat']), EXIT.ERROR, `${flag} ${value}`);
+    const argv = value === '' ? ['run', flag, '--', '--new-chat'] : ['run', flag, value, '--', '--new-chat'];
+    const label = value === '' ? flag : `${flag} ${value}`;
+    assert.equal(await h.run(argv), EXIT.ERROR, label);
     assert.equal(h.log.asks.length, 0, 'nothing was sent');
     assert.equal(readClaim(h.home, 1), null, 'no claim was left');
     const dir = path.join(h.home, 'slot-claims');
     assert.ok(!fs.existsSync(dir) || fs.readdirSync(dir).length === 0, 'nothing was written to disk');
     const stderr = h.log.err.join('\n');
-    assert.match(stderr, new RegExp(flag), 'the message still names the flag');
-    assert.ok(!stderr.includes(sentinel), `stderr echoed the value for ${flag}`);
-    assert.ok(!h.log.out.join('\n').includes(sentinel), `stdout echoed the value for ${flag}`);
+    assert.match(stderr, new RegExp(flag.split('=')[0]), 'the message still names the flag');
+    assert.ok(!stderr.includes(sentinel), `stderr echoed the value for ${label}`);
+    assert.ok(!h.log.out.join('\n').includes(sentinel), `stdout echoed the value for ${label}`);
   }
 });
 
