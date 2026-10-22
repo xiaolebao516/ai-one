@@ -64,6 +64,26 @@ describe('flow model validation', () => {
     })).toEqual([]);
   });
 
+  it('matches participant counts to collaboration modes and validates enum values', () => {
+    expect(validateStage({ ...customStage('solo-empty'), participants: [] }).some((item) => item.code === 'invalid-participants')).toBe(true);
+    const parallel = {
+      ...customStage('parallel-one'),
+      collaboration: 'parallel' as const,
+    };
+    expect(validateStage(parallel).some((item) => item.code === 'invalid-participants')).toBe(true);
+
+    const invalidEnums = {
+      ...customStage('invalid-enums'),
+      collaboration: 'invalid',
+      endCondition: 'invalid',
+      onFail: 'invalid',
+    } as unknown as StageDef;
+    const codes = validateStage(invalidEnums).map((item) => item.code);
+    expect(codes).toContain('invalid-collaboration');
+    expect(codes).toContain('invalid-end-condition');
+    expect(codes).toContain('invalid-on-fail');
+  });
+
   it('validates discussion count and rework limits', () => {
     const stage = { ...customStage('discussion'), collaboration: 'discussion', participants: [{ resource: 'gpt', role: '讨论者' }] } as StageDef;
     expect(validateStage(stage).some((item) => item.code === 'invalid-participants')).toBe(true);
