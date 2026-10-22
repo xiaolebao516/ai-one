@@ -4,7 +4,7 @@ import { formatAge, inProgressTasks, needsYouTasks, pickText, type HudTask } fro
 import { taskHudText } from '../../ui/taskHudText';
 import { Badge, Button, Card, EmptyState, Icon, SectionHeader, SegmentedControl } from '../../ui/v2';
 import { TaskRow, TaskStatus } from '../TaskBits';
-import type { DataHealth } from '../useWorkbenchData';
+import { isCountable, isExact, type DataHealth } from '../useWorkbenchData';
 import { headline } from '../workbenchModel';
 import { workbenchText } from '../workbenchText';
 
@@ -23,27 +23,37 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
   const lead = headline(tasks);
   const needsYou = needsYouTasks(tasks);
   const moving = inProgressTasks(tasks);
-  // Counts and "nothing here" only mean something after a successful read.
-  const known = health === 'demo' || health === 'ok';
-  const title =
-    health === 'loading'
-      ? text.t('headlineLoading')
+  const countable = isCountable(health);
+  let title: string;
+  if (health === 'loading') title = text.t('headlineLoading');
+  else if (health === 'failed') title = text.t('headlineFailed');
+  else if (lead.kind === 'waiting') title = text.t('headlineWaiting', { inProgress: lead.inProgress, needsYou: lead.needsYou });
+  else if (lead.kind === 'moving') title = text.t('headlineMoving', { inProgress: lead.inProgress });
+  else if (lead.kind === 'unclear') title = text.t('headlineUnclear', { unknown: lead.unknown });
+  else if (health === 'partial') title = text.t('partialNone');
+  else title = text.t(lead.kind === 'quiet' ? 'headlineQuiet' : 'headlineEmpty');
+  const sub =
+    health === 'demo'
+      ? 'headlineSubDemo'
       : health === 'failed'
-        ? text.t('headlineFailed')
-        : lead.kind === 'empty'
-      ? text.t('headlineEmpty')
-      : lead.kind === 'quiet'
-        ? text.t('headlineQuiet')
-        : lead.kind === 'moving'
-          ? text.t('headlineMoving', { inProgress: lead.inProgress })
-          : text.t('headlineWaiting', { inProgress: lead.inProgress, needsYou: lead.needsYou });
+        ? 'headlineSubFailed'
+        : health === 'partial'
+          ? 'headlineSubPartial'
+          : 'headlineSubGithub';
+  const emptyTitle = !countable
+    ? text.t(health === 'loading' ? 'headlineLoading' : 'headlineFailed')
+    : health === 'partial'
+      ? text.t('partialNone')
+      : tasks.length
+        ? text.t('noActiveTasks')
+        : text.t('headlineEmpty');
 
   return (
     <div className="mx-auto grid max-w-[1180px] gap-v2-lg p-v2-page">
       <header>
         <h1 className="text-[24px] font-semibold leading-tight text-v2-ink">{title}</h1>
         <p className="mt-v2-xs text-v2-meta text-v2-ink-2">
-          {text.t(health === 'demo' ? 'headlineSubDemo' : health === 'failed' ? 'headlineSubFailed' : 'headlineSubGithub')}
+          {text.t(sub)}
         </p>
       </header>
 
@@ -52,7 +62,7 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
       <div className="grid gap-v2-lg min-[1100px]:grid-cols-[minmax(0,1fr)_300px]">
         <div className="grid content-start gap-v2-lg">
           <section aria-labelledby="home-needs-you">
-            <SectionHeader id="home-needs-you" title={text.t('needsYou')} count={known ? needsYou.length : undefined} description={text.t('needsYouHint')} />
+            <SectionHeader id="home-needs-you" title={text.t('needsYou')} count={countable ? needsYou.length : undefined} description={text.t('needsYouHint')} />
             {needsYou.length ? (
               <ul className="mt-v2-sm grid gap-v2-sm">
                 {needsYou.map((task) => (
@@ -66,7 +76,7 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
             <SectionHeader
               id="home-in-progress"
               title={text.t('inProgress')}
-              count={known ? moving.length : undefined}
+              count={countable ? moving.length : undefined}
               actions={
                 <Button size="sm" variant="ghost" onClick={onShowTasks}>
                   {text.t('allTasks')}
@@ -84,8 +94,8 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
             ) : (
               <EmptyState
                 className="mt-v2-sm"
-                tone={known ? 'neutral' : 'unknown'}
-                title={!known ? text.t(health === 'loading' ? 'headlineLoading' : 'headlineFailed') : tasks.length ? text.t('noActiveTasks') : text.t('headlineEmpty')}
+                tone={isExact(health) ? 'neutral' : 'unknown'}
+                title={emptyTitle}
               />
             )}
           </section>

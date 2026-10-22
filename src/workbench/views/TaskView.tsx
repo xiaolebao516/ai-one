@@ -49,6 +49,26 @@ export function TaskView({ locale, task, onBack }: TaskViewProps) {
           <p className="text-v2-micro text-v2-ink-3">{text.t('updated', { age: formatAge(task.updatedMinutesAgo, locale) })}</p>
         </Card>
 
+        {isNeedsYou(task.status) ? (
+          <section aria-labelledby="task-needs-you">
+            <Card accent="you" className="grid gap-v2-xs">
+              <div className="flex flex-wrap items-center gap-v2-sm">
+                <h2 id="task-needs-you" className="font-semibold text-v2-ink">
+                  {text.t('taskNeedsYou')}
+                </h2>
+                <Badge tone={task.status === 'blocked' ? 'block' : 'you'}>{hud.needKind(task.status)}</Badge>
+              </div>
+              <p className="text-v2-body text-v2-ink">{task.nextStep ? pickText(task.nextStep, locale) : text.t('taskNeedsYouNone')}</p>
+              {task.owner ? (
+                <p className="text-v2-meta text-v2-ink-2">
+                  {text.t('owner')}: {pickText(task.owner, locale)}
+                </p>
+              ) : null}
+              <p className="text-v2-meta text-v2-ink-3">{text.t('taskNeedsYouWhere')}</p>
+            </Card>
+          </section>
+        ) : null}
+
         {task.gap ? (
           <Notice tone="unknown" title={text.t('gap')}>
             {pickText(task.gap, locale)}

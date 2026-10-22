@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { TASK_HUD_MOCK_TASKS } from '../ui/taskHudMockData';
 import type { HudTask, TaskStatus } from '../ui/taskHudModel';
 import type { GitHubRepoTasks } from '../ui/taskHudGithub';
-import { dataHealth, observedAt, repoNotices } from '../workbench/useWorkbenchData';
+import { dataHealth, isCountable, isExact, observedAt, repoNotices } from '../workbench/useWorkbenchData';
 import {
   activeTasks,
   filterCommands,
   filterTasks,
   groupByRepo,
   headline,
+  isEditableTarget,
   navViewFor,
   nextTheme,
   normalizeRepo,
@@ -17,7 +18,7 @@ import {
   shortcutFor,
   type PaletteCommand,
 } from '../workbench/workbenchModel';
-import { DEFAULT_PREFS, loadPrefs, loadUiRoot, savePrefs, saveUiRoot } from '../workbench/workbenchStorage';
+import { DEFAULT_PREFS, loadPrefs, loadUiRoot, savePrefs, saveUiRoot, uiRootHref } from '../workbench/workbenchStorage';
 
 function task(id: string, status: TaskStatus, repo = 'o/a'): HudTask {
   return {
@@ -51,6 +52,15 @@ describe('workbench navigation', () => {
     expect(shortcutFor(key('k'))).toBeUndefined();
     expect(shortcutFor(key('k', { ctrlKey: true, shiftKey: true }))).toBeUndefined();
     expect(shortcutFor(key('Escape'))).toEqual({ kind: 'escape' });
+  });
+
+  it('knows which targets are text the user is typing into', () => {
+    expect(isEditableTarget({ tagName: 'TEXTAREA' })).toBe(true);
+    expect(isEditableTarget({ tagName: 'input' })).toBe(true);
+    expect(isEditableTarget({ tagName: 'SELECT' })).toBe(true);
+    expect(isEditableTarget({ tagName: 'DIV', isContentEditable: true })).toBe(true);
+    expect(isEditableTarget({ tagName: 'BUTTON' })).toBe(false);
+    expect(isEditableTarget(null)).toBe(false);
   });
 
   it('lights up Tasks for a task page and falls back to the list when the task is gone', () => {
@@ -96,10 +106,14 @@ describe('task grouping and headline', () => {
   });
 
   it('leads with whether the user is needed', () => {
-    expect(headline([])).toEqual({ kind: 'empty', inProgress: 0, needsYou: 0 });
+    expect(headline([])).toEqual({ kind: 'empty', inProgress: 0, needsYou: 0, unknown: 0 });
     expect(headline([task('d', 'done')]).kind).toBe('quiet');
-    expect(headline([task('r', 'running')])).toEqual({ kind: 'moving', inProgress: 1, needsYou: 0 });
-    expect(headline(tasks)).toEqual({ kind: 'waiting', inProgress: 1, needsYou: 3 });
+    expect(headline([task('r', 'running')])).toEqual({ kind: 'moving', inProgress: 1, needsYou: 0, unknown: 0 });
+    expect(headline(tasks)).toEqual({ kind: 'waiting', inProgress: 1, needsYou: 3, unknown: 0 });
+  });
+
+  it('never calls unreadable task states "nothing to do"', () => {
+    expect(headline([task('u', 'unknown'), task('d', 'done')])).toEqual({ kind: 'unclear', inProgress: 0, needsYou: 0, unknown: 1 });
   });
 
   it('works on the shipped demo data', () => {
@@ -162,12 +176,24 @@ describe('GitHub read results', () => {
     expect(observedAt([ok('o/a', '2026-10-22T11:00:00Z'), failed('o/b', '2026-10-22T12:00:00Z')])).toBe('2026-10-22T11:00:00Z');
   });
 
-  it('only lets an empty list mean "nothing to do" after a successful read', () => {
-    expect(dataHealth('demo', { loading: false, results: [] })).toBe('demo');
-    expect(dataHealth('github', { loading: true, results: [] })).toBe('loading');
-    expect(dataHealth('github', { loading: false, results: [failed('o/a', 't')] })).toBe('failed');
-    expect(dataHealth('github', { loading: true, results: [failed('o/a', 't')] })).toBe('loading');
-    expect(dataHealth('github', { loading: false, results: [failed('o/a', 't'), ok('o/b', 't')] })).toBe('ok');
+  it('only lets an empty list mean "nothing to do" after a complete, current read', () => {
+    const mine = 'o/a';
+    expect(dataHealth('demo', { loading: false, results: [] }, mine)).toBe('demo');
+    expect(dataHealth('github', { loading: true, results: [] }, mine)).toBe('loading');
+    // A finished read for another repository set is an old snapshot, not current facts.
+    expect(dataHealth('github', { loading: false, reposKey: 'o/old', results: [ok('o/old', 't')] }, mine)).toBe('loading');
+    // Refreshing the same set: still "loading" although the old results are kept.
+    expect(dataHealth('github', { loading: true, reposKey: mine, results: [ok(mine, 't')] }, mine)).toBe('loading');
+    expect(dataHealth('github', { loading: false, reposKey: mine, results: [failed(mine, 't')] }, mine)).toBe('failed');
+    expect(dataHealth('github', { loading: false, reposKey: mine, results: [failed(mine, 't'), ok('o/b', 't')] }, mine)).toBe('partial');
+    expect(dataHealth('github', { loading: false, reposKey: mine, results: [{ ...ok(mine, 't'), status: 'partial' }] }, mine)).toBe('partial');
+    expect(dataHealth('github', { loading: false, reposKey: mine, results: [ok(mine, 't', 'yes')] }, mine)).toBe('partial');
+    expect(dataHealth('github', { loading: false, reposKey: mine, results: [ok(mine, 't')] }, mine)).toBe('complete');
+  });
+
+  it('separates exact counts from "at least" counts', () => {
+    expect([isExact('demo'), isExact('complete'), isExact('partial'), isExact('loading')]).toEqual([true, true, false, false]);
+    expect([isCountable('partial'), isCountable('failed'), isCountable('loading')]).toEqual([true, false, false]);
   });
 });
 
@@ -187,11 +213,19 @@ describe('workbench storage', () => {
 
   it('defaults to the workbench and remembers the classic choice', () => {
     const store = memory();
-    expect(loadUiRoot(store)).toBe('workbench');
+    expect(loadUiRoot(store, '')).toBe('workbench');
     saveUiRoot('classic', store);
-    expect(loadUiRoot(store)).toBe('classic');
-    expect(loadUiRoot(throwing)).toBe('workbench');
+    expect(loadUiRoot(store, '')).toBe('classic');
+    expect(loadUiRoot(throwing, '')).toBe('workbench');
     expect(() => saveUiRoot('classic', throwing)).not.toThrow();
+  });
+
+  it('switches through the URL, so it works when storage cannot be written', () => {
+    const href = uiRootHref('http://localhost:1430/?x=1#top', 'classic');
+    expect(href).toBe('http://localhost:1430/?x=1&ui=classic#top');
+    expect(loadUiRoot(throwing, new URL(href).search)).toBe('classic');
+    expect(loadUiRoot(memory({ 'ai-one.ui.root': 'classic' }), '?ui=workbench')).toBe('workbench');
+    expect(loadUiRoot(memory(), '?ui=nonsense')).toBe('workbench');
   });
 
   it('falls back to defaults on missing, corrupt or hostile prefs', () => {

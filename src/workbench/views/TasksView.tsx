@@ -36,8 +36,10 @@ export function TasksView({ locale, tasks, health, onOpenTask }: TasksViewProps)
       {groups.length === 0 ? (
         health === 'loading' || health === 'failed' ? (
           <EmptyState tone="unknown" title={text.t(health === 'loading' ? 'headlineLoading' : 'headlineFailed')} description={health === 'failed' ? text.t('headlineSubFailed') : undefined} />
+        ) : health === 'partial' ? (
+          <EmptyState tone="unknown" title={text.t('partialNone')} />
         ) : (
-          <EmptyState title={text.t('emptyFilter')} description={health === 'ok' && tasks.length === 0 ? text.t('emptyGithub') : undefined} />
+          <EmptyState title={text.t('emptyFilter')} description={health === 'complete' && tasks.length === 0 ? text.t('emptyGithub') : undefined} />
         )
       ) : (
         groups.map((group) => (

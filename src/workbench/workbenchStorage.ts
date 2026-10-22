@@ -46,9 +46,27 @@ function write(key: string, value: string, storage: StorageLike | undefined): vo
   }
 }
 
-/** The new workbench is the default; the classic chat UI is opt-in until its parts are migrated. */
-export function loadUiRoot(storage: StorageLike | undefined = defaultStorage()): UiRoot {
+export const UI_ROOT_PARAM = 'ui';
+
+function currentSearch(): string {
+  return typeof window === 'undefined' ? '' : window.location.search;
+}
+
+/**
+ * The new workbench is the default; the classic chat UI is opt-in until its parts are migrated.
+ * The URL parameter wins over storage so a switch still works when storage cannot be written.
+ */
+export function loadUiRoot(storage: StorageLike | undefined = defaultStorage(), search: string = currentSearch()): UiRoot {
+  const fromUrl = new URLSearchParams(search).get(UI_ROOT_PARAM);
+  if (fromUrl === 'classic' || fromUrl === 'workbench') return fromUrl;
   return read(STORAGE_KEYS.root, storage) === 'classic' ? 'classic' : 'workbench';
+}
+
+/** The page address that opens `root`, keeping everything else of `href`. */
+export function uiRootHref(href: string, root: UiRoot): string {
+  const url = new URL(href);
+  url.searchParams.set(UI_ROOT_PARAM, root);
+  return url.toString();
 }
 
 export function saveUiRoot(root: UiRoot, storage: StorageLike | undefined = defaultStorage()): void {
@@ -61,7 +79,7 @@ export function saveUiRoot(root: UiRoot, storage: StorageLike | undefined = defa
  */
 export function switchUiRoot(root: UiRoot): void {
   saveUiRoot(root);
-  window.location.reload();
+  window.location.replace(uiRootHref(window.location.href, root));
 }
 
 export function loadPrefs(storage: StorageLike | undefined = defaultStorage()): WorkbenchPrefs {

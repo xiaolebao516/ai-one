@@ -67,8 +67,23 @@ describe('Overview', () => {
     const loading = visibleText(renderToStaticMarkup(<TasksView locale="en" tasks={[]} health="loading" onOpenTask={noop} />));
     expect(loading).toContain('Reading GitHub');
     expect(loading).not.toContain('No tasks in this view');
-    const empty = visibleText(renderToStaticMarkup(<TasksView locale="en" tasks={[]} health="ok" onOpenTask={noop} />));
+    const empty = visibleText(renderToStaticMarkup(<TasksView locale="en" tasks={[]} health="complete" onOpenTask={noop} />));
     expect(empty).toContain('GitHub returned no open Issues or PRs');
+    const partial = visibleText(renderToStaticMarkup(<HomeView locale="en" tasks={[]} health="partial" onOpenTask={noop} onShowTasks={noop} />));
+    expect(partial).toContain('Only part of GitHub could be read');
+    expect(partial).not.toContain('No tasks here yet');
+  });
+});
+
+describe('Task page needs-you', () => {
+  it('spells out what the user has to do and where, for decide / blocked / accept tasks', () => {
+    const waiting = TASK_HUD_MOCK_TASKS.find((item) => item.status === 'decide' || item.status === 'accept' || item.status === 'blocked');
+    expect(waiting).toBeDefined();
+    const html = renderToStaticMarkup(<TaskView locale="en" task={waiting!} onBack={noop} />);
+    expect(html).toContain('id="task-needs-you"');
+    expect(visibleText(html)).toContain('ai-one cannot act on this yet');
+    const running = TASK_HUD_MOCK_TASKS.find((item) => item.status === 'running');
+    expect(renderToStaticMarkup(<TaskView locale="en" task={running!} onBack={noop} />)).not.toContain('id="task-needs-you"');
   });
 });
 

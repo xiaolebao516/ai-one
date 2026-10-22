@@ -7,9 +7,10 @@ import { taskHudText } from '../ui/taskHudText';
 import { Badge, Button, Icon, IconButton, Notice, SegmentedControl, StatusIndicator, V2Scope, cx, type V2IconName } from '../ui/v2';
 import { CommandPalette } from './CommandPalette';
 import { NAV_KEY, paletteCommands } from './paletteCommands';
-import { useWorkbenchData, observedAt, repoNotices, type WorkbenchData } from './useWorkbenchData';
+import { isCountable, isExact, observedAt, repoNotices, useWorkbenchData, type DataHealth, type GitHubLoader, type WorkbenchData } from './useWorkbenchData';
 import {
   HOME_ROUTE,
+  MAX_REPOS,
   NAV_VIEWS,
   activeTasks,
   groupByRepo,
@@ -17,6 +18,7 @@ import {
   nextTheme,
   resolveRoute,
   resolveTheme,
+  isEditableTarget,
   shortcutFor,
   type NavView,
   type PaletteCommand,
@@ -34,17 +36,25 @@ export interface WorkbenchProps {
   locale: Locale;
   /** Leaves the workbench for the classic multi-AI chat UI. */
   onOpenClassic: () => void;
+  /** Reads GitHub; tests pass a controllable one. Must be a stable reference. */
+  githubLoader?: GitHubLoader;
 }
 
 /** The new ai-one front end (Spec #79 v2). The classic chat UI is only a capability library now. */
-export function Workbench({ locale, onOpenClassic }: WorkbenchProps) {
+export function Workbench({ locale, onOpenClassic, githubLoader }: WorkbenchProps) {
   const text = workbenchText(locale);
-  const data = useWorkbenchData();
+  const data = useWorkbenchData(githubLoader);
   const [route, setRoute] = useState<WorkbenchRoute>(HOME_ROUTE);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const mainRef = useRef<HTMLElement | null>(null);
   const mode = resolveTheme(data.prefs.theme, useSystemDark());
   const current = resolveRoute(route, data.tasks);
+  // A task that is gone from a settled data set is gone: make the fallback the real route, so the
+  // old task does not pop back up when the data source flips again. While loading, keep the route.
+  const fellBack = route.view === 'task' && current.view !== 'task';
+  useEffect(() => {
+    if (fellBack && data.health !== 'loading') setRoute({ view: 'tasks' });
+  }, [fellBack, data.health]);
   const go = (next: WorkbenchRoute) => setRoute(next);
   const openTask = (task: HudTask) => go({ view: 'task', taskId: task.id });
 
@@ -56,16 +66,23 @@ export function Workbench({ locale, onOpenClassic }: WorkbenchProps) {
     mainRef.current?.scrollTo?.({ top: 0 });
   }, [routeKey]);
 
+  const paletteOpenRef = useRef(paletteOpen);
+  paletteOpenRef.current = paletteOpen;
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const shortcut = shortcutFor(event);
       if (!shortcut) return;
       if (shortcut.kind === 'palette') {
+        // Ctrl+K works everywhere, including while typing.
         event.preventDefault();
         setPaletteOpen((open) => !open);
-      } else if (shortcut.kind === 'view') {
+      } else if (shortcut.kind === 'escape') {
+        if (!paletteOpenRef.current) return;
         event.preventDefault();
         setPaletteOpen(false);
+      } else if (!paletteOpenRef.current && !isEditableTarget(event.target)) {
+        // Page switching never steals keys from a text field or the open palette.
+        event.preventDefault();
         setRoute({ view: shortcut.view });
       }
     };
@@ -113,13 +130,13 @@ export function Workbench({ locale, onOpenClassic }: WorkbenchProps) {
 
   return (
     <V2Scope mode={mode} className="fixed inset-0 flex flex-col overflow-hidden bg-v2-bg" data-testid="workbench">
-      <TitleBar text={text} tasks={data.tasks} known={data.health === 'demo' || data.health === 'ok'} onPalette={() => setPaletteOpen(true)} onShowTasks={() => go({ view: 'tasks' })} />
+      <TitleBar text={text} tasks={data.tasks} health={data.health} onPalette={() => setPaletteOpen(true)} onShowTasks={() => go({ view: 'tasks' })} />
       <div className="flex min-h-0 flex-1">
         <Sidebar
           text={text}
           locale={locale}
           tasks={data.tasks}
-          known={data.health === 'demo' || data.health === 'ok'}
+          known={isCountable(data.health)}
           active={navViewFor(current)}
           activeTaskId={current.taskId}
           theme={data.prefs.theme}
@@ -128,7 +145,7 @@ export function Workbench({ locale, onOpenClassic }: WorkbenchProps) {
           onTheme={() => data.setTheme(nextTheme(data.prefs.theme))}
           onOpenClassic={onOpenClassic}
         />
-        <main ref={mainRef} className="min-w-0 flex-1 overflow-auto rounded-tl-v2-xl border-l border-t border-v2-line bg-v2-panel">
+        <main ref={mainRef} tabIndex={-1} className="min-w-0 flex-1 overflow-auto rounded-tl-v2-xl border-l border-t border-v2-line bg-v2-panel">
           <SourceBar text={text} data={data} locale={locale} />
           {view}
         </main>
@@ -141,6 +158,7 @@ export function Workbench({ locale, onOpenClassic }: WorkbenchProps) {
           commands={commands}
           onRun={runCommand}
           onClose={() => setPaletteOpen(false)}
+          fallbackFocus={mainRef}
         />
       ) : null}
     </V2Scope>
@@ -150,16 +168,21 @@ export function Workbench({ locale, onOpenClassic }: WorkbenchProps) {
 interface TitleBarProps {
   text: WorkbenchText;
   tasks: readonly HudTask[];
-  /** False while loading or after a failed read: counts would read as "nothing to do". */
-  known: boolean;
+  /** Loading or failed: counts would read as "nothing to do", so they show as "?". Partial: "at least". */
+  health: DataHealth;
   onPalette: () => void;
   onShowTasks: () => void;
 }
 
-function TitleBar({ text, tasks, known, onPalette, onShowTasks }: TitleBarProps) {
+function TitleBar({ text, tasks, health, onPalette, onShowTasks }: TitleBarProps) {
   const summary = summarize(tasks);
-  const count = (n: number) => (known ? n : '?');
-  const islandLabel = known ? text.t('islandAria', { inProgress: summary.inProgress, needsYou: summary.needsYou }) : text.t('islandUnknown');
+  const count = (n: number) => (isExact(health) ? String(n) : health === 'partial' ? `≥${n}` : '?');
+  const values = { inProgress: summary.inProgress, needsYou: summary.needsYou };
+  const islandLabel = isExact(health)
+    ? text.t('islandAria', values)
+    : health === 'partial'
+      ? text.t('islandPartial', values)
+      : text.t('islandUnknown');
   return (
     <header className="grid h-11 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-v2-md px-v2-md">
       <div className="flex min-w-0 items-center gap-v2-md">
@@ -293,7 +316,7 @@ function Sidebar({ text, locale, tasks, known, active, activeTaskId, theme, onNa
 
 function SourceBar({ text, data, locale }: { text: WorkbenchText; data: WorkbenchData; locale: Locale }) {
   const [draft, setDraft] = useState('');
-  const [invalid, setInvalid] = useState(false);
+  const [repoError, setRepoError] = useState<string | undefined>();
   const { prefs, github } = data;
   const notices = prefs.source === 'github' ? repoNotices(github.results) : [];
   const observed = observedAt(github.results);
@@ -334,9 +357,9 @@ function SourceBar({ text, data, locale }: { text: WorkbenchText; data: Workbenc
               className="flex items-center gap-1"
               onSubmit={(event) => {
                 event.preventDefault();
-                const ok = data.addRepo(draft);
-                setInvalid(!ok);
-                if (ok) setDraft('');
+                const result = data.addRepo(draft);
+                setRepoError(result === 'invalid' ? text.t('repoInvalid') : result === 'full' ? text.t('repoFull', { max: MAX_REPOS }) : undefined);
+                if (result === 'added' || result === 'present') setDraft('');
               }}
             >
               <input
@@ -344,7 +367,7 @@ function SourceBar({ text, data, locale }: { text: WorkbenchText; data: Workbenc
                 onChange={(event) => setDraft(event.target.value)}
                 placeholder={text.t('repoPlaceholder')}
                 aria-label={text.t('repoPlaceholder')}
-                aria-invalid={invalid || undefined}
+                aria-invalid={repoError ? true : undefined}
                 className="h-7 w-40 rounded-v2-md border border-v2-line bg-v2-surface px-v2-sm text-v2-meta text-v2-ink placeholder:text-v2-ink-3"
               />
               <Button size="sm" type="submit">
@@ -354,7 +377,7 @@ function SourceBar({ text, data, locale }: { text: WorkbenchText; data: Workbenc
           </>
         ) : null}
       </div>
-      {invalid ? <p className="text-v2-micro text-v2-block">{text.t('repoInvalid')}</p> : null}
+      {repoError ? <p role="alert" className="text-v2-micro text-v2-block">{repoError}</p> : null}
       {notices.map((notice) => (
         <Notice key={`${notice.kind}-${notice.repo}`} tone={notice.kind === 'error' ? 'block' : 'unknown'}>
           {notice.kind === 'error'

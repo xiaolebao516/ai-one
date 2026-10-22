@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { cx } from '../ui/v2';
 import { filterCommands, type PaletteCommand } from './workbenchModel';
 
@@ -9,10 +9,12 @@ export interface CommandPaletteProps {
   commands: readonly PaletteCommand[];
   onRun: (command: PaletteCommand) => void;
   onClose: () => void;
+  /** Where focus goes on close when the control that opened the palette no longer exists. */
+  fallbackFocus?: RefObject<HTMLElement | null>;
 }
 
 /** Ctrl+K palette: type to filter, arrows to move, Enter to run, Esc to close. */
-export function CommandPalette({ title, placeholder, emptyText, commands, onRun, onClose }: CommandPaletteProps) {
+export function CommandPalette({ title, placeholder, emptyText, commands, onRun, onClose, fallbackFocus }: CommandPaletteProps) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -21,9 +23,14 @@ export function CommandPalette({ title, placeholder, emptyText, commands, onRun,
 
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const fallback = fallbackFocus;
     inputRef.current?.focus();
-    return () => previous?.focus();
-  }, []);
+    return () => {
+      // A command may have navigated away from the control that opened the palette.
+      if (previous && previous.isConnected && previous !== document.body) previous.focus();
+      else fallback?.current?.focus();
+    };
+  }, [fallbackFocus]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -37,7 +44,11 @@ export function CommandPalette({ title, placeholder, emptyText, commands, onRun,
       if (command) onRun(command);
     } else if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       onClose();
+    } else if (event.key === 'Tab') {
+      // The input is the only focusable control: keep focus inside the modal dialog.
+      event.preventDefault();
     }
   };
 

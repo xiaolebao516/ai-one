@@ -41,6 +41,20 @@ export function resolveRoute(route: WorkbenchRoute, tasks: readonly HudTask[]): 
 // ---------------------------------------------------------------------------------------------
 // Keyboard
 
+interface TargetLike {
+  tagName?: string;
+  isContentEditable?: boolean;
+}
+
+/** Text the user is typing into: page shortcuts must not fire there. */
+export function isEditableTarget(target: unknown): boolean {
+  if (!target || typeof target !== 'object') return false;
+  const element = target as TargetLike;
+  if (element.isContentEditable) return true;
+  const tag = String(element.tagName ?? '').toUpperCase();
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
+
 export type WorkbenchShortcut = { kind: 'palette' } | { kind: 'view'; view: NavView } | { kind: 'escape' };
 
 interface KeyLike {
@@ -121,21 +135,26 @@ export function filterTasks(tasks: readonly HudTask[], filter: TaskFilter): HudT
   }
 }
 
-export type HeadlineKind = 'empty' | 'quiet' | 'moving' | 'waiting';
+export type HeadlineKind = 'empty' | 'quiet' | 'unclear' | 'moving' | 'waiting';
 
 export interface Headline {
   kind: HeadlineKind;
   inProgress: number;
   needsYou: number;
+  /** Tasks whose state could not be read; never counted as "nothing to do". */
+  unknown: number;
 }
 
 /** What the overview leads with: one plain sentence about whether the user is needed. */
 export function headline(tasks: readonly HudTask[]): Headline {
   const summary = summarize(tasks);
-  if (summary.total === 0) return { kind: 'empty', inProgress: 0, needsYou: 0 };
-  if (summary.needsYou > 0) return { kind: 'waiting', inProgress: summary.inProgress, needsYou: summary.needsYou };
-  if (summary.inProgress > 0) return { kind: 'moving', inProgress: summary.inProgress, needsYou: 0 };
-  return { kind: 'quiet', inProgress: 0, needsYou: 0 };
+  const unknown = tasks.filter((task) => task.status === 'unknown').length;
+  const counts = { inProgress: summary.inProgress, needsYou: summary.needsYou, unknown };
+  if (summary.total === 0) return { kind: 'empty', ...counts };
+  if (summary.needsYou > 0) return { kind: 'waiting', ...counts };
+  if (summary.inProgress > 0) return { kind: 'moving', ...counts };
+  if (unknown > 0) return { kind: 'unclear', ...counts };
+  return { kind: 'quiet', ...counts };
 }
 
 /** Shape class for a status (design §6: colour + shape + text). */
