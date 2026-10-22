@@ -504,12 +504,13 @@ test('ownership flags are refused on commands that cannot record them', async ()
     ['list', '--task', '71'],
     ['ensure', '--session', 's1'],
     ['add', '--count', '1', '--thread-url', THREAD_A],
-    ['release', '--slot', '1', '--task', '71'],
+    ['list', '--note', 'nope'],
+    ['run', '--note', 'nope', '--', '--new-chat'],
   ]) {
     assert.equal(await h.run(args), EXIT.ERROR, args.join(' '));
   }
   assert.equal(loadConfig(h.home).count, 1, 'add did not run');
-  assert.match(h.log.err.join('\n'), /--task.*only.*run/i);
+  assert.match(h.log.err.join('\n'), /--task.*only apply to run and release/);
 });
 
 test('an unknown command is refused without repeating it', async () => {
@@ -814,4 +815,65 @@ test('a deletion blocked by an external policy names the file and the command', 
   } finally {
     fs.rmSync = realRmSync;
   }
+});
+
+test('release writes a closure record that list shows as reusable', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', sessionKey: 's1' } });
+  assert.equal(await h.run(['release', '--slot', '1', '--task', '71', '--session', 's1', '--note', '本轮线程已闭合，槽位可复用']), EXIT.OK);
+  assert.equal(readClaim(h.home, 1), null, 'the claim is gone');
+  const stderr = h.log.err.join('\n');
+  assert.match(stderr, /released slot 1 \(claim removed\); closed record written \(#71, "本轮线程已闭合，槽位可复用"\)\. The slot is reusable\./);
+
+  assert.equal(await h.run(['list', '--json']), EXIT.OK);
+  const rows = JSON.parse(h.log.out[0]);
+  assert.match(rows[0].lastClosed.closedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(rows[0].lastClosed.task, '#71');
+  assert.equal(rows[0].lastClosed.sessionKey, 's1');
+  assert.equal(rows[0].lastClosed.note, '本轮线程已闭合，槽位可复用');
+  assert.equal(await h.run(['list']), EXIT.OK);
+  assert.match(h.log.out.at(-1), /closed \d{4}-\d{2}-\d{2} \d{2}:\d{2} #71 本轮线程已闭合/);
+
+  // The slot is reusable right after the closure: a run takes it normally.
+  const next = harness();
+  assert.equal(await next.run(['run', '--slot', '1', '--task', '72', '--', '--new-chat']), EXIT.OK);
+  assert.equal(readClaim(h.home, 1), null, 'the run released its own claim');
+});
+
+test('release keeps one closure record per slot and works without a claim', async () => {
+  const h = harness();
+  assert.equal(await h.run(['release', '--slot', '1', '--task', '71', '--note', 'first']), EXIT.OK);
+  assert.equal(await h.run(['release', '--slot', '1', '--task', '72', '--note', 'second']), EXIT.OK);
+  const dir = path.join(h.home, 'slot-claims');
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.closed.json'));
+  assert.deepEqual(files, ['slot-1.closed.json'], 'no growth across releases');
+  const record = JSON.parse(fs.readFileSync(path.join(dir, 'slot-1.closed.json'), 'utf8'));
+  assert.equal(record.task, '#72', 'only the newest closure stays');
+  assert.equal(record.note, 'second');
+  const stderr = h.log.err.join('\n');
+  assert.match(stderr, /no claim was present/, 'closing a slot without a claim still records');
+});
+
+test('closure notes are flattened and bounded; a hand-edited record cannot leak into list', async () => {
+  // The note is flattened before the length check, so newlines do not dodge the limit.
+  const failing = harness();
+  assert.equal(await failing.run(['release', '--slot', '1', '--note', `${'a\n'.repeat(150)}`]), EXIT.ERROR);
+  assert.match(failing.log.err.join('\n'), /--note must be at most 200 characters/);
+  assert.ok(!fs.existsSync(path.join(failing.home, 'slot-claims', 'slot-1.closed.json')), 'a rejected note writes nothing');
+
+  const edited = harness();
+  fs.mkdirSync(path.join(edited.home, 'slot-claims'), { recursive: true });
+  fs.writeFileSync(path.join(edited.home, 'slot-claims', 'slot-1.closed.json'), `${JSON.stringify({
+    closedAt: '2026-10-22T12:00:00.000Z',
+    task: '71\nfake slot 9',
+    sessionKey: 'Bearer SECRET',
+    threadUrl: 'not a url',
+    note: 'ok note',
+  })}\n`);
+  assert.equal(await edited.run(['list', '--json']), EXIT.OK);
+  const text = edited.log.out.join('\n');
+  assert.ok(!text.includes('SECRET') && !text.includes('slot 9'), 'invalid fields are dropped');
+  const rows = JSON.parse(edited.log.out[0]);
+  assert.deepEqual(rows[0].lastClosed, { closedAt: '2026-10-22T12:00:00.000Z', note: 'ok note' });
 });

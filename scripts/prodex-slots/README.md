@@ -45,12 +45,43 @@ excludes `run` jobs on slot 1. The number of slots (1..8) is stored in
 - `run [--slot N|auto] [--wait-ms 600000] -- <ask args>`: claims a ready, idle slot, runs
   `prodex pro browser ask` with that slot's `PRODEX_CDP_PORT` / `PRODEX_SEND_LOCK_FILE`, then
   releases the claim. `--port` must not be passed. `--slot N` never falls back to another slot.
-- `release --slot N`: removes a claim by hand.
+- `release --slot N [--note "…"] [--task …] [--session …] [--thread-url …]`: removes a claim by
+  hand and writes the "thread closed, slot reusable" record (see *Closing a thread*).
 
 Exit codes: `0` ok, `1` error, `3` the user must act (sign in or complete a ChatGPT
 verification / add a slot), `4` every ready slot stayed busy past `--wait-ms`. A failing
 `prodex ... ask` is always `1`, with its own code written to stderr, so its code can never
 pass for `3` or `4`. A browser that cannot be started or probed is `1`, not `3`.
+
+## Error output shape
+
+Argument mistakes (`--slot x`, `run` without `--`, `add` without `--count`, an unknown command)
+print the reason plus the full usage block, exit 1. Anything that fails at runtime prints a
+single `prodex-slots: <reason>` line with the next step and **no** usage block, also exit 1.
+Every runtime message answers "what, why, what now":
+
+- a missing `prodex.mjs` reports what was looked at and how to set `PRODEX_ENTRY`;
+- a wrong `--slot` lists the registered slots and their ports;
+- a failed ask points at `prodex pro browser recover --port <port> --target-url <thread-url>
+  --request-id <id>` and the do-not-resend rule;
+- a deletion blocked by an external policy (a safe-delete hook does this on this machine) names
+  the file and a copy-paste `Remove-Item -LiteralPath '<file>'` command - retrying the tool will
+  not get past the policy;
+- a stale `.reap` mutex names its file and the same hand-deletion command, and the other slots
+  keep working.
+
+Rejected user input is never echoed back: a value in the wrong place may be a pasted token, and
+stderr ends up in logs.
+
+## Self-healing
+
+`list`, `run`, `ensure` and `release` sweep the claim directory first. A claim whose owner pid
+has exited, or that has had no heartbeat for 2 minutes, is removed and reported; `.tmp`
+leftovers go the same way (a same-inode hard link of the claim, or any temp older than the
+stale window - a fresh temp may belong to a claim attempt that is running right now). A live
+claim is never touched. A stale `.reap` mutex is **not** deleted automatically: without OS file
+locks two processes cannot both safely judge it stale, so the slot reports the file and a
+copy-paste command while the other slots keep working.
 
 `run` forwards the ask's stdout (the model reply) unchanged. Redirect it to a file and keep it
 out of shared logs. Claims store a random owner id, the pid, a start time and, when `run` was
@@ -113,12 +144,49 @@ Five limits, and they are deliberate:
 - Values are re-validated when they are read back, not just the key names. A hand-edited claim
   with an over-long or malformed field has those fields dropped from `list` instead of printed,
   and cannot add keys that are not part of this set.
-- They are refused on `list`, `add`, `ensure` and `release`, because only `run` takes a claim.
+- They are refused on `list`, `add` and `ensure`. `run` puts them in the claim; `release` puts
+  them in the closure record.
 
 `--session` is this tool's own field. `prodex ... ask --session-key` is a different thing: it
 selects the prodex thread, it goes **after** `--`, and it is never written into a claim. Putting
 `--session-key` before `--` is a "Missing value" or unknown-option error rather than a silent
 substitution, so a thread key cannot be swallowed by the ownership layer.
+
+## Closing a thread
+
+When a thread is done, close it explicitly so the next session does not tiptoe around a slot
+that is actually free:
+
+```bash
+node scripts/prodex-slots/cli.mjs release --slot 2 --task 71 --session s1 \
+  --note "本轮线程已闭合，槽位可复用"
+```
+
+`list` then shows the closure next to the slot (time, task, note), and `--json` carries it in
+`lastClosed`. One record per slot, overwritten on every release - it never grows. `release`
+works even when no claim is present (for example after a crash took the claim with it), so the
+closure record is the one durable "this thread is done" marker. A slot with only a closure
+record and no claim takes new work immediately.
+
+Notes are free text up to 200 characters after newlines are flattened. The record never holds
+reply text or credentials, and its fields are re-validated on read.
+
+## Multi-turn conversations and recovery
+
+- Continue the **same thread**: pass the thread URL to the ask itself,
+  `--target-url "$THREAD" --confirm-target`, and mirror it in `--thread-url` so the ownership
+  record names the thread that is actually being written to.
+- `--continue` / `--continue-task` are not reliable after a restart or across sessions; do not
+  use them as the only way back to a thread.
+- After a `request_mismatch` or "the browser tab was moved to a different conversation", stop.
+  Take the answer back with
+  `prodex pro browser recover --port <port> --target-url "$THREAD" --request-id <id>` and check
+  `request_verified: yes` before doing anything else. Never resend blindly.
+- Every turn should leave its outcome as a short comment on the task issue (question, result,
+  blockers) - that comment is the handoff that survives a closed session.
+- Long prompts (tens of KB) have repeatedly triggered `request_mismatch` in the field even
+  though the send went out. Pass bulk content as a file attachment or a link instead of inlining
+  it, and recover with the request id when it happens.
 
 
 ## Concurrency model

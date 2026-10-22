@@ -323,6 +323,54 @@ export function processAlive(pid) {
   }
 }
 
+export const CLOSURE_NOTE_LIMIT = 200;
+
+// The note is free text the agent writes ("this thread is done, the slot is reusable"), so
+// newlines are flattened before the length check - a record must stay one readable line.
+export function normalizeNote(note) {
+  const value = String(note ?? '').replace(/\r?\n/g, ' ').trim();
+  if (value.length > CLOSURE_NOTE_LIMIT) {
+    throw new Error(`--note must be at most ${CLOSURE_NOTE_LIMIT} characters after trimming, got ${value.length}`);
+  }
+  return value;
+}
+
+function closurePath(home, id) {
+  return path.join(home, 'slot-claims', `slot-${id}.closed.json`);
+}
+
+// The explicit "this thread is finished, the slot is reusable" marker, written by `release`.
+// One record per slot, overwritten on every release; ownership fields go through the same
+// validation as claims, so a closure record cannot carry credentials either.
+export function writeClosure(home, id, { ownership = {}, note } = {}) {
+  const record = { closedAt: new Date().toISOString(), ...normalizeOwnership(ownership) };
+  const cleanNote = note === undefined || note === null ? '' : normalizeNote(note);
+  if (cleanNote) record.note = cleanNote;
+  const file = closurePath(home, id);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temp, `${JSON.stringify(record, null, 2)}\n`);
+  fs.renameSync(temp, file);
+  return record;
+}
+
+// Reads a closure record back. Same discipline as claimOwnership: values are re-validated and
+// anything malformed is dropped, so a hand-edited record cannot smuggle text into `list`.
+export function readClosure(home, id) {
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(closurePath(home, id), 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== 'object' || typeof raw.closedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(raw.closedAt)) {
+    return null;
+  }
+  const record = { closedAt: raw.closedAt, ...claimOwnership(raw) };
+  if (typeof raw.note === 'string' && raw.note) record.note = raw.note.slice(0, CLOSURE_NOTE_LIMIT);
+  return record;
+}
+
 function claimFile(home, id) {
   return path.join(home, 'slot-claims', `slot-${id}.json`);
 }

@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeOwnership, parseCheck, processAlive, readClaim, releaseClaim, slotEnv, slotsHome, sweepSlots } from './slots.mjs';
+import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeOwnership, parseCheck, processAlive, readClaim, readClosure, releaseClaim, slotEnv, slotsHome, sweepSlots, writeClosure } from './slots.mjs';
 
 // Argument mistakes (bad flags, missing values, unknown commands) are usage errors: the reason
 // plus the full usage block. Anything that fails at runtime carries its own next step and is
@@ -17,15 +17,16 @@ export const usage = [
   '  ensure [--json]                       reopen slot browsers that are not running',
   '  run [--slot N|auto] [--wait-ms MS] [--task N] [--session KEY] [--thread-url URL]',
   '                                        -- <args of `prodex pro browser ask`>',
-  '  release --slot N                      drop a stale claim',
-  'Ownership (run only): --task 71, --session s1, --thread-url https://chatgpt.com/c/<id>.',
+  '  release --slot N [--task N] [--session KEY] [--thread-url URL] [--note "…"]',
+  '                                        write the "thread closed, slot reusable" record',
+  'Ownership (run and release): --task 71, --session s1, --thread-url https://chatgpt.com/c/<id>.',
   'They are shown by `list` so another session can see who a slot serves; never reply text.',
   'Use the ask\'s own --session-key after `--`: that one is prodex\'s, this one is ownership.',
   'Exit: 0 ok, 1 error (also any failure of the prodex ask itself), 3 needs the user, 4 all ready slots busy past --wait-ms.',
   '`run` passes the ask output (the reply) through to stdout: redirect it to a file, do not log it.',
 ].join('\n');
 
-const VALUE_OPTIONS = { '--slot': 'slot', '--count': 'count', '--wait-ms': 'waitMs', '--task': 'task', '--session': 'sessionKey', '--thread-url': 'threadUrl' };
+const VALUE_OPTIONS = { '--slot': 'slot', '--count': 'count', '--wait-ms': 'waitMs', '--task': 'task', '--session': 'sessionKey', '--thread-url': 'threadUrl', '--note': 'note' };
 const OWNERSHIP_FLAGS = { task: '--task', sessionKey: '--session', threadUrl: '--thread-url' };
 const NUMERIC_OPTIONS = new Set(['--slot', '--count', '--wait-ms']);
 // States that are not a problem for the user: the slot works or will work by itself.
@@ -71,11 +72,12 @@ export function parseArgs(args) {
   if (command === 'release' && options.slot === 'auto') throw new Error('release needs --slot N');
   const provided = Object.keys(OWNERSHIP_FLAGS).filter((key) => options[key] !== undefined);
   if (provided.length) {
-    // Ownership is recorded in the claim, so only a command that takes a claim can carry it.
-    // The command is not validated (it may be a token pasted in the wrong place), so the message
-    // names the flags and the rule, not the command.
-    if (command !== 'run') {
-      throw new Error(`${provided.map((key) => OWNERSHIP_FLAGS[key]).join(' / ')} only apply to run`);
+    // Ownership lands in the claim (run) or the closure record (release); the other commands
+    // keep no per-slot record of their own, so they refuse the flags outright. The command is
+    // not validated (it may be a token pasted in the wrong place), so the message names the
+    // flags and the rule, not the command.
+    if (command !== 'run' && command !== 'release') {
+      throw new UsageError(`${provided.map((key) => OWNERSHIP_FLAGS[key]).join(' / ')} only apply to run and release`);
     }
     options.ownership = normalizeOwnership({
       task: options.task,
@@ -84,6 +86,9 @@ export function parseArgs(args) {
     });
   } else {
     options.ownership = {};
+  }
+  if (options.note !== undefined && command !== 'release') {
+    throw new UsageError('--note only applies to release');
   }
   return { command, options, passthrough };
 }
@@ -172,11 +177,13 @@ async function describeSlots(config, deps, sweepReport = []) {
     const busy = claim && (deps.alive ?? processAlive)(claim.pid);
     const reaped = sweepReport.filter((item) => item.slot === slot.id && item.removed)
       .map(({ removed, reason }) => ({ removed, reason }));
+    const closure = readClosure(deps.home, slot.id);
     return {
       id: slot.id,
       port: slot.port,
       state: (await deps.checkSlot(slot)).state,
       ...(reaped.length ? { reaped } : {}),
+      ...(closure ? { lastClosed: closure } : {}),
       busyWith: busy ? { pid: claim.pid, ...claimOwnership(claim) } : null,
     };
   }));
@@ -225,7 +232,10 @@ function renderSlots(rows) {
   return rows.map((r) => {
     const owned = r.busyWith ? [r.busyWith.task, r.busyWith.sessionKey, r.busyWith.threadUrl].filter(Boolean).join(' ') : '';
     const swept = r.reaped ? `  [self-healed: ${r.reaped.map((x) => x.removed).join(' + ')}]` : '';
-    return `slot ${r.id}  port ${r.port}  ${r.state}${r.detail ? ` (${r.detail})` : ''}${swept}${r.busyWith ? `  busy (pid ${r.busyWith.pid})${owned ? ` ${owned}` : ''}` : ''}`;
+    const closed = r.lastClosed
+      ? `  closed ${r.lastClosed.closedAt.slice(0, 16).replace('T', ' ')} ${[r.lastClosed.task, r.lastClosed.note].filter(Boolean).join(' ')}`.slice(0, 120)
+      : '';
+    return `slot ${r.id}  port ${r.port}  ${r.state}${r.detail ? ` (${r.detail})` : ''}${swept}${r.busyWith ? `  busy (pid ${r.busyWith.pid})${owned ? ` ${owned}` : ''}` : ''}${closed}`;
   }).join('\n');
 }
 
@@ -309,7 +319,10 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
       return pending.length ? EXIT.NEEDS_USER : EXIT.OK;
     }
     if (command === 'release') {
+      const had = readClaim(deps.home, options.slot);
       releaseClaim(deps.home, options.slot);
+      const record = writeClosure(deps.home, options.slot, { ownership: options.ownership, note: options.note });
+      err(`prodex-slots: released slot ${options.slot}${had ? ' (claim removed)' : ' (no claim was present)'}; closed record written (${record.task ?? 'no task'}${record.note ? `, "${record.note}"` : ''}). The slot is reusable.`);
       return EXIT.OK;
     }
     if (command === 'run') return await runCommand(options, passthrough, deps, err);
