@@ -24,9 +24,9 @@ export function TasksView({ locale, tasks, health, onOpenTask }: TasksViewProps)
   // Repository subtotals follow the active filter: the total for "all", counts by state otherwise.
   const groupPrecision = filter === 'all' ? health : categoryHealth(health, tasks);
   return (
-    <div className="mx-auto grid max-w-[1180px] gap-v2-lg p-v2-page">
+    <div className="mx-auto grid max-w-[1180px] gap-v2-section p-v2-page">
       <header className="flex flex-wrap items-end justify-between gap-v2-md">
-        <h1 className="text-[24px] font-semibold leading-tight text-v2-ink">{text.t('tasksTitle')}</h1>
+        <h1 className="font-v2-serif text-v2-title text-v2-ink">{text.t('tasksTitle')}</h1>
         <SegmentedControl
           idBase="tasks-filter"
           label={text.t('filterAria')}

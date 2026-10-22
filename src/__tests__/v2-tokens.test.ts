@@ -78,4 +78,34 @@ describe('v2 design tokens', () => {
     expect(referenced.length).toBeGreaterThan(20);
     for (const name of referenced) expect(defined.has(name), name).toBe(true);
   });
+
+  describe('typography and whitespace baseline (#105)', () => {
+    it('writes a serif stack that starts with the bundled face and never falls to SimSun for CJK', () => {
+      for (const id of V2_SKIN_IDS) {
+        const serif = v2CssVariables(id, 'light')['--v2-font-serif'];
+        expect(serif.startsWith('"Source Serif 4"'), id).toBe(true);
+        expect(serif, id).not.toMatch(/SimSun|NSimSun|宋体/);
+        expect(serif, id).toContain('Microsoft YaHei UI');
+        expect(serif.endsWith('serif'), id).toBe(true);
+      }
+    });
+
+    it('sets the reading size, page and section whitespace on every skin', () => {
+      for (const id of V2_SKIN_IDS) {
+        const vars = v2CssVariables(id, 'light');
+        expect(vars['--v2-text-reading'], id).toBe('16px');
+        expect(parseInt(vars['--v2-space-page'], 10), id).toBeGreaterThanOrEqual(40);
+        expect(parseInt(vars['--v2-space-section'], 10), id).toBeGreaterThanOrEqual(40);
+        expect(parseInt(vars['--v2-space-card'], 10), id).toBeGreaterThanOrEqual(22);
+      }
+    });
+
+    it('ships the font file and its licence next to the stylesheet that loads it', () => {
+      const css = readFileSync(new URL('../ui/v2/fonts.css', import.meta.url), 'utf8');
+      const file = css.match(/url\("([^"]+\.woff2)"\)/)?.[1];
+      expect(file).toBeTruthy();
+      expect(() => readFileSync(new URL(file!, new URL('../ui/v2/fonts.css', import.meta.url)))).not.toThrow();
+      expect(readFileSync(new URL('../assets/fonts/source-serif-4/OFL.txt', import.meta.url), 'utf8')).toContain('SIL Open Font License');
+    });
+  });
 });
