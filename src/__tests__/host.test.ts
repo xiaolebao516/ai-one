@@ -214,5 +214,12 @@ describe('host read-only GitHub bindings (#51)', () => {
     await expect(host.github.get('user')).rejects.toThrow(new Error('Request not allowed.'));
     invokeMock.mockRejectedValueOnce({ unexpected: true });
     await expect(host.github.associations('o/r', [1])).rejects.toThrow(/^GitHub query failed/);
+    // Anything outside the fixed message set (e.g. text echoed from elsewhere) is normalised.
+    invokeMock.mockRejectedValueOnce('fatal: token ghp_secret for account someone');
+    await expect(host.github.get('user')).rejects.toThrow(/^GitHub query failed/);
+    invokeMock.mockRejectedValueOnce('command is only available to the main control webview');
+    await expect(host.github.get('user')).rejects.toThrow(/^GitHub query failed/);
+    invokeMock.mockRejectedValueOnce('gh query timed out; snapshot is incomplete.');
+    await expect(host.github.get('user')).rejects.toThrow(new Error('gh query timed out; snapshot is incomplete.'));
   });
 });
