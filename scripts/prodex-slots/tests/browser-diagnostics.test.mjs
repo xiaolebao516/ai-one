@@ -31,7 +31,7 @@ function mockRealDeps({
   check = 'chatgpt: browser_unreachable - endpoint unavailable',
   processes = [browserProcess()],
   processProbeError = false,
-  fetchFn = async () => { throw new Error('PRIVATE-CDP-ERROR'); },
+  fetchFn = async () => { throw Object.assign(new Error('PRIVATE-CDP-ERROR'), { cause: { code: 'ECONNREFUSED' } }); },
 } = {}) {
   const calls = { powershell: 0, fetch: 0 };
   const spawnSyncFn = (command) => {
@@ -48,10 +48,10 @@ function mockRealDeps({
     platform,
     env: { PRODEX_ENTRY: process.execPath },
     spawnSyncFn,
-    fetchFn: async (...args) => {
+    fetchFn: typeof fetchFn === 'function' ? async (...args) => {
       calls.fetch += 1;
       return fetchFn(...args);
-    },
+    } : fetchFn,
   });
   return { deps, calls, home };
 }
@@ -107,6 +107,28 @@ test('no browser process and no CDP response is the only confirmed down case', a
   assert.equal(result.state, 'down');
   assert.match(result.detail, /No matching browser process was found/);
 });
+
+for (const [name, fetchFn] of [
+  ['unavailable', null],
+  ['permission denied', async () => { throw Object.assign(new Error('PRIVATE-DENIED'), { code: 'EACCES' }); }],
+  ['timeout', async () => { throw new DOMException('PRIVATE-TIMEOUT', 'TimeoutError'); }],
+  ['unexpected failure', async () => { throw new Error('PRIVATE-FAILURE'); }],
+]) {
+  test(`a CDP probe ${name} cannot confirm down or trigger ensure startup`, async () => {
+    const { deps } = mockRealDeps({ processes: [], fetchFn });
+    assert.equal((await deps.checkSlot(SLOT2)).state, 'unknown');
+    let launches = 0;
+    let now = 0;
+    deps.now = () => now;
+    deps.sleep = async (ms) => { now += ms; };
+    deps.launchHeaded = async () => { launches++; return { ok: true }; };
+    const output = [];
+    const code = await main(['ensure', '--json'], { deps, out: (value) => output.push(value), err: (value) => output.push(value) });
+    assert.equal(code, EXIT.NEEDS_USER);
+    assert.equal(launches, 0);
+    assert.doesNotMatch(output.join('\n'), /PRIVATE-/);
+  });
+}
 
 test('a failed or permission-denied process probe cannot infer down', async () => {
   const { deps } = mockRealDeps({ processProbeError: true });

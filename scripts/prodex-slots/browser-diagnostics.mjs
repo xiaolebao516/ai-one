@@ -112,10 +112,11 @@ export async function probeCdpEndpoint(port, { fetchFn = globalThis.fetch, timeo
   let versionResponse;
   try {
     versionResponse = await request('/json/version');
-  } catch {
-    return { state: 'unreachable' };
+  } catch (error) {
+    const code = error?.cause?.code ?? error?.code;
+    return { state: code === 'ECONNREFUSED' ? 'unreachable' : 'error' };
   }
-  if (!versionResponse) return { state: 'unreachable' };
+  if (!versionResponse) return { state: 'error' };
   if (!versionResponse.ok) return { state: 'responding', pageState: 'unknown' };
 
   let version;
@@ -167,11 +168,14 @@ export async function diagnoseBrowserUnreachable(slot, {
     return { state: 'unknown', detail: 'The debugging port responds, but its process could not be confidently matched to this slot. ' + nextStep };
   }
 
+  if (cdpEvidence.state !== 'unreachable') {
+    return { state: 'unknown', detail: 'Could not verify the debugging endpoint. ' + nextStep };
+  }
   if (processEvidence.state === 'running') {
     return { state: 'unknown', detail: 'A matching browser process is running, but its debugging port is not responding. ' + nextStep };
   }
-  if (processEvidence.state === 'absent') {
-    return { state: 'down', detail: 'No matching browser process was found and the debugging endpoint is not responding.' };
+  if (processEvidence.state === 'absent' && cdpEvidence.state === 'unreachable') {
+    return { state: 'down', detail: 'No matching browser process was found and the debugging endpoint refused the connection.' };
   }
   if (processEvidence.state === 'unsupported') {
     return { state: 'unknown', detail: 'This platform cannot verify the browser process. ' + nextStep };

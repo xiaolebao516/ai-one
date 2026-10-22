@@ -36,7 +36,7 @@ excludes `run` jobs on slot 1. The number of slots (1..8) is stored in
 - `list`: sweeps the claim directory first (see *Self-healing* - this is the one read-only
   command that also removes dead leftovers), then reports each slot's state, any live claim (by
   pid) and the last closure. States: `ready`; `busy` (logged in,
-  still generating a reply, so `run` waits for it); `down` (Windows process evidence and a silent CDP endpoint confirm the browser is absent);
+  still generating a reply, so `run` waits for it); `down` (Windows process evidence confirms absence and the CDP connection is refused);
   `needs-login`; `hidden` (window minimized or the tab not visible, Prodex cannot send);
   `error` (the probe or the browser start itself failed); `unknown`. Only `ready` slots take
   new work. `list` never restores a window.
@@ -63,6 +63,8 @@ profile path, then probes CDP and page presence. A matching live process with a 
 port, a responding port without a ready page, ambiguous process identity, failed probes,
 and unsupported platforms remain `unknown`. These states include diagnostic guidance in
 `list`, `ensure` and `run`; they do not trigger an automatic restart or imply expired login.
+Only an explicit `ECONNREFUSED` plus confirmed process absence permits `down`;
+an unavailable fetch, timeout, permission error or other probe failure remains `unknown`.
 An intermediate `unknown` after a confirmed fresh launch is polled within the startup budget.
 
 Slot 1 delegates its profile to Prodex. If browsers are running but the full identity cannot
