@@ -5,7 +5,6 @@ import {
   parseFlowsFile,
   validateFile,
   type FlowsFile,
-  type ParseFlowsFileResult,
   type ValidationIssue,
 } from './flowModel';
 import type { LocalStoreFs } from '../host/localStore';
@@ -16,7 +15,7 @@ export interface LoadFlowsResult {
   file: FlowsFile;
   status: FlowStoreStatus;
   backup?: string;
-  reason?: ParseFlowsFileResult extends { ok: false; reason: infer R } ? R | 'corrupt-file' : 'corrupt-file';
+  reason?: 'corrupt-file' | 'not-json' | 'bad-shape' | 'unknown-schema-version' | 'invalid';
   issues?: ValidationIssue[];
 }
 

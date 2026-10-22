@@ -191,7 +191,7 @@ describe('flow import/export', () => {
     expect(plan.flows.conflicts).toHaveLength(1);
     const merged = applyImport(current, incoming, 'keep-both');
     expect(merged.stages.some((stage) => stage.id === 'existing-import' && stage.name === 'Incoming (2)')).toBe(true);
-    expect(merged.stages.some((stage) => stage.id === 'new' && stage.name === 'Shared (2)')).toBe(true);
+    expect(merged.stages.some((stage) => stage.id === 'new-import' && stage.name === 'Shared (2)')).toBe(true);
     expect(merged.flows.some((flow) => flow.id === 'flow.existing-import' && flow.stages[0].stageId === 'existing-import')).toBe(true);
   });
 

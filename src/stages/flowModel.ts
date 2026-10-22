@@ -577,6 +577,8 @@ export function builtinStages(): StageDef[] {
 }
 
 export function builtinFlows(): FlowDef[] {
+  // StageRef schema v1 cannot override collaboration; the shared build stage remains author-review,
+  // while this flow expresses its parallel workers through participant overrides and the note.
   return [
     {
       id: 'flow.quick',

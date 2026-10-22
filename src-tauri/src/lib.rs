@@ -4,6 +4,7 @@ mod github_readonly;
 mod github_write;
 mod dispatch_readonly;
 mod session_checkpoint;
+mod local_store;
 mod settings;
 mod snapshots;
 mod webviews;
@@ -64,7 +65,11 @@ pub fn run() {
             github_write::github_write_set_pause,
             github_write::github_write_accept,
             github_write::github_write_request_changes,
-            dispatch_readonly::dispatch_readonly_snapshot
+            dispatch_readonly::dispatch_readonly_snapshot,
+            local_store::local_store_read,
+            local_store::local_store_quarantine,
+            local_store::local_store_write,
+            local_store::local_store_export
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
