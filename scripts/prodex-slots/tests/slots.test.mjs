@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { main, parseArgs } from '../cli.mjs';
-import { EXIT, addSlots, claimSlot, loadConfig, parseCheck, readClaim, releaseClaim, slotEnv } from '../slots.mjs';
+import { EXIT, addSlots, claimSlot, loadConfig, normalizeOwnership, parseCheck, readClaim, releaseClaim, slotEnv } from '../slots.mjs';
 
 const childScript = path.join(path.dirname(fileURLToPath(import.meta.url)), 'race-child.mjs');
 const tempHome = () => fs.mkdtempSync(path.join(os.tmpdir(), 'prodex-slots-'));
@@ -137,10 +137,54 @@ test('a live holder blocks a claim; a dead holder is reaped; release only drops 
   assert.equal(readClaim(home, 2), null);
 });
 
-test('a claim stores no session key or text, only owner, pid and start time', () => {
+test('a claim stores its ownership but never the reply or an ask session key', () => {
+  const home = tempHome();
+  claimSlot(home, 1, {
+    pid: 5,
+    alive: () => true,
+    meta: { task: '71', sessionKey: 's1', threadUrl: 'https://chatgpt.com/c/abc' },
+  });
+  const claim = readClaim(home, 1);
+  assert.deepEqual(Object.keys(claim).sort(), ['owner', 'pid', 'sessionKey', 'startedAt', 'task', 'threadUrl']);
+  assert.equal(claim.task, '#71', 'the task number is stored canonically');
+  assert.ok(!JSON.stringify(claim).includes('reply text'));
+});
+
+test('a claim without ownership keeps exactly the original fields', () => {
   const home = tempHome();
   claimSlot(home, 1, { pid: 5, alive: () => true });
   assert.deepEqual(Object.keys(readClaim(home, 1)).sort(), ['owner', 'pid', 'startedAt']);
+});
+
+test('ownership is normalized and validated before anything is written', () => {
+  assert.deepEqual(normalizeOwnership(), {});
+  assert.deepEqual(normalizeOwnership({}), {});
+  assert.deepEqual(normalizeOwnership({ task: '71' }), { task: '#71' });
+  assert.deepEqual(normalizeOwnership({ task: '#71' }), { task: '#71' });
+  assert.deepEqual(
+    normalizeOwnership({ task: 71, sessionKey: 's-1_a.b:c', threadUrl: 'https://chatgpt.com/c/abc' }),
+    { task: '#71', sessionKey: 's-1_a.b:c', threadUrl: 'https://chatgpt.com/c/abc' },
+  );
+  assert.deepEqual(normalizeOwnership({ task: undefined, sessionKey: undefined, threadUrl: undefined }), {});
+  assert.throws(() => normalizeOwnership({ task: 'abc' }), /--task must be a task number/);
+  assert.throws(() => normalizeOwnership({ task: '71a' }), /--task must be a task number/);
+  assert.throws(() => normalizeOwnership({ task: '-1' }), /--task must be a task number/);
+  assert.throws(() => normalizeOwnership({ sessionKey: 'x'.repeat(65) }), /--session must be/);
+  assert.throws(() => normalizeOwnership({ sessionKey: '' }), /--session must be/);
+  assert.throws(() => normalizeOwnership({ sessionKey: 'has space' }), /--session must be/);
+  assert.throws(() => normalizeOwnership({ sessionKey: 'cookie=abc' }), /--session must be/);
+  assert.throws(() => normalizeOwnership({ threadUrl: 'http://chatgpt.com/c/abc' }), /must use https/);
+  assert.throws(() => normalizeOwnership({ threadUrl: 'https://evil.example/c/abc' }), /must be on chatgpt.com/);
+  assert.throws(() => normalizeOwnership({ threadUrl: 'not a url' }), /must be a full URL/);
+  assert.throws(() => normalizeOwnership({ threadUrl: `https://chatgpt.com/c/${'a'.repeat(300)}` }), /at most 300/);
+});
+
+test('a claim refuses invalid ownership and leaves nothing behind', () => {
+  const home = tempHome();
+  assert.throws(() => claimSlot(home, 1, { pid: 5, alive: () => true, meta: { task: 'oops' } }), /--task must be/);
+  assert.equal(readClaim(home, 1), null);
+  const dir = path.join(home, 'slot-claims');
+  assert.ok(!fs.existsSync(dir) || fs.readdirSync(dir).length === 0, 'no temp file is left behind');
 });
 
 test('a claim without a recent heartbeat is dead even when its pid looks alive (recycled pid)', () => {
@@ -342,9 +386,73 @@ test('ensure is silent when every slot is ready or busy and reopens a closed bro
   assert.deepEqual(h.log.launches, [2]);
 });
 
-test('list reports state and a live claim by pid only', async () => {
+test('list reports state and a live claim by pid and any ownership', async () => {
   const h = harness({ states: { 1: 'ready' } });
   claimSlot(h.home, 1, { pid: 321, alive: () => true });
   assert.equal(await h.run(['list', '--json']), EXIT.OK);
   assert.deepEqual(JSON.parse(h.log.out[0]), [{ id: 1, port: 9333, state: 'ready', busyWith: { pid: 321 } }]);
+});
+
+test('two slots can be told apart by the task and the thread they serve', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', sessionKey: 's1' } });
+  claimSlot(h.home, 2, { pid: 222, alive: () => true, meta: { task: '72', threadUrl: 'https://chatgpt.com/c/xyz' } });
+  assert.equal(await h.run(['list', '--json']), EXIT.OK);
+  const rows = JSON.parse(h.log.out[0]);
+  assert.deepEqual(rows[0].busyWith, { pid: 111, task: '#71', sessionKey: 's1' });
+  assert.deepEqual(rows[1].busyWith, { pid: 222, task: '#72', threadUrl: 'https://chatgpt.com/c/xyz' });
+  assert.match(h.log.out[0], /#71/);
+  assert.ok(!/reply|answer text/.test(h.log.out[0]), 'the listing carries no conversation text');
+});
+
+test('run records the ownership it was given and forwards nothing extra to ask', async () => {
+  const h = harness();
+  const args = ['run', '--task', '71', '--session', 's1', '--thread-url', 'https://chatgpt.com/c/abc', '--', '--new-chat', '--effort', 'high'];
+  assert.equal(await h.run(args), EXIT.OK);
+  const ask = h.log.asks[0];
+  assert.equal(ask.claimed.task, '#71');
+  assert.equal(ask.claimed.sessionKey, 's1');
+  assert.equal(ask.claimed.threadUrl, 'https://chatgpt.com/c/abc');
+  assert.deepEqual(ask.args, ['--new-chat', '--effort', 'high'], 'ownership flags are consumed, not forwarded to ask');
+  assert.match(h.log.err.join('\n'), /using slot 1 \(port 9333\) for #71 s1/);
+});
+
+test("the ask's own --session-key stays a prodex flag and is never stored as ownership", async () => {
+  const h = harness();
+  assert.equal(await h.run(['run', '--', '--new-chat', '--session-key', 'sk-secret']), EXIT.OK);
+  const ask = h.log.asks[0];
+  assert.deepEqual(ask.args, ['--new-chat', '--session-key', 'sk-secret']);
+  assert.equal(ask.claimed.sessionKey, undefined);
+  assert.ok(!JSON.stringify(ask.claimed).includes('sk-secret'));
+  assert.match(h.log.err.join('\n'), /using slot 1 \(port 9333\)\n?$/);
+});
+
+test('bad ownership is rejected before any slot is probed or asked', async () => {
+  const cases = [
+    ['run', '--task', 'abc', '--', '--new-chat'],
+    ['run', '--session', 'has space', '--', '--new-chat'],
+    ['run', '--thread-url', 'https://evil.example/x', '--', '--new-chat'],
+    ['run', '--thread-url', 'http://chatgpt.com/c/abc', '--', '--new-chat'],
+  ];
+  for (const args of cases) {
+    const h = harness();
+    assert.equal(await h.run(args), EXIT.ERROR, args.join(' '));
+    assert.equal(h.log.asks.length, 0, args.join(' '));
+    assert.equal(readClaim(h.home, 1), null, args.join(' '));
+  }
+});
+
+test('ownership flags are refused on commands that cannot record them', async () => {
+  const h = harness();
+  for (const args of [
+    ['list', '--task', '71'],
+    ['ensure', '--session', 's1'],
+    ['add', '--count', '1', '--thread-url', 'https://chatgpt.com/c/x'],
+    ['release', '--slot', '1', '--task', '71'],
+  ]) {
+    assert.equal(await h.run(args), EXIT.ERROR, args.join(' '));
+  }
+  assert.equal(loadConfig(h.home).count, 1, 'add did not run');
+  assert.match(h.log.err.join('\n'), /--task.*only.*run/i);
 });

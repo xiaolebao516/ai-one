@@ -11,6 +11,61 @@ export const MAX_SLOTS = 8;
 export const CLAIM_BEAT_MS = 20_000;
 export const CLAIM_STALE_MS = 120_000;
 
+// Ownership is what makes a slot readable to other sessions: which task it serves, which
+// session holds it and which thread it is talking to. It is deliberately narrow - three short
+// fields - because it is written to a file other sessions and the user can read. Reply text,
+// ask stdin/stdout and credentials never belong here.
+export const OWNERSHIP_LIMITS = { sessionKey: 64, threadUrl: 300 };
+const TASK_PATTERN = /^#?\d{1,6}$/;
+const SESSION_KEY_PATTERN = new RegExp(`^[A-Za-z0-9._:-]{1,${OWNERSHIP_LIMITS.sessionKey}}$`);
+const THREAD_HOST = 'chatgpt.com';
+
+// Validates and normalizes the three ownership fields. Anything else is rejected here rather
+// than written to disk, so a typo cannot leave a claim that the next session has to interpret.
+export function normalizeOwnership({ task, sessionKey, threadUrl } = {}) {
+  const ownership = {};
+  if (task !== undefined && task !== null) {
+    const value = String(task).trim();
+    if (!TASK_PATTERN.test(value)) {
+      throw new Error(`--task must be a task number like 71 or #71, got ${JSON.stringify(task)}`);
+    }
+    ownership.task = value.startsWith('#') ? value : `#${value}`;
+  }
+  if (sessionKey !== undefined && sessionKey !== null) {
+    const value = String(sessionKey);
+    if (!SESSION_KEY_PATTERN.test(value)) {
+      throw new Error(`--session must be 1-64 characters of letters, digits, dot, underscore, colon or dash (it is shown to other sessions), got ${JSON.stringify(sessionKey)}`);
+    }
+    ownership.sessionKey = value;
+  }
+  if (threadUrl !== undefined && threadUrl !== null) {
+    const value = String(threadUrl);
+    if (value.length > OWNERSHIP_LIMITS.threadUrl) {
+      throw new Error(`--thread-url must be at most ${OWNERSHIP_LIMITS.threadUrl} characters, got ${value.length}`);
+    }
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error(`--thread-url must be a full URL such as https://${THREAD_HOST}/c/<id>, got ${JSON.stringify(threadUrl)}`);
+    }
+    if (url.protocol !== 'https:') throw new Error(`--thread-url must use https, got ${url.protocol}`);
+    if (url.hostname !== THREAD_HOST) throw new Error(`--thread-url must be on ${THREAD_HOST}, got ${url.hostname}`);
+    ownership.threadUrl = value;
+  }
+  return ownership;
+}
+
+// Only the three known fields are ever copied out of a claim file, so a hand-edited claim
+// cannot smuggle extra data into `list`.
+export function claimOwnership(claim) {
+  const ownership = {};
+  for (const key of ['task', 'sessionKey', 'threadUrl']) {
+    if (typeof claim?.[key] === 'string' && claim[key]) ownership[key] = claim[key];
+  }
+  return ownership;
+}
+
 export function slotsHome(env = process.env) {
   return env.PRODEX_SLOTS_HOME || path.join(os.homedir(), '.local', 'share', 'prodex');
 }
@@ -158,20 +213,24 @@ function claimAgeMs(file) {
 }
 
 // A claim is a scheduling hint so `run --slot auto` spreads work over idle slots; Prodex's own
-// per-slot send lock remains the guard for the browser itself. The claim holds only a random
-// owner id, the pid and a start time, never a session key or any conversation text.
+// per-slot send lock remains the guard for the browser itself. The claim holds a random owner
+// id, the pid, a start time and, when the caller provided them, the three ownership fields
+// (task / session key / thread URL) so another session can see who a slot is serving. It never
+// holds reply text, ask stdin/stdout or credentials.
 //
 // The file appears complete and atomically (hard link of a fully written temp file). Judging a
 // claim dead and removing it happens under a mutex and re-reads the file first, so a claim just
 // taken by someone else is never deleted. Dead = owner pid gone, or no heartbeat for staleMs
 // (covers a pid recycled by another process). A file that cannot be parsed counts as live until
 // it is stale.
-export function claimSlot(home, id, { pid = process.pid, alive = processAlive, now = Date.now, staleMs = CLAIM_STALE_MS, beatMs = CLAIM_BEAT_MS } = {}) {
+export function claimSlot(home, id, { pid = process.pid, alive = processAlive, now = Date.now, staleMs = CLAIM_STALE_MS, beatMs = CLAIM_BEAT_MS, meta = {} } = {}) {
+  // Validate before touching the directory: a rejected claim must not leave a temp file behind.
+  const ownership = normalizeOwnership(meta);
   const file = claimFile(home, id);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const owner = crypto.randomUUID();
   const temp = `${file}.${owner}.tmp`;
-  fs.writeFileSync(temp, `${JSON.stringify({ owner, pid, startedAt: now() })}\n`);
+  fs.writeFileSync(temp, `${JSON.stringify({ owner, pid, startedAt: now(), ...ownership })}\n`);
   try {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
