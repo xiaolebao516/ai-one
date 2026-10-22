@@ -1,0 +1,280 @@
+<title>ai-one 补充设计稿</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* 布局：顶部标签切换七张草图；每张是一个“窗口”线框，虚线框标出本次要新做的部分。配色沿用产品的暖灰纸面 + 墨色，只有状态有颜色。 */
+:root{
+  --bg:#F3F2EE;--panel:#FAF9F7;--card:#FFFFFF;--sunken:#ECEBE6;
+  --ink:#1C1B18;--ink2:#5A5851;--ink3:#8E8B83;--line:rgba(28,27,24,.12);--line2:rgba(28,27,24,.28);
+  --run:#2F6FEB;--you:#B86E0A;--youbg:#FBF0DC;--block:#CF3F3A;--done:#2A8550;--newc:#2F6FEB;--newbg:rgba(47,111,235,.09);
+  --font:"Segoe UI Variable","Segoe UI","Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+  --mono:"Cascadia Code",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121211;--panel:#191918;--card:#201F1E;--sunken:#0E0E0D;--ink:#EEEDE8;--ink2:#ABA89F;--ink3:#77746D;
+  --line:rgba(255,255,255,.1);--line2:rgba(255,255,255,.28);--run:#6C9BFF;--you:#E3A04A;--youbg:#2C2415;--block:#F0706B;--done:#5BBE86;--newc:#6C9BFF;--newbg:rgba(108,155,255,.12);color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121211;--panel:#191918;--card:#201F1E;--sunken:#0E0E0D;--ink:#EEEDE8;--ink2:#ABA89F;--ink3:#77746D;
+  --line:rgba(255,255,255,.1);--line2:rgba(255,255,255,.28);--run:#6C9BFF;--you:#E3A04A;--youbg:#2C2415;--block:#F0706B;--done:#5BBE86;--newc:#6C9BFF;--newbg:rgba(108,155,255,.12);color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.55;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 48px}
+.wrap{max-width:1080px;margin:0 auto}
+h1{font-size:22px;margin:0 0 4px;font-weight:600}
+.sub{color:var(--ink2);margin:0 0 16px;max-width:70ch}
+nav{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px;position:sticky;top:env(safe-area-inset-top,0px);background:var(--bg);padding:6px 0;z-index:5}
+nav a{padding:6px 12px;border-radius:8px;color:var(--ink2);text-decoration:none;font-size:13px;border:1px solid transparent;white-space:nowrap}
+nav a.on{background:var(--card);color:var(--ink);border-color:var(--line2);font-weight:600}
+nav a:focus-visible,button:focus-visible{outline:2px solid var(--run);outline-offset:2px}
+section.pg{display:none}section.pg.on{display:block}
+.note{background:var(--sunken);border-radius:10px;padding:10px 14px;color:var(--ink2);font-size:13px;margin:0 0 14px}
+.note b{color:var(--ink)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin:0 0 10px;align-items:center}
+.sw{display:inline-block;width:22px;height:12px;border:1.5px dashed var(--newc);background:var(--newbg);border-radius:4px;vertical-align:-2px;margin-right:5px}
+.win{background:var(--panel);border:1px solid var(--line2);border-radius:14px;overflow:hidden}
+.bar{display:flex;gap:6px;align-items:center;padding:8px 12px;background:var(--sunken);border-bottom:1px solid var(--line);font-size:12px;color:var(--ink3)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--line2)}
+.body{padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.new{outline:1.5px dashed var(--newc);outline-offset:3px;background:var(--newbg);border-radius:10px}
+.tag{font-size:10px;color:#fff;background:var(--newc);padding:0 6px;border-radius:999px;margin-left:6px;vertical-align:1px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.sp{justify-content:space-between}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:2px 10px;border-radius:999px;border:1px solid var(--line2);background:var(--card);color:var(--ink)}
+.chip.off{border-style:dashed;color:var(--ink3)}
+.chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.chip.you{background:var(--youbg);border-color:var(--you);color:var(--you)}
+.btn{font:inherit;font-size:13px;border:1px solid var(--line2);background:var(--card);color:var(--ink);padding:5px 14px;border-radius:8px;cursor:pointer}
+.btn.pri{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn.sm{font-size:12px;padding:3px 10px}
+.mut{color:var(--ink2);font-size:12px;margin:0}
+.warn{background:var(--youbg);color:var(--you);border-radius:8px;padding:6px 10px;font-size:12px;margin:0}
+.seg{display:inline-flex;background:var(--sunken);border-radius:9px;padding:3px;gap:2px;flex-wrap:wrap}
+.seg button{font:inherit;font-size:13px;border:0;background:none;color:var(--ink2);padding:5px 12px;border-radius:7px;cursor:pointer}
+.seg button.on{background:var(--card);color:var(--ink);box-shadow:0 0 0 1px var(--line2)}
+.ta{border:1px solid var(--line);border-radius:10px;padding:12px;min-height:58px;color:var(--ink3);background:var(--card)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.cols3{display:grid;grid-template-columns:200px minmax(0,1fr) minmax(0,.9fr);gap:0}
+.side{background:var(--sunken);padding:10px;display:grid;gap:3px;align-content:start;border-right:1px solid var(--line)}
+.side div{padding:5px 8px;border-radius:6px;color:var(--ink2);font-size:13px}
+.side div.on{background:var(--card);color:var(--ink);box-shadow:0 0 0 1px var(--line2)}
+.side h6{margin:8px 0 2px;font-size:11px;font-weight:500;color:var(--ink3)}
+.stage{border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--card);display:grid;gap:2px}
+.stage.sel{border:2px solid var(--run)}
+.ins{text-align:center;color:var(--run);font-size:12px;border:1px dashed var(--line2);border-radius:8px;padding:1px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:600;color:var(--ink2);font-size:12px}
+.scroll{overflow-x:auto}
+code{font-family:var(--mono);font-size:12px;background:var(--sunken);padding:1px 5px;border-radius:4px}
+.mx td,.mx th{border:1px solid var(--line);font-size:12px}
+.lane{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+@media (max-width:760px){.cols3{grid-template-columns:1fr}.side{border-right:0;border-bottom:1px solid var(--line)}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+<h1>ai-one 补充设计稿</h1>
+<p class="sub">补齐新工作台还没做的界面：发起任务、聊天页、阶段与流程、任务现场补全、讨论接入、CC 协调设置。每一屏都是线框，决定已和你逐屏确认。文字规格见 <code>v2-frontend-gaps.md</code>，两者冲突以文字规格为准。</p>
+
+<nav id="nav" aria-label="草图">
+  <a href="#overview">总览与决定</a><a href="#s1">1 发起任务</a><a href="#s2">2 聊天页</a><a href="#s3">3 阶段与流程</a><a href="#s4">4 任务现场</a><a href="#s5">5 讨论接入</a><a href="#s6">6 协调设置</a><a href="#split">拆分与顺序</a>
+</nav>
+
+<section class="pg" id="p-overview">
+  <p class="note"><b>贯穿全稿的前提：</b>ai-one 不直接指挥 CC。「交给 CC」是建 Issue 并复制接手指令，之后靠读写 GitHub 沟通。所有控制类按钮只写 GitHub，并如实写出限制。</p>
+  <div class="card scroll"><table>
+    <tr><th>屏</th><th>现状</th><th>结论</th></tr>
+    <tr><td>1 发起任务</td><td>四个选项在，「开始」灰着</td><td>四种模式都能用</td></tr>
+    <tr><td>2 聊天页</td><td>占位页</td><td>对比卡片 + 网页标签 + 转发/引用</td></tr>
+    <tr><td>3 阶段与流程</td><td>占位页</td><td>可编辑：竖排卡片拼接，本机文件保存，可导出导入</td></tr>
+    <tr><td>4 任务现场</td><td>有现在/需要你/证据/交付栏</td><td>加检查器抽屉、留言、暂停/继续、验收通过/要求修改、接管</td></tr>
+    <tr><td>5 讨论接入</td><td>组件只在画廊</td><td>「想需求」任务现场显示讨论矩阵与汇总卡</td></tr>
+    <tr><td>6 协调设置</td><td>无</td><td>本机偏好，创建 Issue 时写进协调简报</td></tr>
+  </table></div>
+  <h2 style="font-size:15px;margin:18px 0 8px">已确认的决定</h2>
+  <div class="card scroll"><table>
+    <tr><td>D2</td><td>聊天页 = 对比卡片 + 各 AI 网页标签</td></tr>
+    <tr><td>D3</td><td>聊天预设只留自由、辩论、咨询，另加「双 AI 讨论」入口</td></tr>
+    <tr><td>D4</td><td>卡片上的转发、引用本轮做</td></tr>
+    <tr><td>D5–D7</td><td>流程与阶段可自定义；竖排卡片；本机 JSON 文件，可导出导入；预留分支位，本期不做节点图</td></tr>
+    <tr><td>D8</td><td>交给 CC = 建 Task Issue + 复制「按 AGENTS.md 接手 #N」</td></tr>
+    <tr><td>D9</td><td>聊天模式点发送后跳到聊天页</td></tr>
+    <tr><td>D10</td><td>GitHub 写入桥只放行五个动作：创建 Issue、留言、暂停/继续、验收通过、要求修改</td></tr>
+    <tr><td>D11</td><td>暂停由你直接决定，不等 CC 确认；CC 正在跑的这一步会跑完，下一步起读到暂停就停</td></tr>
+    <tr><td>D12</td><td>协调偏好存本机，写进协调简报，不要求程序自动执行返工循环</td></tr>
+    <tr><td>追加</td><td>先快速可用，再由 Opus 精修好看简洁；视觉只守一条基线（字体与留白）；额度 HUD 完全移植 Agent HUD Open</td></tr>
+    <tr><td>待定</td><td>「怎么算结束 / 失败时」用下拉选项 + 可选补充说明框（已建议，待你最后确认）</td></tr>
+  </table></div>
+</section>
+
+<section class="pg" id="p-s1">
+  <p class="note"><b>总览顶部的输入框。</b>点上面的选项，看四种模式下说明区的变化。选了仓库默认「交给 CC」；输入 <code>/grill</code>、<code>/lead</code>、<code>/flow</code>、<code>/chat</code> 可直接切换。</p>
+  <div class="legend"><span><i class="sw"></i>本次新做</span></div>
+  <div class="win"><div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span>总览</span></div>
+  <div class="body"><div class="card">
+    <div class="ta" id="ph">描述要做的事…</div>
+    <div class="row sp" style="margin-top:10px">
+      <div class="seg" id="seg"><button data-m="chat">聊天</button><button data-m="grill">想需求 /grill</button><button data-m="cc" class="on">交给 CC</button><button data-m="flow">流程</button></div>
+      <div class="row"><span class="chip" id="repo">仓库 ai-one ▾</span><button class="btn pri" id="go">交给 CC</button></div>
+    </div>
+    <div id="detail" style="margin-top:12px;display:grid;gap:8px"></div>
+  </div>
+  <h3 style="font-size:13px;margin:16px 0 6px;color:var(--ink2)">「交给 CC」点下去之后：行内结果卡（不弹窗）</h3>
+  <div class="card new"><div class="row sp"><div><b>已创建 #128 · 接手指令已复制</b><p class="mut">按 AGENTS.md 快速开发模式接手 owner/repo 的 Issue #128</p></div><div class="row"><button class="btn sm">在 GitHub 打开</button><button class="btn sm">再复制一次</button><button class="btn sm">查看任务</button></div></div></div>
+  <p class="mut" style="margin-top:8px">任一步失败会写明是哪一步、能做什么；回读不到时不重试建单，先让你确认，避免重复建 Issue。</p>
+  </div></div>
+</section>
+
+<section class="pg" id="p-s2">
+  <p class="note"><b>聊天页。</b>左侧对话列表，顶部「对比」加各 AI 的真实网页标签，底部多选发送。卡片上的转发、引用是新功能。</p>
+  <div class="legend"><span><i class="sw"></i>本次新做</span></div>
+  <div class="win"><div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span>聊天</span></div>
+  <div style="display:grid;grid-template-columns:170px minmax(0,1fr)" class="chatgrid">
+    <div class="side"><div style="color:var(--ink);font-weight:600">＋ 新对话</div><div class="on">重试策略怎么选</div><div>日志导出格式</div><div>会话交接阈值</div></div>
+    <div class="body" style="display:grid;gap:10px">
+      <div class="row sp" style="border-bottom:1px solid var(--line);padding-bottom:8px"><div class="seg"><button class="on">对比</button><button>ChatGPT</button><button>Claude</button><button style="color:var(--ink3)">Gemini · 未登录</button></div><span class="row"><span class="chip new">转为任务…</span><span class="mut">⋯</span></span></div>
+      <p class="mut">你：重试策略用指数退避还是固定间隔？</p>
+      <div class="grid2">
+        <div class="card"><b>ChatGPT</b> <span class="mut">· 已完成</span><p class="mut" style="margin:6px 0">建议指数退避加抖动，上限 30 秒；固定间隔在高并发下容易同时重试，造成雪崩……</p><div class="row"><span class="chip sm">展开</span><span class="chip new">转发给…<i class="tag">新</i></span><span class="chip new">引用<i class="tag">新</i></span><span class="chip">在网页中查看</span></div></div>
+        <div class="card"><b>Claude</b> <span class="mut" style="color:var(--you)">· 生成中 12s</span><p class="mut" style="margin:6px 0">先区分错误类型：可重试的网络错误用指数退避，业务错误不要重试……</p><div class="row"><span class="chip">展开</span><span class="chip off">转发给…</span></div></div>
+        <div class="card" style="border-style:dashed"><b>Gemini</b><p class="mut" style="margin:6px 0">没登录，本轮没发给它。</p><span class="chip">打开网页登录</span></div>
+      </div>
+      <div class="card new"><b style="font-size:13px">转发（点「转发给…」后行内展开）</b><div class="row" style="margin-top:6px"><span class="chip">● Claude</span><span class="chip off">Gemini 未登录</span><span class="chip">附言（可选）…</span><button class="btn sm pri">发送</button></div><p class="mut" style="margin-top:6px">发出的是完整原文 + 附言，注明来源 AI；目标 AI 正在回复时按钮不可用。</p></div>
+      <div class="card"><div class="mut" style="margin-bottom:8px">继续问…</div><div class="row"><span class="chip">● ChatGPT</span><span class="chip">● Claude</span><span class="chip off">○ Gemini</span><span class="chip">模式：自由 ▾</span><span class="chip">附件</span><button class="btn pri" style="margin-left:auto">发送</button></div></div>
+      <p class="mut">模式只有：自由、辩论、咨询、双 AI 讨论。选「双 AI 讨论」会提示「将在任务里运行」，发送等同于 /grill。</p>
+    </div>
+  </div></div>
+</section>
+
+<section class="pg" id="p-s3">
+  <p class="note"><b>阶段与流程编辑页。</b>阶段是一个工作环节，流程是把几个阶段排成顺序。内置的可复制后编辑，自建的可改、可删、可导出。「怎么算结束 / 失败时」是写给 CC 的约定，由 CC 参照执行。</p>
+  <div class="legend"><span><i class="sw"></i>本次新做（整页）</span></div>
+  <div class="win"><div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span>阶段与流程</span></div>
+  <div class="cols3">
+    <div class="side"><div style="color:var(--ink);font-weight:600">＋ 新建流程</div><h6>我的流程</h6><div class="on">快速开发</div><div>CC 设计 · 并行开发</div><div>只讨论需求</div><h6>阶段库</h6><div>＋ 新建阶段</div><div>想需求</div><div>定方案</div><div>执行与审计</div><div>总结交付</div><h6>其他</h6><div>CC 协调设置</div></div>
+    <div class="body" style="display:grid;gap:6px;align-content:start;border-right:1px solid var(--line)">
+      <div class="row sp"><b style="font-size:15px">快速开发 <span class="chip" style="font-weight:400">内置</span></b><span class="row"><span class="chip">复制后编辑</span><span class="chip">导出…</span></span></div>
+      <div class="stage"><b>1 定方案 <span class="mut" style="font-weight:400;float:right">⋮⋮</span></b><span class="mut">CC 单人 · 你确认后结束</span></div>
+      <div class="ins">＋ 在这里插入阶段</div>
+      <div class="stage sel"><b>2 执行与审计 <span class="mut" style="font-weight:400;float:right">⋮⋮</span></b><span class="mut">主写 + 审计 · GPT 写 / GPT 审 / CC 验证</span><span class="mut">返工上限 3 轮</span></div>
+      <div class="ins">＋ 在这里插入阶段</div>
+      <div class="stage"><b>3 总结交付 <span class="mut" style="font-weight:400;float:right">⋮⋮</span></b><span class="mut">CC 单人 · 你验收后结束</span></div>
+      <div class="ins">＋ 添加阶段（从阶段库选，或新建）</div>
+    </div>
+    <div class="body" style="display:grid;gap:10px;align-content:start">
+      <b>编辑阶段：执行与审计</b>
+      <div><p class="mut">协作方式</p><div class="row"><span class="chip">单人</span><span class="chip">讨论</span><span class="chip on">主写 + 审计</span><span class="chip">并行执行</span></div></div>
+      <div><p class="mut">参与者与角色</p><div class="row"><span class="chip">GPT · 执行</span><span class="chip">GPT · 审计（新会话）</span><span class="chip">CC · 本机验证</span><span class="chip off">＋ 添加</span></div></div>
+      <div><p class="mut">思考深度</p><span class="chip">最高 ▾</span></div>
+      <div><p class="mut">怎么算结束 · CC 参照执行</p><span class="chip">审计 PASS 且 CC 本机验证通过 ▾</span></div>
+      <div><p class="mut">失败时 · CC 参照执行</p><span class="chip">返工满 3 轮停下，等我决定 ▾</span></div>
+      <div class="new" style="padding:8px"><p class="mut">补充说明（可选，写给 CC）</p><p class="mut" style="color:var(--ink3)">例如：审计只看 src/ 下的改动…</p></div>
+      <p class="mut">固定规则只读展示，不可关闭：作者不审自己；审计针对完整 HEAD；Prodex 结果不明先恢复不重发。</p>
+    </div>
+  </div></div>
+  <p class="mut" style="margin-top:10px">改被多个流程共用的阶段时，行内提示「这会同时改变 N 个流程」，给「只改这个流程」与「改阶段库里的」两个按钮，不默认选。导入同名冲突让你选「保留两者 / 覆盖 / 取消」。</p>
+</section>
+
+<section class="pg" id="p-s4">
+  <p class="note"><b>任务现场补全。</b>已有部分（现在、需要你、证据、交付栏）不改，新增虚线部分。因为 ai-one 不指挥 CC，暂停、留言都是写 GitHub，并写明限制。</p>
+  <div class="legend"><span><i class="sw"></i>本次新做</span></div>
+  <div class="win"><div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span>任务 · ai-one #42</span></div>
+  <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr)" class="t4">
+    <div class="body" style="display:grid;gap:10px;align-content:start;border-right:1px solid var(--line)">
+      <div class="row sp"><b style="font-size:16px">总览页：一眼看到需要我处理的事</b><span class="row"><span class="chip">● 返工中 第 2/3 轮</span><span class="chip new">暂停<i class="tag">新</i></span></span></div>
+      <p class="mut new" style="padding:4px 8px">已暂停时显示「已暂停（你下的指令）」，按钮变「继续」。旁边固定小字：CC 正在执行的这一步会跑完，下一步起读到暂停就停。</p>
+      <div class="card" style="background:var(--youbg);border-color:var(--you)"><b>需要你：验收 PR #43</b><p class="mut">审计 PASS（HEAD a1c93e0）；CC 本机验证 112/112。</p><div class="row" style="margin-top:6px"><button class="btn pri sm">查看验收单</button><span class="chip new">验收通过（不会合并）<i class="tag">新</i></span><span class="chip new">要求修改…<i class="tag">新</i></span></div><p class="mut" style="margin-top:6px">HEAD 变化后，「验收通过」变成「HEAD 已更新，先刷新」。</p></div>
+      <div class="card"><b>执行与审计</b>
+        <div class="row sp" style="margin-top:4px"><span class="mut">● GPT 推送 a1c93e0 · 已回读</span><span class="chip new">派工单 ›</span></div>
+        <div class="row sp"><span class="mut">● CC 本机运行 112/112</span><span class="chip new">测试 ›</span></div>
+        <div class="row sp"><span class="mut">● 审计 REVISE：2 项</span><span class="chip new">审计原文 ›</span></div>
+      </div>
+      <div class="card new"><div class="row"><span class="mut" style="flex:1">给 CC 留言… 写成 Issue 评论，注明来自你；CC 下次读到 Issue 时会看到。</span><button class="btn sm pri">留言</button></div></div>
+      <div class="card new"><b style="font-size:13px">所有写入先行内确认</b><p class="mut">显示将发出的完整文字，你点「发出」才执行；写完回读 GitHub 再更新界面。回读不到就显示「已发出，但没能确认」，不自动重试。</p></div>
+    </div>
+    <div class="body" style="background:var(--sunken);display:grid;gap:10px;align-content:start">
+      <div class="row sp"><b>检查器抽屉 <i class="tag">新</i></b><span class="mut">Esc 关闭</span></div>
+      <div class="seg"><button class="on">派工单</button><button>原始回复</button><button>Diff</button><button>测试</button></div>
+      <p class="mut">Prodex 回执 · request_id 已保存 · 状态：已完成</p>
+      <div class="card" style="font-family:var(--mono);font-size:11px;color:var(--ink2)">发给 ChatGPT 的首条消息（节选）…<br>仓库：owner/repo　Issue：#42　HEAD：a1c93e0…</div>
+      <p class="mut">只读。「原始回复」只显示已回读的 GitHub 内容，不含 AI 网页对话正文；Diff 链到 GitHub。</p>
+      <div class="card new"><b style="font-size:13px">接管（右栏「团队」每个网页 AI 一行）<i class="tag">新</i></b><p class="mut">切到那个 AI 的真实网页，你自己操作；顶部提示条：ai-one 不会读取网页内容，需要时用留言告诉 CC。本地 Agent（CC、Codex）没有「接管」。</p></div>
+    </div>
+  </div></div>
+</section>
+
+<section class="pg" id="p-s5">
+  <p class="note"><b>讨论接入工作台。</b>组件已有（#81）。「想需求」任务的现场：行是环节，列是参与者，每格一句摘要；独立思考时两列同时「看不到对方」。</p>
+  <div class="win"><div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span>任务 · 讨论（无仓库）</span></div><div class="body" style="display:grid;gap:12px">
+    <div class="row"><span class="chip">阶段：想需求 ●</span></div>
+    <div class="card scroll"><table class="mx"><tr><th>环节</th><th>GPT</th><th>Argon</th><th>审计（Opus 网页）</th></tr>
+      <tr><td>独立思考</td><td>思考中，看不到对方</td><td>思考中，看不到对方</td><td>—</td></tr>
+      <tr><td>第 1 轮交换</td><td>赞成检测网页提示，担心误判</td><td>倾向字数阈值，更稳定</td><td>—</td></tr>
+      <tr><td>审计</td><td colspan="2">两方依据类型不同：一方引用实测，一方为推断</td><td>指出缺证据：网页提示是否稳定出现</td></tr>
+      <tr><td>汇总</td><td colspan="3"><b>结论、仍有分歧、待补证据、建议下一步</b></td></tr></table></div>
+    <div class="card" style="border-color:var(--you)"><b>汇总</b><p class="mut">「同意」是 AI 的声明，不等于事实已验证。</p><div class="row" style="margin-top:6px"><button class="btn pri sm">转入定方案</button><button class="btn sm">继续追问</button><button class="btn sm">结束并保存</button></div><p class="mut" style="margin-top:6px">「转入定方案」会建一个 Task Issue（正文=汇总），不自动开跑。讨论任务没有 Issue 时，留言、暂停等写入按钮不显示。</p></div>
+  </div></div>
+</section>
+
+<section class="pg" id="p-s6">
+  <p class="note"><b>CC 协调设置。</b>存本机。创建 Task Issue 时渲染成正文里的「协调简报」小节，CC 读到就按它办。页面上明确写「这些偏好由 CC 参照执行」。</p>
+  <div class="win"><div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span>阶段与流程 › CC 协调设置</span></div><div class="body" style="display:grid;gap:12px;max-width:640px">
+    <div class="card"><p class="mut">返工上限</p><div class="row"><span class="chip">3 轮 ▾</span><span class="mut">审计 REVISE 返工超过这个数就停下来问你</span></div></div>
+    <div class="card"><p class="mut">超限后</p><div class="row"><span class="chip on">问我</span><span class="chip">先请 Opus 网页裁决，再问我</span></div></div>
+    <div class="card"><p class="mut">额度紧张时</p><div class="row"><span class="chip on">CC 自动改派并通知我</span><span class="chip">先问我</span></div></div>
+    <div class="card"><p class="mut">登录失效时</p><div class="row"><span class="chip on">先问我</span><span class="chip">用其他 AI 代替并通知我</span></div></div>
+    <div class="card"><p class="mut">优先使用（你的标注）</p><div class="row"><span class="chip">GPT：执行、审计</span><span class="chip">Opus：架构、终审</span><span class="chip">Argon：独立想法</span></div></div>
+    <div class="card new"><b style="font-size:13px">简报预览（建 Issue 时写入正文）<i class="tag">新</i></b><p class="mut" style="font-family:var(--mono)">## 协调简报<br>- 返工上限：3 轮，超限问用户<br>- 额度紧张：自动改派并通知用户<br>- 登录失效：先问用户</p></div>
+  </div></div>
+</section>
+
+<section class="pg" id="p-split">
+  <p class="note"><b>实施拆分。</b>评审通过后，在 #32 下建一个总 Spec，按线拆分，每线一个工作树。合并顺序由依赖决定。</p>
+  <div class="card scroll"><table>
+    <tr><th>线</th><th>内容</th><th>依赖</th></tr>
+    <tr><td>L0 视觉基线</td><td>衬线（Claude 风格）用于大标题和 AI 回复正文，其余无衬线；留白加大、少用边框</td><td>无，最先合并</td></tr>
+    <tr><td>L8 额度 HUD</td><td>移植 Agent HUD Open（Tauri/Rust/React，Apache-2.0）：屏幕边缘 HUD、额度、token 统计</td><td>无，独立并行（并入 #82）</td></tr>
+    <tr><td>L1 GitHub 写入桥</td><td>五个白名单动作，写后回读</td><td>无</td></tr>
+    <tr><td>L2 流程与阶段</td><td>数据模型、本机存储、编辑页、导入导出</td><td>无</td></tr>
+    <tr><td>L3 CC 协调设置</td><td>存储、简报渲染、设置页</td><td>与 L2 共用存储工具</td></tr>
+    <tr><td>L4 发起任务</td><td>输入框四种模式、结果卡</td><td>L1、L2、L3</td></tr>
+    <tr><td>L5 任务现场补全</td><td>抽屉、接管、留言/暂停/验收、通知</td><td>L1</td></tr>
+    <tr><td>L6 聊天页</td><td>对比卡片、网页标签、转发/引用</td><td>无</td></tr>
+    <tr><td>L7 讨论接入</td><td>矩阵与汇总卡接进任务现场</td><td>#81 已合并；L4 提供入口</td></tr>
+  </table></div>
+  <p class="mut" style="margin-top:10px">建议顺序：L0 最先 → L1、L2、L6 并行 → L3 → L4 → L5、L7；L8 独立并行。资源页（#98 / #82）与这些线文件不重叠，继续独立进行。</p>
+</section>
+</div>
+
+<script>
+var pages=['overview','s1','s2','s3','s4','s5','s6','split'];
+function show(){
+  var h=(location.hash||'').replace('#','');if(pages.indexOf(h)<0)h='overview';
+  pages.forEach(function(p){document.getElementById('p-'+p).classList.toggle('on',p===h)});
+  document.querySelectorAll('#nav a').forEach(function(a){a.classList.toggle('on',a.getAttribute('href')==='#'+h)});
+}
+window.addEventListener('hashchange',show);show();
+var M={
+chat:{ph:'问点什么，可以同时问多个 AI…',repo:false,go:'发送',d:[
+ '<div class="row"><span class="mut">发给</span><span class="chip">● ChatGPT</span><span class="chip">● Claude</span><span class="chip off">○ Gemini 未登录</span><span class="chip off">○ Grok 未登录</span></div>',
+ '<p class="mut">点发送后进入「聊天」页的对比视图；之后可以点「转为任务」。一个都没登录时按钮不可用。</p>']},
+grill:{ph:'要讨论的需求或问题…',repo:false,go:'开始讨论',d:[
+ '<div class="row"><span class="mut">团队</span><span class="chip">● GPT · 讨论</span><span class="chip off">○ Argon · 讨论</span><span class="chip off">○ Opus 网页 · 审计（可选）</span></div>',
+ '<p class="warn">预检：Argon 没登录。打开网页登录　或　本次用 Claude 代替（不会静默换人）</p>',
+ '<p class="mut">在 ai-one 内直接运行讨论引擎，不经 CC。独立作答 → 交换完整回复 → 汇总。AI 同意不等于事实已验证。</p>']},
+cc:{ph:'描述要做的事。CC 会自己调查、派 GPT 执行或审计、安排返工…',repo:true,go:'交给 CC',d:[
+ '<div class="row"><span class="chip">● CC 协调</span><span class="mut">经 Prodex 派 GPT 执行/审计，需要时请 Argon、Opus</span><span class="chip">调整协调偏好</span></div>',
+ '<p class="mut">点「交给 CC」后：ai-one 建 Task Issue（需求原文 + 协调简报），再把接手指令放进剪贴板，你粘贴给 Claude Code。</p>']},
+flow:{ph:'描述要做的事，流程会按阶段推进…',repo:true,go:'开始流程',d:[
+ '<div class="row"><span class="mut">流程</span><span class="chip">快速开发 ▾</span><span class="mut">定方案 → 执行与审计 → 总结交付</span></div>',
+ '<div class="row"><span class="mut">本次参与者</span><span class="chip">GPT</span><span class="chip">CC</span><span class="chip off">Argon</span><span class="chip">临时调整</span><span class="mut">（不改保存的流程，只写进这次的 Issue）</span></div>',
+ '<p class="mut">流程也由 CC 推进，流程定义会写进 Issue 正文。</p>']}
+};
+function setMode(m){var o=M[m];
+  document.getElementById('ph').textContent=o.ph;
+  document.getElementById('repo').hidden=!o.repo;
+  document.getElementById('go').textContent=o.go;
+  document.getElementById('detail').innerHTML=o.d.join('');
+  document.querySelectorAll('#seg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m)});}
+document.getElementById('seg').addEventListener('click',function(e){if(e.target.dataset.m)setMode(e.target.dataset.m)});
+setMode('cc');
+</script>
