@@ -19,49 +19,75 @@ export const OWNERSHIP_LIMITS = { sessionKey: 64, threadUrl: 300 };
 const TASK_PATTERN = /^#?\d{1,6}$/;
 const SESSION_KEY_PATTERN = new RegExp(`^[A-Za-z0-9._:-]{1,${OWNERSHIP_LIMITS.sessionKey}}$`);
 const THREAD_HOST = 'chatgpt.com';
+// A thread is either /c/<id> or, inside a project, /g/<project>/c/<id>. Anything else - a
+// query string, a fragment, user:pass in the authority - is refused: the URL is written to a
+// file other sessions read, so it must not be able to carry a token or credentials.
+const THREAD_PATH_PATTERN = /^\/(?:c\/[A-Za-z0-9-]{8,64}|g\/[A-Za-z0-9._-]{1,64}\/c\/[A-Za-z0-9-]{8,64})$/;
 
-// Validates and normalizes the three ownership fields. Anything else is rejected here rather
-// than written to disk, so a typo cannot leave a claim that the next session has to interpret.
-export function normalizeOwnership({ task, sessionKey, threadUrl } = {}) {
-  const ownership = {};
-  if (task !== undefined && task !== null) {
-    const value = String(task).trim();
-    if (!TASK_PATTERN.test(value)) {
-      throw new Error(`--task must be a task number like 71 or #71, got ${JSON.stringify(task)}`);
-    }
-    ownership.task = value.startsWith('#') ? value : `#${value}`;
-  }
-  if (sessionKey !== undefined && sessionKey !== null) {
-    const value = String(sessionKey);
+// One validator per field, returning a value or the reason it was refused. `normalizeOwnership`
+// throws on refusal (a typo must not be written); `claimOwnership` drops the value instead (a
+// hand-edited file must not break `list`, and must not leak whatever it was edited to say).
+const OWNERSHIP_FIELDS = {
+  task(raw) {
+    const value = String(raw).trim();
+    if (!TASK_PATTERN.test(value)) return { error: `--task must be a task number like 71 or #71, got ${JSON.stringify(raw)}` };
+    return { value: value.startsWith('#') ? value : `#${value}` };
+  },
+  sessionKey(raw) {
+    const value = String(raw);
     if (!SESSION_KEY_PATTERN.test(value)) {
-      throw new Error(`--session must be 1-64 characters of letters, digits, dot, underscore, colon or dash (it is shown to other sessions), got ${JSON.stringify(sessionKey)}`);
+      return { error: `--session must be 1-64 characters of letters, digits, dot, underscore, colon or dash (it is shown to other sessions), got ${JSON.stringify(raw)}` };
     }
-    ownership.sessionKey = value;
-  }
-  if (threadUrl !== undefined && threadUrl !== null) {
-    const value = String(threadUrl);
+    return { value };
+  },
+  threadUrl(raw) {
+    const value = String(raw);
     if (value.length > OWNERSHIP_LIMITS.threadUrl) {
-      throw new Error(`--thread-url must be at most ${OWNERSHIP_LIMITS.threadUrl} characters, got ${value.length}`);
+      return { error: `--thread-url must be at most ${OWNERSHIP_LIMITS.threadUrl} characters, got ${value.length}` };
     }
     let url;
     try {
       url = new URL(value);
     } catch {
-      throw new Error(`--thread-url must be a full URL such as https://${THREAD_HOST}/c/<id>, got ${JSON.stringify(threadUrl)}`);
+      return { error: `--thread-url must be a full URL such as https://${THREAD_HOST}/c/<thread-id>, got ${JSON.stringify(raw)}` };
     }
-    if (url.protocol !== 'https:') throw new Error(`--thread-url must use https, got ${url.protocol}`);
-    if (url.hostname !== THREAD_HOST) throw new Error(`--thread-url must be on ${THREAD_HOST}, got ${url.hostname}`);
-    ownership.threadUrl = value;
+    if (url.protocol !== 'https:') return { error: `--thread-url must use https, got ${url.protocol}` };
+    if (url.hostname !== THREAD_HOST) return { error: `--thread-url must be on ${THREAD_HOST}, got ${url.hostname}` };
+    if (url.username || url.password) return { error: '--thread-url must not carry credentials (user:pass@)' };
+    if (url.search) return { error: `--thread-url must not carry a query string, got ${url.search}` };
+    if (url.hash) return { error: `--thread-url must not carry a fragment, got ${url.hash}` };
+    if (!THREAD_PATH_PATTERN.test(url.pathname)) {
+      return { error: `--thread-url must point at a thread (/c/<thread-id> or /g/<project>/c/<thread-id>), got ${url.pathname}` };
+    }
+    return { value };
+  },
+};
+
+export const OWNERSHIP_KEYS = Object.keys(OWNERSHIP_FIELDS);
+
+// Validates and normalizes the three ownership fields. Anything else is rejected here rather
+// than written to disk, so a typo cannot leave a claim that the next session has to interpret.
+export function normalizeOwnership(fields = {}) {
+  const ownership = {};
+  for (const key of OWNERSHIP_KEYS) {
+    if (fields[key] === undefined || fields[key] === null) continue;
+    const checked = OWNERSHIP_FIELDS[key](fields[key]);
+    if (checked.error) throw new Error(checked.error);
+    ownership[key] = checked.value;
   }
   return ownership;
 }
 
-// Only the three known fields are ever copied out of a claim file, so a hand-edited claim
-// cannot smuggle extra data into `list`.
+// Reads ownership back out of a claim file. Values are re-validated, not just the key names, so
+// an edited claim can neither smuggle a credential into `list` nor fake a field it does not
+// have; anything that does not validate is simply not shown.
 export function claimOwnership(claim) {
   const ownership = {};
-  for (const key of ['task', 'sessionKey', 'threadUrl']) {
-    if (typeof claim?.[key] === 'string' && claim[key]) ownership[key] = claim[key];
+  for (const key of OWNERSHIP_KEYS) {
+    const raw = claim?.[key];
+    if (typeof raw !== 'string' || !raw) continue;
+    const checked = OWNERSHIP_FIELDS[key](raw);
+    if (checked.value) ownership[key] = checked.value;
   }
   return ownership;
 }

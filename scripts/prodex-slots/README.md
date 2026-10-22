@@ -60,32 +60,51 @@ credentials.
 ## Who a slot serves
 
 A claim only says "busy". Add ownership so another session can tell which task, session and
-thread a busy slot is working on:
+thread a busy slot is working on.
+
+Starting a new chat - there is no thread yet, so leave `--thread-url` out:
 
 ```bash
 node scripts/prodex-slots/cli.mjs run --slot auto --task 71 --session s1 \
-  --thread-url https://chatgpt.com/c/<id> -- --new-chat --effort high
+  -- --new-chat --effort high
 ```
+
+Continuing one thread - the ownership URL and the ask target must be the same URL, otherwise
+the claim would describe a different conversation than the one being written to:
+
+```bash
+THREAD='https://chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013'
+node scripts/prodex-slots/cli.mjs run --slot auto --task 71 --session s1 --thread-url "$THREAD" \
+  -- --target-url "$THREAD" --confirm-target --effort high
+```
+
+Quote the URL. `--thread-url https://chatgpt.com/c/<id>` without quotes is legal for this tool
+but the shell reads `<id>` as a redirection, and the flag then receives something else.
 
 | Flag | Accepted | Stored as |
 |---|---|---|
 | `--task` | `71` or `#71` | `#71` |
 | `--session` | 1-64 chars of `A-Z a-z 0-9 . _ : -` | as given |
-| `--thread-url` | `https://chatgpt.com/...`, at most 300 chars | as given |
+| `--thread-url` | `https://chatgpt.com/c/<thread-id>` or `https://chatgpt.com/g/<project>/c/<thread-id>`, at most 300 chars | as given |
 
 `list` appends them to the claim line, and `--json` puts them in `busyWith`:
 
 ```
-slot 2  port 9334  ready  busy (pid 1234) #71 s1 https://chatgpt.com/c/<id>
+slot 2  port 9334  ready  busy (pid 1234) #71 s1 https://chatgpt.com/c/6ad9e501-...
 ```
 
-Three limits, and they are deliberate:
+Five limits, and they are deliberate:
 
 - Ownership comes only from these flags. It is never read out of the ask arguments, stdin or
   the page, so a typo cannot silently become "who this slot belongs to".
 - Only these three fields are stored. Reply text, ask stdin/stdout, cookies and tokens are not
-  written to a claim, and `list` copies out only the three known keys, so a hand-edited claim
-  cannot smuggle anything else into the output.
+  written to a claim.
+- A thread URL may not carry credentials (`user:pass@`), a query string or a fragment, and must
+  point at a thread path. The URL goes into a file other sessions read, so it is not a place to
+  park a token; a `?token=...` is refused rather than stored.
+- Values are re-validated when they are read back, not just the key names. A hand-edited claim
+  with an over-long or malformed field has those fields dropped from `list` instead of printed,
+  and cannot add keys that are not part of this set.
 - They are refused on `list`, `add`, `ensure` and `release`, because only `run` takes a claim.
 
 `--session` is this tool's own field. `prodex ... ask --session-key` is a different thing: it
