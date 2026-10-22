@@ -39,6 +39,14 @@ describe('dispatch metadata parser', () => {
     expect(parseDispatchSnapshot({ ...snapshot([{ ...session, session_key: 'shared' }]), slots }).events[0].issue).toBeUndefined();
     expect(parseDispatchSnapshot({ ...snapshot([{ ...session, session_key: 'shared', thread: 'https://chatgpt.com/c/6ad9fa49-d908-83e9-a9dd-f183da27abd6' }]), slots: [slots[0]] }).events[0].issue).toBeUndefined();
   });
+  it('never labels historical dispatches with a newer claim after thread/session reuse', () => {
+    const thread = 'https://chatgpt.com/c/6ad9fa49-d908-83e9-a9dd-f183da27abd6';
+    for (const hasThread of [true, false]) {
+      const model = parseDispatchSnapshot({ ...snapshot([{ ...session, session_key: 'shared', thread: hasThread ? thread : undefined, created_at: '2026-10-21T12:00:00Z', last_used_at: '2026-10-21T12:01:00Z' }]), slots: [{ id: 1, port: 9333, claim_present: true, task: '#81', session_key: 'shared', thread: hasThread ? thread : undefined, started_at: Date.parse('2026-10-22T12:00:00Z') }] });
+      expect(model.events[0].issue).toBeUndefined();
+      expect(model.slots[0].task).toBe('#81');
+    }
+  });
   it('does not infer Issue ownership from arbitrary task names or session text', () => {
     expect(parseDispatchSnapshot(snapshot([{ ...session, session_key: 'maybe-issue-80' }])).events[0].issue).toBeUndefined();
   });

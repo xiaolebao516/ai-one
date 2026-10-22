@@ -61,13 +61,8 @@ export function parseDispatchSnapshot(input: unknown): DispatchSnapshot {
     const slot: DispatchSlot = { id, port: 9332 + id, state: row.invalid === true ? 'unknown' : row.claim_present === true ? row.stale === true ? 'stale' : 'claimed' : 'idle', browserState: 'unprobed', pid: positiveInt(row.pid), task: issue(row.task), sessionKey: sessionKey(row.session_key), threadUrl: threadUrl(row.thread), startedAt: typeof row.started_at === 'number' && row.started_at > 0 && row.started_at < 8.64e15 ? new Date(row.started_at).toISOString() : undefined };
     slots.push(slot);
   }
-  // Issue associations are evidence only when explicit slot ownership matches the session or thread.
-  for (const event of events) {
-    const matches = slots.filter((s) => s.state === 'claimed' && (
-      event.threadUrl ? s.threadUrl === event.threadUrl : event.sessionKey && s.sessionKey === event.sessionKey
-    ));
-    event.issue = matches.length === 1 ? matches[0].task : undefined;
-  }
+  // A live claim describes current slot ownership, not the Issue of a historical dispatch.
+  // Keep its explicit task on the slot; never backfill historical events from a reused thread/key.
   events.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '') || a.id.localeCompare(b.id));
   const warnings: string[] = [];
   const skipped = positiveInt(raw.skipped);
