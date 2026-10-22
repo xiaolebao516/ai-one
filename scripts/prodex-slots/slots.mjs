@@ -38,8 +38,11 @@ export function configPath(home) {
 
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-// Short critical sections only. The file is created exclusively; one older than staleMs belongs
-// to a holder that died and is replaced. fn must be synchronous.
+// Short critical sections only (a few file operations). The file is created exclusively. A file
+// older than staleMs means its holder stopped inside the section; it is reported, never deleted
+// automatically: without OS file locks two processes cannot both judge it stale and remove it
+// safely, and a wrongly removed live mutex would let two processes in at once.
+// fn must be synchronous.
 export function withMutex(file, fn, { timeoutMs = 5000, staleMs = 10_000 } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const deadline = Date.now() + timeoutMs;
@@ -50,10 +53,14 @@ export function withMutex(file, fn, { timeoutMs = 5000, staleMs = 10_000 } = {})
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
     }
+    let age;
     try {
-      if (Date.now() - fs.statSync(file).mtimeMs > staleMs) fs.rmSync(file, { force: true });
+      age = Date.now() - fs.statSync(file).mtimeMs;
     } catch {
       continue;
+    }
+    if (age > staleMs) {
+      throw new Error(`${file} was left behind by a process that stopped inside a short critical section. Delete it by hand if no other prodex-slots command is running.`);
     }
     if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${file}`);
     sleepSync(25);
@@ -107,7 +114,8 @@ export function slotEnv(slot, base = process.env) {
 // `prodex pro browser check` prints `chatgpt: <status> ...`; only that line is interpreted.
 export function parseCheck(text) {
   const match = /^chatgpt:\s*(\S+)(.*)$/m.exec(String(text));
-  if (!match) return { state: 'unknown' };
+  // No status line at all means the probe itself failed, which is not something a login fixes.
+  if (!match) return { state: 'error', detail: 'check printed no chatgpt status line' };
   const [, status, rest] = match;
   const detail = `${status}${rest}`.trim();
   if (status === 'browser_unreachable') return { state: 'down' };
@@ -175,7 +183,18 @@ export function claimSlot(home, id, { pid = process.pid, alive = processAlive, n
           } catch { /* claim already gone */ }
         }, beatMs);
         beat.unref();
-        return { ok: true, owner, release: () => { clearInterval(beat); return releaseClaim(home, id, owner); } };
+        return {
+          ok: true,
+          owner,
+          release: () => {
+            clearInterval(beat);
+            try {
+              return releaseClaim(home, id, owner);
+            } catch {
+              return false; // a leftover claim dies with its owner or its heartbeat
+            }
+          },
+        };
       } catch (error) {
         if (error.code !== 'EEXIST') throw error;
       }
@@ -197,9 +216,13 @@ export function claimSlot(home, id, { pid = process.pid, alive = processAlive, n
 }
 
 // With `owner` set only that owner's claim is removed; without it the claim is dropped
-// unconditionally (manual `release`).
-export function releaseClaim(home, id, owner = null) {
-  if (owner !== null && readClaim(home, id)?.owner !== owner) return false;
-  fs.rmSync(claimFile(home, id), { force: true });
-  return true;
+// unconditionally (manual `release`). The owner check and the delete happen under the same
+// mutex that guards removal of dead claims, so the file cannot be swapped between the two.
+export function releaseClaim(home, id, owner = null, mutexOptions = {}) {
+  const file = claimFile(home, id);
+  return withMutex(`${file}.reap`, () => {
+    if (owner !== null && readClaim(home, id)?.owner !== owner) return false;
+    fs.rmSync(file, { force: true });
+    return true;
+  }, mutexOptions);
 }

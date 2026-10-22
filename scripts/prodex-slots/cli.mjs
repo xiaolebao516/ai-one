@@ -139,8 +139,7 @@ async function checkWithRestore(slot, deps) {
 async function ensureSlots(slots, deps, { pollMs = 2000, timeoutMs = 20_000 } = {}) {
   const results = [];
   for (const slot of slots) {
-    let { state } = await checkWithRestore(slot, deps);
-    let detail;
+    let { state, detail } = await checkWithRestore(slot, deps);
     if (state === 'down') {
       const launched = await deps.launchHeaded(slot);
       if (launched && launched.ok === false) {
@@ -150,7 +149,7 @@ async function ensureSlots(slots, deps, { pollMs = 2000, timeoutMs = 20_000 } = 
         const deadline = deps.now() + timeoutMs;
         while (deps.now() < deadline) {
           await deps.sleep(pollMs);
-          ({ state } = await checkWithRestore(slot, deps));
+          ({ state, detail } = await checkWithRestore(slot, deps));
           if (state !== 'down') break;
         }
       }

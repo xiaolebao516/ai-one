@@ -32,12 +32,11 @@ function harness({ states = {}, alive = () => true, home = tempHome(), askExit =
   return { deps, log, run, home };
 }
 
-// Starts `count` children that act at the same instant and returns their parsed results.
-async function collide(mode, home, count, slotId = '') {
-  const startAt = Date.now() + 1500;
-  const endAt = startAt + 2000;
+// Starts `count` children that rendezvous before acting, so they really collide, and returns
+// their parsed results.
+async function collide(mode, home, count, slotBase = 0, rounds = 1) {
   const children = Array.from({ length: count }, () => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [childScript, mode, home, String(startAt), String(endAt), String(slotId)]);
+    const child = spawn(process.execPath, [childScript, mode, home, String(count), String(slotBase), String(rounds)]);
     let stdout = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.on('error', reject);
@@ -87,7 +86,39 @@ test('parseCheck reads only the chatgpt status line', () => {
   assert.equal(parseCheck('chatgpt: blocked logged_in=false composer=false').state, 'needs-login');
   assert.equal(parseCheck('chatgpt: busy response_in_progress - ChatGPT is still generating').state, 'busy');
   assert.equal(parseCheck('chatgpt: blocked tab_not_visible visibility=hidden - hidden tab').state, 'hidden');
-  assert.equal(parseCheck('nothing useful').state, 'unknown');
+  assert.equal(parseCheck('chatgpt: something_new').state, 'unknown');
+  assert.equal(parseCheck('nothing useful').state, 'error', 'no status line = the probe failed, not a login problem');
+  assert.equal(parseCheck('').state, 'error');
+});
+
+test('releasing and reaping share one mutex, so release cannot delete a claim between check and delete', () => {
+  const home = tempHome();
+  const claim = claimSlot(home, 2, { pid: 111, alive: () => true });
+  const mutex = `${claimPath(home, 2)}.reap`;
+  fs.writeFileSync(mutex, 'someone else\n');
+  assert.throws(() => releaseClaim(home, 2, claim.owner, { timeoutMs: 100 }), /Timed out/);
+  assert.equal(readClaim(home, 2).owner, claim.owner, 'nothing was deleted while the mutex was held');
+  assert.equal(claim.release(), false, 'the handle swallows the failure; the claim dies with its owner');
+  fs.rmSync(mutex);
+  assert.equal(releaseClaim(home, 2, claim.owner), true);
+});
+
+test('a mutex left by a stopped process is reported, never deleted automatically', () => {
+  const home = tempHome();
+  addSlots(home, 1);
+  const mutex = `${path.join(home, 'slots.json')}.lock`;
+  fs.writeFileSync(mutex, '999\n');
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(mutex, old, old);
+  assert.throws(() => addSlots(home, 1), /left behind by a process.*Delete it by hand/);
+  assert.equal(fs.existsSync(mutex), true);
+  assert.equal(loadConfig(home).count, 2);
+  claimSlot(home, 3, { pid: 1, alive: () => true });
+  const reap = `${claimPath(home, 3)}.reap`;
+  fs.writeFileSync(reap, '999\n');
+  fs.utimesSync(reap, old, old);
+  assert.throws(() => claimSlot(home, 3, { pid: 2, alive: () => false }), /left behind by a process/);
+  assert.equal(readClaim(home, 3).pid, 1, 'the existing claim was left alone');
 });
 
 test('a live holder blocks a claim; a dead holder is reaped; release only drops the own claim', () => {
@@ -134,18 +165,24 @@ test('an unreadable claim counts as live until it is stale, then is replaced', (
   assert.equal(claimSlot(home, 2, { alive: () => false }).ok, true);
 });
 
-test('six real processes colliding on a dead claim: exactly one wins', async () => {
+const ROUNDS = 20;
+const winnersPerRound = (results) => Array.from({ length: ROUNDS }, (_, round) => results.filter((r) => r.results[round]).length);
+
+test('six real processes colliding on dead claims, 20 rounds: exactly one winner every round', async () => {
   const home = tempHome();
   fs.mkdirSync(path.dirname(claimPath(home, 2)), { recursive: true });
-  fs.writeFileSync(claimPath(home, 2), `${JSON.stringify({ owner: 'dead', pid: deadPid(), startedAt: 1 })}\n`);
-  const results = await collide('claim', home, 6, 2);
-  assert.equal(results.filter((r) => r.ok).length, 1);
+  const dead = deadPid();
+  for (let round = 0; round < ROUNDS; round++) {
+    fs.writeFileSync(claimPath(home, 2 + round), `${JSON.stringify({ owner: 'dead', pid: dead, startedAt: 1 })}\n`);
+  }
+  const results = await collide('claim', home, 6, 2, ROUNDS);
+  assert.deepEqual(winnersPerRound(results), Array(ROUNDS).fill(1));
 });
 
-test('six real processes colliding on a free slot: exactly one wins', async () => {
+test('six real processes colliding on free slots, 20 rounds: exactly one winner every round', async () => {
   const home = tempHome();
-  const results = await collide('claim', home, 6, 3);
-  assert.equal(results.filter((r) => r.ok).length, 1);
+  const results = await collide('claim', home, 6, 2, ROUNDS);
+  assert.deepEqual(winnersPerRound(results), Array(ROUNDS).fill(1));
 });
 
 test('four real processes adding a slot at once get four different ids', async () => {
@@ -214,6 +251,9 @@ test('a probe that cannot run is an error, not a request for the user to log in'
   const h = harness({ states: { 1: 'error' } });
   assert.equal(await h.run(['run', '--', '--new-chat']), EXIT.ERROR);
   assert.equal(h.log.asks.length, 0);
+  const ensure = harness({ states: { 1: 'error' } });
+  assert.equal(await ensure.run(['ensure']), EXIT.ERROR);
+  assert.match(ensure.log.err.join('\n'), /could not start or probe slot 1.*not a login problem/);
 });
 
 test('run waits while ready slots are busy and gives up after --wait-ms', async () => {

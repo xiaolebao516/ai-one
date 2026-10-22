@@ -60,14 +60,22 @@ out of shared logs. Claims store only a random owner id, the pid and a start tim
 
 - Claims are created complete and atomically (hard link of a finished temp file). A claim is
   dead if its owner pid is gone, or if it has had no heartbeat for 2 minutes (covers a recycled
-  pid). Deciding that and removing a dead claim happens under a short-lived mutex that re-reads
-  the file first, so a claim someone just took is never deleted. A claim file that cannot be
-  parsed counts as live until it is 2 minutes old.
+  pid). Deciding that, removing a dead claim and releasing a claim all happen under the same
+  short-lived mutex and re-read the file first, so a claim someone just took is never deleted
+  and an owner check cannot be separated from its delete. A claim file that cannot be parsed
+  counts as live until it is 2 minutes old.
 - `add` reads and rewrites the slot count under a mutex, so concurrent adds get different ids.
-- Both are covered by tests that start real processes at the same instant; they fail on the
-  earlier non-locking version of this code.
-- The mutex files are removed after 10 s if their holder crashed; that cleanup itself has a
-  tiny race that is only reachable after a crash. Needs a file system with hard links (NTFS).
+- The mutex is a file created exclusively. If its holder stopped inside the few-millisecond
+  section (crash, power loss), the file stays; once it is older than 10 s the command stops
+  with an error naming the file, and the file is deleted by hand. It is never removed
+  automatically: without OS file locks two processes cannot both judge it stale and remove it
+  safely. Needs a file system with hard links (NTFS).
+- Covered by tests that start real processes which rendezvous before every round (six
+  processes, 20 rounds of claiming; four processes adding at once) plus deterministic tests for
+  the release and stale-mutex paths. The two collision tests fail on the first version of this
+  code; the release and stale-mutex tests fail on the second.
+- A probe whose `check` prints no `chatgpt:` status line is an `error` (exit 1). A status word
+  this tool does not know is `unknown`, which `run` and `ensure` hand to the user (exit 3).
 
 ## How an agent uses it
 
