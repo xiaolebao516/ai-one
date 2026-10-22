@@ -29,6 +29,14 @@ import { SessionCheckpointNotice } from '../../SessionCheckpointNotice';
 import { SettingsUpdateRow, type SettingsUpdateRowLabels } from '../../SettingsUpdateRow';
 import { TaskHudEntry } from '../../TaskHudEntry';
 import { contrastRatio } from '../contrast';
+import { DiscussionMatrix } from '../../../stages/DiscussionMatrix';
+import { SummaryCard } from '../../../stages/SummaryCard';
+import {
+  buildDiscussionViewModel,
+  createDiscussionRunStateFromOutputs,
+  type DiscussionNodeStatus,
+  type DiscussionRunState,
+} from '../../../stages/discussionViewModel';
 import { readGalleryParams, tokenDifferences, writeGalleryParams, type GalleryParams } from './galleryParams';
 
 /*
@@ -122,6 +130,26 @@ function GallerySections({ skin, mode, compact }: { skin: V2SkinId; mode: V2Mode
   const [status, setStatus] = useState('all');
   const [repo, setRepo] = useState('all');
   const [pinned, setPinned] = useState(false);
+  const [discussionDemo, setDiscussionDemo] = useState<DiscussionDemoCase>('converged');
+  const [discussionReplayInput, setDiscussionReplayInput] = useState('');
+  const [discussionReplayState, setDiscussionReplayState] = useState<DiscussionRunState | null>(null);
+  const [discussionReplayError, setDiscussionReplayError] = useState('');
+  const discussionView = buildDiscussionViewModel(
+    discussionReplayState ?? createDiscussionDemoState(discussionDemo),
+  );
+  const loadDiscussionReplay = () => {
+    try {
+      const parsed: unknown = JSON.parse(discussionReplayInput);
+      if (!Array.isArray(parsed) || !parsed.every((item): item is string => typeof item === 'string')) {
+        setDiscussionReplayError('请粘贴有效的 JSON 字符串数组。');
+        return;
+      }
+      setDiscussionReplayState(createDiscussionRunStateFromOutputs(parsed));
+      setDiscussionReplayError('');
+    } catch {
+      setDiscussionReplayError('读取失败：请检查 JSON 格式，并确认数组不超过 11 项。');
+    }
+  };
   const definition = V2_SKINS[skin];
   const ids = (name: string) => `${skin}-${name}`;
 
@@ -134,6 +162,75 @@ function GallerySections({ skin, mode, compact }: { skin: V2SkinId; mode: V2Mode
 
       <Section id={ids('dispatch')} title="派工通道 / 派工回执" note="演示与本机元数据；仅展示，不提供派工或恢复操作">
         <DispatchGallery />
+      </Section>
+
+      <Divider />
+
+      <Section id={ids('discussion')} title="讨论阶段" note="D0 独立初评 → 最多 3 轮交换与审计">
+        <div className="flex min-w-0 flex-col gap-v2-md">
+          {discussionReplayState ? (
+            <Notice tone="done" title="真实记录回放">
+              当前矩阵只使用本页粘贴的输出文本，不会上传。解析不到的字段会显示“未提供”或“未能解析”。
+            </Notice>
+          ) : (
+            <Notice tone="unknown" title="演示数据">
+              以下场景均为合成数据，不代表真实讨论记录。
+            </Notice>
+          )}
+          <SegmentedControl
+            label="演示场景"
+            idBase={ids('discussion-demo')}
+            value={discussionDemo}
+            options={[
+              { value: 'converged', label: '完成且收敛' },
+              { value: 'unresolved', label: '未收敛' },
+              { value: 'timeout-skip', label: '超时 / 跳过' },
+              { value: 'audit-missing', label: '审计缺项' },
+              { value: 'running', label: '进行中' },
+            ]}
+            onChange={(value) => {
+              setDiscussionDemo(value as DiscussionDemoCase);
+              setDiscussionReplayState(null);
+              setDiscussionReplayError('');
+            }}
+          />
+          <DiscussionMatrix model={discussionView.matrix} />
+          <SummaryCard model={discussionView.summary} />
+          <Card variant="flat" className="flex min-w-0 flex-col gap-v2-md">
+            <SectionHeader title="用真实讨论记录回放" description="本页本地解析，不上传记录。" level={3} />
+            <p className="m-0 break-words text-v2-meta text-v2-ink-2">
+              粘贴 JSON 字符串数组，按顺序填写 first、second，然后依次填写每轮的 roundN_first、roundN_second、auditN；最多 11 项，允许只填前几项。
+            </p>
+            <textarea
+              aria-label="真实讨论输出 JSON 数组"
+              className="min-h-28 w-full min-w-0 resize-y rounded-v2-md border border-v2-line bg-v2-surface p-v2-md font-v2-mono text-v2-meta text-v2-ink"
+              rows={5}
+              value={discussionReplayInput}
+              onChange={(event) => setDiscussionReplayInput(event.target.value)}
+              placeholder={'["first 的完整输出", "second 的完整输出", "..."]'}
+            />
+            {discussionReplayError ? (
+              <Notice tone="block" title="无法加载回放">{discussionReplayError}</Notice>
+            ) : null}
+            <div className="flex flex-wrap gap-v2-sm">
+              <Button
+                disabled={!discussionReplayInput.trim()}
+                disabledReason={discussionReplayInput.trim() ? undefined : '请先粘贴 JSON 字符串数组。'}
+                onClick={loadDiscussionReplay}
+              >
+                加载真实输出数组
+              </Button>
+              <Button
+                onClick={() => {
+                  setDiscussionReplayState(null);
+                  setDiscussionReplayError('');
+                }}
+              >
+                恢复演示数据
+              </Button>
+            </div>
+          </Card>
+        </div>
       </Section>
 
       <Divider />
@@ -351,6 +448,85 @@ function GallerySections({ skin, mode, compact }: { skin: V2SkinId; mode: V2Mode
       </Section>
     </div>
   );
+}
+
+
+type DiscussionDemoCase = 'converged' | 'unresolved' | 'timeout-skip' | 'audit-missing' | 'running';
+
+function demoDecision(status: 'AGREE' | 'REVISE', proposal: string, issues: string): string {
+  return 'Synthetic reply with enough context for the structured deliberation parser.\n\n'
+    + '[[AI_ONE_DECISION:' + status + ']]\n'
+    + '[[AI_ONE_PROPOSAL:' + proposal + ']]\n'
+    + '[[AI_ONE_OPEN_ISSUES:' + issues + ']]';
+}
+
+function demoAudit(decision: 'CONTINUE' | 'FINISH', result: 'AGREED' | 'DISAGREEMENTS', question: string): string {
+  return 'Synthetic audit report. This is demonstration content only, not evidence from a real run.\n\n'
+    + '## Evidence-backed findings\nBoth sample participants supplied a structured decision.\n\n'
+    + '## Shared conclusions\nThe example scope is clear.\n\n'
+    + '## Disagreements\nThe remaining points are explicitly listed in the round outputs.\n\n'
+    + '## Evidence gaps\nIndependent runtime evidence has not been attached to this synthetic example.\n\n'
+    + '## Next steps\nRun verification in the target environment and preserve the result.\n\n'
+    + '[[AI_ONE_AUDIT_DECISION:' + decision + ']]\n'
+    + '[[AI_ONE_AUDIT_RESULT:' + result + ']]\n'
+    + '[[AI_ONE_AUDIT_QUESTION:' + question + ']]';
+}
+
+function createDiscussionDemoState(kind: DiscussionDemoCase): DiscussionRunState {
+  const outputs: Record<string, string> = {
+    first: 'Synthetic independent initial assessment from first.',
+    second: 'Synthetic independent initial assessment from second.',
+  };
+  const statusByNode: Record<string, DiscussionNodeStatus> = { first: 'done', second: 'done' };
+  const markDone = (nodeId: string, output: string) => {
+    outputs[nodeId] = output;
+    statusByNode[nodeId] = 'done';
+  };
+  const sharedProposal = 'Use an explicit typed discussion view model';
+  if (kind === 'converged') {
+    for (const round of [1, 2, 3]) {
+      markDone('round' + round + '_first', demoDecision('AGREE', sharedProposal, 'NONE'));
+      markDone('round' + round + '_second', demoDecision('AGREE', sharedProposal, 'NONE'));
+      markDone(
+        'audit' + round,
+        demoAudit(
+          round === 3 ? 'FINISH' : 'CONTINUE',
+          round === 3 ? 'AGREED' : 'DISAGREEMENTS',
+          round === 3 ? 'NONE' : 'Please attach independent runtime evidence',
+        ),
+      );
+    }
+  } else if (kind === 'unresolved') {
+    for (const round of [1, 2, 3]) {
+      markDone('round' + round + '_first', demoDecision('AGREE', sharedProposal, 'NONE'));
+      markDone('round' + round + '_second', demoDecision('REVISE', 'Keep the existing chat-only discussion view', 'Need proof of integration and usability'));
+      markDone(
+        'audit' + round,
+        demoAudit(
+          round === 3 ? 'FINISH' : 'CONTINUE',
+          'DISAGREEMENTS',
+          round === 3 ? 'NONE' : 'Please compare the conflicting implementation costs',
+        ),
+      );
+    }
+  } else if (kind === 'timeout-skip') {
+    markDone('round1_first', demoDecision('AGREE', sharedProposal, 'NONE'));
+    statusByNode.round1_second = 'timeout';
+    statusByNode.audit1 = 'skipped';
+    return {
+      outputs,
+      statusByNode,
+      timedOutNodeIds: ['round1_second'],
+      skippedNodeIds: ['audit1'],
+    };
+  } else if (kind === 'audit-missing') {
+    markDone('round1_first', demoDecision('AGREE', sharedProposal, 'NONE'));
+    markDone('round1_second', demoDecision('AGREE', sharedProposal, 'NONE'));
+  } else {
+    statusByNode.round1_first = 'running';
+    return { outputs, statusByNode, activeNodeIds: ['round1_first'] };
+  }
+  return { outputs, statusByNode };
 }
 
 const UPDATE_LABELS: SettingsUpdateRowLabels = {
