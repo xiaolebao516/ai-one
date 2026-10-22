@@ -37,7 +37,7 @@ export function DispatchReceipts({ snapshot, source, locale = 'zh-CN' }: { snaps
   const chinese = locale.startsWith('zh');
   const labels = chinese
     ? {
-        demo: '演示数据', local: '本机元数据', readOnly: '只读', record: '条记录',
+        demo: '演示数据', local: '本机元数据', readOnly: '只读',
         slotsAria: '派工槽位', receiptsAria: '派工回执列表', slot: '槽位', taskMissing: '任务未记录',
         sessionMissing: '会话未记录', port: '端口', browserUnprobed: '浏览器未探测', threadRecorded: '线程已记录',
         pid: 'PID', noRecords: '还没有可显示的派工记录',
@@ -47,7 +47,7 @@ export function DispatchReceipts({ snapshot, source, locale = 'zh-CN' }: { snaps
         recoveredNote: '恢复任务已有完成回执；未与旧超时记录自动合并。',
       }
     : {
-        demo: 'Demo data', local: 'Local metadata', readOnly: 'Read-only', record: 'record',
+        demo: 'Demo data', local: 'Local metadata', readOnly: 'Read-only',
         slotsAria: 'Dispatch slots', receiptsAria: 'Dispatch receipts', slot: 'Slot', taskMissing: 'Task not recorded',
         sessionMissing: 'Session not recorded', port: 'Port', browserUnprobed: 'Browser not probed', threadRecorded: 'Thread recorded',
         pid: 'PID', noRecords: 'No dispatch records to display',
@@ -61,7 +61,7 @@ export function DispatchReceipts({ snapshot, source, locale = 'zh-CN' }: { snaps
     <div className="flex min-w-0 flex-col gap-v2-md" data-testid="dispatch-receipts">
       <div className="flex flex-wrap items-center gap-v2-sm">
         <Badge tone={source === 'demo' ? 'neutral' : 'run'}>{source === 'demo' ? labels.demo : labels.local}</Badge>
-        <span className="text-v2-meta text-v2-ink-2">{labels.readOnly} · {snapshot.events.length} {labels.record === '条记录' || snapshot.events.length === 1 ? labels.record : 'records'} · {chinese ? '不包含回复正文' : 'no reply text'}</span>
+        <span className="text-v2-meta text-v2-ink-2">{labels.readOnly} · {chinese ? snapshot.events.length + ' 条记录' : snapshot.events.length + ' record' + (snapshot.events.length === 1 ? '' : 's')} · {chinese ? '不包含回复正文' : 'no reply text'}</span>
       </div>
       {snapshot.warnings.map((warning) => <Notice key={warning} tone="block" title={warningText(warning, chinese)} />)}
       <div className="flex flex-wrap gap-v2-sm" aria-label={labels.slotsAria}>

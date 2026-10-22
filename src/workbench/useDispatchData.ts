@@ -20,7 +20,6 @@ interface StoredResult {
   result: Omit<DispatchData, 'refresh'>;
 }
 
-/** Injected loaders must keep a stable reference, like GitHubLoader. */
 const readDispatch: DispatchLoader = (repoPath) => host.dispatch.snapshot(repoPath);
 
 function immediateResult(source: WorkbenchSource, repoPath: string, desktop: boolean): Omit<DispatchData, 'refresh'> | undefined {
@@ -33,6 +32,7 @@ function immediateResult(source: WorkbenchSource, repoPath: string, desktop: boo
 export function useDispatchData(options: {
   source: WorkbenchSource;
   repoPath: string;
+  /** Must be a stable reference, like GitHubLoader. */
   loader?: DispatchLoader;
   isDesktop?: boolean;
 }): DispatchData {
