@@ -24,6 +24,9 @@ import {
   type V2SkinId,
   type V2StatusTone,
 } from '..';
+import { SessionCheckpointNotice } from '../../SessionCheckpointNotice';
+import { SettingsUpdateRow, type SettingsUpdateRowLabels } from '../../SettingsUpdateRow';
+import { TaskHudEntry } from '../../TaskHudEntry';
 import { contrastRatio } from '../contrast';
 import { readGalleryParams, tokenDifferences, writeGalleryParams, type GalleryParams } from './galleryParams';
 
@@ -317,6 +320,21 @@ function GallerySections({ skin, mode, compact }: { skin: V2SkinId; mode: V2Mode
 
       <Divider />
 
+      <Section id={ids('migrated')} title="已迁移的旧界面（#42）" note="真实组件，示例数据；随本栏方案一起变化">
+        <TaskHudEntryPreview />
+        <SessionCheckpointNotice
+          notice={{ checkpoint: { graphId: 'debate', graphVersion: 1, mode: 'debate', questionHash: 'demo', stepIndex: 2, startedAt: '', updatedAt: '' }, replaySnapshot: { id: 'demo', graphId: 'debate' } }}
+          onDismiss={() => {}}
+          onReplay={() => {}}
+          locale="zh-CN"
+        />
+        <SettingsUpdateRow state={{ status: 'idle' }} onCheck={() => {}} labels={UPDATE_LABELS} />
+        <SettingsUpdateRow state={{ status: 'up-to-date', version: 'v1.9.7' }} onCheck={() => {}} labels={UPDATE_LABELS} />
+        <SettingsUpdateRow state={{ status: 'error', message: '网络不可用（示例）' }} onCheck={() => {}} labels={UPDATE_LABELS} />
+      </Section>
+
+      <Divider />
+
       <Section id={ids('states')} title="空态与加载">
         <div className={compact ? 'grid grid-cols-1 gap-v2-md' : 'grid grid-cols-2 gap-v2-md'}>
           <EmptyState title="没有匹配的任务" description="换一个仓库或状态试试。" action={<Button size="sm">清除筛选</Button>} />
@@ -324,6 +342,24 @@ function GallerySections({ skin, mode, compact }: { skin: V2SkinId; mode: V2Mode
         </div>
         <LoadingState label="正在读取任务…" />
       </Section>
+    </div>
+  );
+}
+
+const UPDATE_LABELS: SettingsUpdateRowLabels = {
+  checkForUpdates: '检查更新',
+  checking: '检查中…',
+  upToDate: '已是最新版本 {version}',
+  newVersionAvailable: '有新版本 {version}',
+  releasesUnavailable: '无法获取版本信息',
+  updateCheckFailed: '检查更新失败：',
+};
+
+function TaskHudEntryPreview() {
+  return (
+    <div className="flex items-center gap-v2-sm text-v2-meta text-v2-ink-3">
+      聊天工具栏入口：
+      <TaskHudEntry locale="zh-CN" onOpen={() => {}} />
     </div>
   );
 }
