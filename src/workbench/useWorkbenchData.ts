@@ -68,6 +68,16 @@ export function countLabel(n: number, health: DataHealth): string {
   return health === 'partial' ? `≥${n}` : '?';
 }
 
+/**
+ * Precision of counts by state (in progress, needs you, done). A complete read still leaves those
+ * counts as "at least" when some task's state could not be read: it might belong to any of them.
+ * The total number of tasks keeps the read's own precision.
+ */
+export function categoryHealth(health: DataHealth, tasks: readonly HudTask[]): DataHealth {
+  if (!isExact(health)) return health;
+  return tasks.some((task) => task.status === 'unknown') ? 'partial' : health;
+}
+
 /** Counts mean something (exactly or as "at least") only for these. */
 export function isCountable(health: DataHealth): boolean {
   return isExact(health) || health === 'partial';

@@ -4,7 +4,7 @@ import { formatAge, inProgressTasks, needsYouTasks, pickText, type HudTask } fro
 import { taskHudText } from '../../ui/taskHudText';
 import { Badge, Button, Card, EmptyState, Icon, SectionHeader, SegmentedControl } from '../../ui/v2';
 import { TaskRow, TaskStatus } from '../TaskBits';
-import { countLabel, isCountable, isExact, type DataHealth } from '../useWorkbenchData';
+import { categoryHealth, countLabel, isCountable, isExact, type DataHealth } from '../useWorkbenchData';
 import { headline } from '../workbenchModel';
 import { workbenchText } from '../workbenchText';
 
@@ -29,9 +29,14 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
   const needsYou = needsYouTasks(tasks);
   const moving = inProgressTasks(tasks);
   const countable = isCountable(health);
+  const byState = categoryHealth(health, tasks);
   let title: string;
   if (health === 'loading') title = text.t('headlineLoading');
   else if (health === 'failed') title = text.t('headlineFailed');
+  // A partial read never supports "nothing else": what was not read may hold work for the user.
+  else if (health === 'partial' && lead.kind === 'waiting')
+    title = text.t('headlinePartialWaiting', { inProgress: lead.inProgress, needsYou: lead.needsYou });
+  else if (health === 'partial' && lead.kind === 'moving') title = text.t('headlinePartialMoving', { inProgress: lead.inProgress });
   else if (lead.kind === 'waiting')
     title = text.t(lead.unknown ? 'headlineWaitingUnknown' : 'headlineWaiting', { inProgress: lead.inProgress, needsYou: lead.needsYou, unknown: lead.unknown });
   // "nothing waiting for you" is only said when every task's state was read.
@@ -69,7 +74,7 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
       <div className="grid gap-v2-lg min-[1100px]:grid-cols-[minmax(0,1fr)_300px]">
         <div className="grid content-start gap-v2-lg">
           <section aria-labelledby="home-needs-you">
-            <SectionHeader id="home-needs-you" title={sectionTitle(text.t('needsYou'), needsYou.length, health)} count={isExact(health) ? needsYou.length : undefined} description={text.t('needsYouHint')} />
+            <SectionHeader id="home-needs-you" title={sectionTitle(text.t('needsYou'), needsYou.length, byState)} count={isExact(byState) ? needsYou.length : undefined} description={text.t('needsYouHint')} />
             {needsYou.length ? (
               <ul className="mt-v2-sm grid gap-v2-sm">
                 {needsYou.map((task) => (
@@ -82,8 +87,8 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
           <section aria-labelledby="home-in-progress">
             <SectionHeader
               id="home-in-progress"
-              title={sectionTitle(text.t('inProgress'), moving.length, health)}
-              count={isExact(health) ? moving.length : undefined}
+              title={sectionTitle(text.t('inProgress'), moving.length, byState)}
+              count={isExact(byState) ? moving.length : undefined}
               actions={
                 <Button size="sm" variant="ghost" onClick={onShowTasks}>
                   {text.t('allTasks')}

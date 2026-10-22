@@ -3,7 +3,7 @@ import type { Locale } from '../../i18n/resolve';
 import type { HudTask } from '../../ui/taskHudModel';
 import { Card, EmptyState, SectionHeader, SegmentedControl } from '../../ui/v2';
 import { TaskRow } from '../TaskBits';
-import { countLabel, isExact, type DataHealth } from '../useWorkbenchData';
+import { categoryHealth, countLabel, isExact, type DataHealth } from '../useWorkbenchData';
 import { filterTasks, groupByRepo, type TaskFilter } from '../workbenchModel';
 import { workbenchText } from '../workbenchText';
 
@@ -32,10 +32,12 @@ export function TasksView({ locale, tasks, health, onOpenTask }: TasksViewProps)
           onChange={(value) => setFilter(value as TaskFilter)}
           options={FILTERS.map((value) => {
             const n = filterTasks(tasks, value).length;
+            // "All" is the total; the others are counts by state, which unreadable states make "at least".
+            const precision = value === 'all' ? health : categoryHealth(health, tasks);
             // Exact counts use the count badge; partial / unknown reads say "at least" or "?" in the label.
-            return isExact(health)
+            return isExact(precision)
               ? { value, label: text.t(FILTER_KEY[value]), count: n }
-              : { value, label: `${text.t(FILTER_KEY[value])} ${countLabel(n, health)}` };
+              : { value, label: `${text.t(FILTER_KEY[value])} ${countLabel(n, precision)}` };
           })}
         />
       </header>

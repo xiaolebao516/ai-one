@@ -202,6 +202,32 @@ describe('GitHub reads', () => {
     expect(container.querySelector('[role="radiogroup"][aria-label="Filter tasks"]')?.textContent).toContain('All ≥1');
   });
 
+  it('a partial read with only running tasks never claims nothing waits for the user', async () => {
+    const loader: GitHubLoader = async () => [repoResult('o/a', [githubTask('t1', 'Read task')]), repoResult('o/b', [], 'error')];
+    const container = await mount(loader);
+    await click(buttonByText(container, 'GitHub'));
+    expect(h1(container)).toBe('In what could be read: 1 tasks moving; whether anything waits for you is unknown');
+    expect(h1(container)).not.toContain('nothing waiting for you');
+  });
+
+  it('a complete read with an unreadable task state shows counts by state as "at least", the total as exact', async () => {
+    const unreadable: HudTask = { ...githubTask('t2', 'Unreadable task'), status: 'unknown' };
+    const loader: GitHubLoader = async () => [repoResult('xiaolebao516/ai-one', [githubTask('t1', 'Read task'), unreadable])];
+    const container = await mount(loader);
+    await click(buttonByText(container, 'GitHub'));
+    const island = container.querySelector('header button[aria-label]')?.textContent ?? '';
+    expect(island).toContain('\u22651 in progress');
+    expect(island).toContain('\u22650 need you');
+    expect(container.querySelector('#home-in-progress')?.textContent).toContain('\u22651');
+    expect(h1(container)).toBe('1 tasks moving, 1 more with an unreadable state');
+    const navTasks = [...container.querySelectorAll('nav li button')].find((button) => button.textContent?.startsWith('Tasks'));
+    expect(navTasks?.textContent).toBe('Tasks2');
+    await key(window, { key: '2', ctrlKey: true });
+    const filters = container.querySelector('[role="radiogroup"][aria-label="Filter tasks"]')?.textContent ?? '';
+    expect(filters).toContain('All2');
+    expect(filters).toContain('In progress \u22651');
+  });
+
   it('a stale snapshot shows "?" in the sidebar while refreshing', async () => {
     const calls: ReturnType<typeof deferred<GitHubRepoTasks[]>>[] = [];
     const loader: GitHubLoader = () => {

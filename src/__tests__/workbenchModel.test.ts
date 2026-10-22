@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TASK_HUD_MOCK_TASKS } from '../ui/taskHudMockData';
 import type { HudTask, TaskStatus } from '../ui/taskHudModel';
 import type { GitHubRepoTasks } from '../ui/taskHudGithub';
-import { countLabel, dataHealth, isCountable, isExact, observedAt, repoNotices } from '../workbench/useWorkbenchData';
+import { categoryHealth, countLabel, dataHealth, isCountable, isExact, observedAt, repoNotices } from '../workbench/useWorkbenchData';
 import {
   activeTasks,
   filterCommands,
@@ -116,6 +116,16 @@ describe('task grouping and headline', () => {
     expect(headline([task('u', 'unknown'), task('d', 'done')])).toEqual({ kind: 'unclear', inProgress: 0, needsYou: 0, unknown: 1 });
     expect(headline([task('u', 'unknown'), task('r', 'running')])).toEqual({ kind: 'moving', inProgress: 1, needsYou: 0, unknown: 1 });
     expect(headline([task('u', 'unknown'), task('a', 'accept')])).toEqual({ kind: 'waiting', inProgress: 0, needsYou: 1, unknown: 1 });
+  });
+
+  it('makes counts by state "at least" when some state is unreadable, but keeps the total exact', () => {
+    const readable = [task('r', 'running')];
+    const withUnknown = [task('r', 'running'), task('u', 'unknown')];
+    expect(categoryHealth('complete', readable)).toBe('complete');
+    expect(categoryHealth('complete', withUnknown)).toBe('partial');
+    expect(categoryHealth('demo', withUnknown)).toBe('partial');
+    expect(categoryHealth('loading', withUnknown)).toBe('loading');
+    expect(categoryHealth('failed', [])).toBe('failed');
   });
 
   it('writes every count with one rule: exact, at least, or unknown', () => {

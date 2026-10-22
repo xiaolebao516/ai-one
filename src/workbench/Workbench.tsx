@@ -7,7 +7,7 @@ import { taskHudText } from '../ui/taskHudText';
 import { Badge, Button, Icon, IconButton, Notice, SegmentedControl, StatusIndicator, V2Scope, cx, type V2IconName } from '../ui/v2';
 import { CommandPalette } from './CommandPalette';
 import { NAV_KEY, paletteCommands } from './paletteCommands';
-import { countLabel, isExact, observedAt, repoNotices, useWorkbenchData, type DataHealth, type GitHubLoader, type WorkbenchData } from './useWorkbenchData';
+import { categoryHealth, countLabel, isExact, observedAt, repoNotices, useWorkbenchData, type DataHealth, type GitHubLoader, type WorkbenchData } from './useWorkbenchData';
 import {
   HOME_ROUTE,
   MAX_REPOS,
@@ -176,11 +176,13 @@ interface TitleBarProps {
 
 function TitleBar({ text, tasks, health, onPalette, onShowTasks }: TitleBarProps) {
   const summary = summarize(tasks);
-  const count = (n: number) => countLabel(n, health);
+  // The island shows counts by state, so unreadable task states make them "at least" too.
+  const byState = categoryHealth(health, tasks);
+  const count = (n: number) => countLabel(n, byState);
   const values = { inProgress: summary.inProgress, needsYou: summary.needsYou };
-  const islandLabel = isExact(health)
+  const islandLabel = isExact(byState)
     ? text.t('islandAria', values)
-    : health === 'partial'
+    : byState === 'partial'
       ? text.t('islandPartial', values)
       : text.t('islandUnknown');
   return (
@@ -247,7 +249,9 @@ function Sidebar({ text, locale, tasks, health, active, activeTaskId, theme, onN
           const label = text.t(NAV_KEY[view]);
           const raw = view === 'home' ? summary.needsYou : view === 'tasks' ? summary.total : undefined;
           // Same rule as the status island: exact, "at least", or "?"; never a stale or partial number as fact.
-          const count = raw === undefined || (raw === 0 && isExact(health)) ? undefined : countLabel(raw, health);
+          // "Needs you" is a count by state; "Tasks" is the total, which only depends on the read.
+          const precision = view === 'home' ? categoryHealth(health, tasks) : health;
+          const count = raw === undefined || (raw === 0 && isExact(precision)) ? undefined : countLabel(raw, precision);
           return (
             <li key={view}>
               <button
@@ -325,7 +329,7 @@ function SourceBar({ text, data, locale }: { text: WorkbenchText; data: Workbenc
   const [repoError, setRepoError] = useState<string | undefined>();
   const { prefs, github } = data;
   const current = github.reposKey === prefs.repos.join('\n') ? github.results : [];
-  const notices = prefs.source === 'github' ? repoNotices(current) : [];
+  const notices = prefs.source === 'github' && !github.loading ? repoNotices(current) : [];
   const observed = observedAt(current);
   return (
     <div className="sticky top-0 z-10 grid gap-v2-xs border-b border-v2-line bg-v2-panel px-v2-page py-v2-sm">
