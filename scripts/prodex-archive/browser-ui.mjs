@@ -121,7 +121,9 @@ export function inspectArchiveAction(expected) {
 export function inspectSidebarRemoval(expected) {
   const doc = globalThis.document;
   if (!doc || doc.visibilityState !== 'visible' || !doc.querySelector('main')) return false;
-  const chatLinks = [...doc.querySelectorAll('a[href]')].filter((a) => {
+  const sidebar = doc.querySelector('nav, aside, [data-testid*="sidebar"]');
+  if (!sidebar) return false;
+  const chatLinks = [...sidebar.querySelectorAll('a[href]')].filter((a) => {
     try { return new URL(a.getAttribute('href'), expected).pathname.includes('/c/'); }
     catch { return false; }
   });

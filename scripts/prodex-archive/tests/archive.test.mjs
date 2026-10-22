@@ -154,12 +154,15 @@ test('sidebar disappearance is not confirmed when the sidebar is empty or the ta
   const setDocument = (document) => Object.defineProperty(globalThis, 'document', {
     configurable: true, writable: true, value: document,
   });
+  const noSidebar = new JSDOM('<main></main>', { url: A, pretendToBeVisual: true });
   const empty = new JSDOM('<main></main><nav></nav>', { url: A, pretendToBeVisual: true });
   const present = new JSDOM('<main></main><nav><a href="' + A + '">target</a><a href="' + B + '">other</a></nav>',
     { url: A, pretendToBeVisual: true });
   const removed = new JSDOM('<main></main><nav><a href="' + B + '">other</a></nav>',
     { url: A, pretendToBeVisual: true });
   try {
+    setDocument(noSidebar.window.document);
+    assert.equal(inspectSidebarRemoval(A), false);
     setDocument(empty.window.document);
     assert.equal(inspectSidebarRemoval(A), false);
     setDocument(present.window.document);
@@ -167,6 +170,7 @@ test('sidebar disappearance is not confirmed when the sidebar is empty or the ta
     setDocument(removed.window.document);
     assert.equal(inspectSidebarRemoval(A), true);
   } finally {
+    noSidebar.window.close();
     empty.window.close();
     present.window.close();
     removed.window.close();

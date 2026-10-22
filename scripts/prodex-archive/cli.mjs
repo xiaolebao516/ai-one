@@ -12,7 +12,7 @@ export const usage = [
   '  status --thread-url URL',
   '  policy [--mode auto|manual]',
   'auto-finish follows the local policy; finish explicitly archives regardless of policy.',
-  'auto-finish/retry verify an exact Archive-ready Handoff before touching a browser.',
+  'finish/auto-finish/retry verify an exact Archive-ready Handoff before touching a browser.',
   'This tool never archives a chat merely because one ask finished or a slot was released.',
   'Errors never print supplied thread URLs or conversation text.',
 ].join('\n');
