@@ -1,6 +1,7 @@
 import type { DispatchSnapshot, DispatchStatus } from '../dispatch/types';
 
-const THREAD_URL = 'https://chatgpt.com/c/6ad9fa49-d908-83e9-a9dd-f183da27abd6';
+// Obviously fake thread id: demo data must not point at a real conversation.
+const THREAD_URL = 'https://chatgpt.com/c/00000000-0000-4000-8000-000000000000';
 
 /** Fixed demo data only; browser availability is never probed. */
 export const DEMO_DISPATCH: DispatchSnapshot = {

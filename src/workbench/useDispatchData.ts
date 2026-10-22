@@ -22,6 +22,15 @@ interface StoredResult {
 
 const readDispatch: DispatchLoader = (repoPath) => host.dispatch.snapshot(repoPath);
 
+/** Outside Tauri (browser preview, tests without a host mock) the check itself can throw: not desktop. */
+function isDesktop(): boolean {
+  try {
+    return host.app.isDesktop();
+  } catch {
+    return false;
+  }
+}
+
 function immediateResult(source: WorkbenchSource, repoPath: string, desktop: boolean): Omit<DispatchData, 'refresh'> | undefined {
   if (source === 'demo') return { state: 'demo', snapshot: DEMO_DISPATCH };
   if (!repoPath.trim()) return { state: 'no-path' };
@@ -37,7 +46,7 @@ export function useDispatchData(options: {
   isDesktop?: boolean;
 }): DispatchData {
   const { source, repoPath, loader = readDispatch } = options;
-  const desktop = options.isDesktop ?? host.app.isDesktop();
+  const desktop = options.isDesktop ?? isDesktop();
   const [refreshToken, setRefreshToken] = useState(0);
   const [stored, setStored] = useState<StoredResult>({ key: '', result: { state: 'loading' } });
   const requestRef = useRef(0);

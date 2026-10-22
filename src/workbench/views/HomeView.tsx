@@ -4,6 +4,7 @@ import { formatAge, inProgressTasks, needsYouTasks, pickText, type HudTask } fro
 import { taskHudText } from '../../ui/taskHudText';
 import { Badge, Button, Card, EmptyState, Icon, SectionHeader, SegmentedControl } from '../../ui/v2';
 import { TaskRow, TaskStatus } from '../TaskBits';
+import { CHANNEL_BADGE, type ChannelView } from '../dispatchView';
 import { categoryHealth, countLabel, isCountable, isExact, type DataHealth } from '../useWorkbenchData';
 import { headline } from '../workbenchModel';
 import { workbenchText } from '../workbenchText';
@@ -21,9 +22,12 @@ export interface HomeViewProps {
   health: DataHealth;
   onOpenTask: (task: HudTask) => void;
   onShowTasks: () => void;
+  /** What the Prodex channel looks like right now; the rest of the resources is not readable yet. */
+  channel?: ChannelView;
+  onShowResources?: () => void;
 }
 
-export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: HomeViewProps) {
+export function HomeView({ locale, tasks, health, channel, onOpenTask, onShowTasks, onShowResources }: HomeViewProps) {
   const text = workbenchText(locale);
   const lead = headline(tasks);
   const needsYou = needsYouTasks(tasks);
@@ -119,10 +123,30 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
 
         <aside className="grid content-start gap-v2-lg">
           <section aria-labelledby="home-resources">
-            <SectionHeader id="home-resources" title={text.t('resources')} />
-            <Card className="mt-v2-sm">
-              <Badge tone="unknown">{text.t('plannedBadge')}</Badge>
-              <p className="mt-v2-sm text-v2-meta text-v2-ink-2">{text.t('resourcesPending')}</p>
+            <SectionHeader
+              id="home-resources"
+              title={text.t('resources')}
+              actions={
+                onShowResources ? (
+                  <Button size="sm" variant="ghost" onClick={onShowResources}>
+                    {text.t('open')}
+                  </Button>
+                ) : undefined
+              }
+            />
+            <Card className="mt-v2-sm grid gap-v2-xs">
+              {channel ? (
+                <div className="flex flex-wrap items-center gap-v2-sm">
+                  <span className="font-semibold text-v2-ink">Prodex</span>
+                  <Badge tone={CHANNEL_BADGE[channel.tone]}>{text.t(channel.labelKey)}</Badge>
+                </div>
+              ) : null}
+              {channel?.summary ? (
+                <p className="text-v2-meta text-v2-ink-2">
+                  {text.t('channelSlots', { claimed: channel.summary.slots.claimed, idle: channel.summary.slots.idle, stale: channel.summary.slots.stale })}
+                </p>
+              ) : null}
+              <p className="text-v2-meta text-v2-ink-3">{text.t('resourcesPending')}</p>
             </Card>
           </section>
           <section aria-labelledby="home-auto">
