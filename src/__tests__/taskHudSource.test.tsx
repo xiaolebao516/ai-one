@@ -107,6 +107,8 @@ describe('GitHub snapshot store', () => {
     expect(githubOverall(done([repoResult('o/a', 'error')]))).toBe('error');
     expect(mayHaveMore(repoResult('o/a', 'partial', [], true))).toBe(true);
     expect(mayHaveMore(repoResult('o/a', 'complete'))).toBe(false);
+    // A failed read has no pagination knowledge; it must not claim "first page only".
+    expect(mayHaveMore({ ...repoResult('o/a', 'error'), pagination: { issues: { page: 1, limit: 10, returned: null, more: 'unknown', earlierPagesOmitted: false, source: { url: 'u', observedAt: NOW.toISOString() } } } })).toBe(false);
     expect(errorMessages(repoResult('o/a', 'error'))).toEqual(['gh is not installed; install GitHub CLI and run gh auth login.']);
   });
 });

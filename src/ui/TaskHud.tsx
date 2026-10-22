@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import type { Locale } from '../i18n/resolve';
 import {
   ALL,
@@ -111,12 +111,22 @@ export function TaskHud({ locale, onClose, tasks, initialState, githubLoader = l
     headingRef.current?.focus({ preventScroll: true });
   }, [state.view, state.selectedId, state.scenario]);
 
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Escape' || event.defaultPrevented) return;
-    event.preventDefault();
+  // Listen on the document, not the HUD root: when the focused control disappears (e.g. a removed
+  // repository row) focus falls back to <body> and a root listener would never see Escape.
+  const escapeRef = useRef<() => void>(() => {});
+  escapeRef.current = () => {
     if (escapeAction(state) === 'back') dispatch({ type: 'back' });
     else onClose();
   };
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      escapeRef.current();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const task = state.view === 'detail' ? selectedTask(state, data) : undefined;
   const tabValue = state.view === 'detail' ? state.backTo : state.view;
@@ -127,7 +137,6 @@ export function TaskHud({ locale, onClose, tasks, initialState, githubLoader = l
       aria-modal="true"
       aria-labelledby={`${ID}-title`}
       className="fixed inset-0 z-40 flex flex-col bg-v2-bg"
-      onKeyDown={onKeyDown}
       data-testid="task-hud"
     >
       <header className="flex flex-wrap items-center gap-x-v2-lg gap-y-v2-sm border-b border-v2-line bg-v2-bg px-v2-lg py-v2-sm">
@@ -357,7 +366,8 @@ function NeedsYouCard({ task, locale, text, onOpen }: { task: HudTask; locale: L
       </div>
       <div className="text-v2-meta text-v2-ink-3">
         {task.repo}
-        {task.issue !== undefined ? ` #${task.issue}` : ''} · {text.t('updated', { age: formatAge(task.updatedMinutesAgo, locale) })}
+        {task.issue !== undefined ? ` #${task.issue}` : ''}
+        {task.updatedMinutesAgo === undefined ? null : ` · ${text.t('updated', { age: formatAge(task.updatedMinutesAgo, locale) })}`}
       </div>
       <p className="m-0 text-v2-body text-v2-ink-2">{pickText(task.summary, locale)}</p>
       <div>
@@ -406,7 +416,10 @@ function TaskRow({ task, locale, text, onOpen }: { task: HudTask; locale: Locale
         {task.pr ? <Badge>{`PR #${task.pr.number}${task.pr.draft ? ` · ${text.t('draft')}` : ''}`}</Badge> : <Badge variant="outline">{text.t('noPr')}</Badge>}
         {task.pr ? <Badge tone={CI_TONE[ci.state]}>{text.ci(ci.state)}</Badge> : null}
       </span>
-      <span className="w-24 shrink-0 text-right text-v2-meta text-v2-ink-3">{formatAge(task.updatedMinutesAgo, locale)}</span>
+      {/* GitHub snapshots carry no update time: leave the cell empty rather than repeat "time unknown" on every row. */}
+      <span className="w-24 shrink-0 text-right text-v2-meta text-v2-ink-3">
+        {task.updatedMinutesAgo === undefined ? null : formatAge(task.updatedMinutesAgo, locale)}
+      </span>
       <Icon name="chevronRight" size={14} className="text-v2-ink-3" />
     </button>
   );
@@ -559,8 +572,12 @@ function TaskDetail({ task, backTo, locale, text, dispatch, headingRef }: ViewPr
                   <dd className="m-0 text-v2-ink-2">{pickText(task.owner, locale)}</dd>
                 </>
               ) : null}
-              <dt className="text-v2-ink-3">{text.t('updatedLabel')}</dt>
-              <dd className="m-0 text-v2-ink-2">{formatAge(task.updatedMinutesAgo, locale)}</dd>
+              {task.updatedMinutesAgo === undefined ? null : (
+                <>
+                  <dt className="text-v2-ink-3">{text.t('updatedLabel')}</dt>
+                  <dd className="m-0 text-v2-ink-2">{formatAge(task.updatedMinutesAgo, locale)}</dd>
+                </>
+              )}
             </dl>
           </Card>
 
@@ -794,7 +811,11 @@ export function GitHubPanel({
                 label={text.t('removeRepo', { repo })}
                 icon={<Icon name="close" size={14} />}
                 disabled={gh.phase === 'loading'}
-                onClick={() => updateRepos(prefs.repos.filter((existing) => existing !== repo))}
+                onClick={() => {
+                  updateRepos(prefs.repos.filter((existing) => existing !== repo));
+                  // The row (and this button) is about to disappear; keep keyboard focus inside the HUD.
+                  document.getElementById(`${ID}-add-repo`)?.focus();
+                }}
               />
             </li>
           );

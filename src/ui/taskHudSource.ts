@@ -172,9 +172,13 @@ export function githubOverall(state: GitHubDataState): GitHubOverall {
   return 'partial';
 }
 
-/** Pagination says more items may exist for this repository. */
+/**
+ * Pagination says more items may exist for this repository. A failed read says nothing about
+ * pagination (`more: 'unknown'`), so it is not reported as "first page only".
+ */
 export function mayHaveMore(result: GitHubRepoTasks): boolean {
-  return Object.values(result.pagination).some((entry) => entry && (entry.more !== 'no' || entry.earlierPagesOmitted));
+  if (result.status === 'error') return false;
+  return Object.values(result.pagination).some((entry) => entry && (entry.more === 'possible' || entry.earlierPagesOmitted));
 }
 
 /** Distinct error messages for display; the bridge only ever returns fixed sentences. */
