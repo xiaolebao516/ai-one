@@ -90,9 +90,13 @@ fn write_in_dir(dir: &Path, name: &str, json: &str) -> Result<(), String> {
 
     let path = dir.join(filename);
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
-    if path.exists() {
-        let backup = dir.join(format!("{}.bak", filename));
-        std::fs::copy(&path, &backup).map_err(|error| error.to_string())?;
+    match std::fs::metadata(&path) {
+        Ok(_) => {
+            let backup = dir.join(format!("{}.bak", filename));
+            std::fs::copy(&path, &backup).map_err(|error| error.to_string())?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
     }
     crate::settings::write_atomic(&path, json.as_bytes())
 }
@@ -293,6 +297,7 @@ mod tests {
         let body = [0xff, 0xfe, 0x00];
         std::fs::write(dir.join("flows.json"), body).expect("seed invalid UTF-8");
         let result = read_in_dir(&dir, "flows").expect("read invalid UTF-8");
+        assert_eq!(result.status, LocalStoreStatus::Corrupt);
         let backup = result.backup.expect("backup filename");
         assert_eq!(std::fs::read(dir.join(backup)).expect("read backup"), body);
         clean_dir(&dir);

@@ -58,9 +58,19 @@ function safeFileName(suggestedName: string): string {
 function backupName(name: LocalStoreName): string {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
   const prefix = FILE_NAMES[name] + '.bak-' + stamp;
+  const storage = localStorageRef();
   let candidate = prefix;
   let suffix = 2;
-  while (memoryBackups.has(candidate)) {
+  const exists = (value: string): boolean => {
+    if (memoryBackups.has(value)) return true;
+    if (!storage) return false;
+    try {
+      return storage.getItem(storageKey(name) + '.' + value) !== null;
+    } catch {
+      return false;
+    }
+  };
+  while (exists(candidate)) {
     candidate = prefix + '-' + suffix;
     suffix += 1;
   }

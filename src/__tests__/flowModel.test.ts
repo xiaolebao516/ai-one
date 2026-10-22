@@ -135,7 +135,7 @@ describe('flow model validation', () => {
   });
 
   it('parses each failure category and rejects unknown schema versions', () => {
-    expect(parseFlowsFile('{').ok ? 'ok' : parseFlowsFile('{').reason).toBe('not-json');
+    expect(parseFlowsFile('{')).toMatchObject({ ok: false, reason: 'not-json' });
     expect(parseFlowsFile('[]')).toMatchObject({ ok: false, reason: 'bad-shape' });
     expect(parseFlowsFile(JSON.stringify({ schemaVersion: 99, stages: [], flows: [] }))).toMatchObject({
       ok: false,
