@@ -37,6 +37,7 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
   else if (health === 'partial' && lead.kind === 'waiting')
     title = text.t('headlinePartialWaiting', { inProgress: lead.inProgress, needsYou: lead.needsYou });
   else if (health === 'partial' && lead.kind === 'moving') title = text.t('headlinePartialMoving', { inProgress: lead.inProgress });
+  else if (health === 'partial' && lead.kind === 'unclear') title = text.t('headlinePartialUnclear', { unknown: lead.unknown });
   else if (lead.kind === 'waiting')
     title = text.t(lead.unknown ? 'headlineWaitingUnknown' : 'headlineWaiting', { inProgress: lead.inProgress, needsYou: lead.needsYou, unknown: lead.unknown });
   // "nothing waiting for you" is only said when every task's state was read.

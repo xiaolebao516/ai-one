@@ -127,9 +127,24 @@ export function useWorkbenchData(load: GitHubLoader = readGitHub): WorkbenchData
     if (prefs.source !== 'github') return;
     const request = ++requestRef.current;
     setGithub((current) => ({ ...current, loading: true }));
-    void load(reposKey.split('\n').filter(Boolean)).then((results) => {
-      if (request === requestRef.current) setGithub({ loading: false, reposKey, results });
-    });
+    const repos = reposKey.split('\n').filter(Boolean);
+    void load(repos)
+      .catch((): GitHubRepoTasks[] => {
+        // The default loader never rejects (it records failures per repository); any other loader
+        // that does is reported as every repository failing, not as an endless "reading".
+        const observedAt = new Date().toISOString();
+        return repos.map((repo) => ({
+          repo,
+          tasks: [],
+          status: 'error' as const,
+          errors: [{ url: '', observedAt, message: 'GitHub snapshot could not be collected.' }],
+          pagination: {},
+          observedAt,
+        }));
+      })
+      .then((results) => {
+        if (request === requestRef.current) setGithub({ loading: false, reposKey, results });
+      });
     // Leaving GitHub, editing repositories or refreshing invalidates this request: a late answer
     // must not land after the user moved on.
     return () => {

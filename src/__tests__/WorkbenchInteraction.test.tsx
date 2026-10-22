@@ -247,6 +247,42 @@ describe('GitHub reads', () => {
     expect(container.querySelector('main')?.textContent).not.toContain('No tasks in this view');
   });
 
+  it('repository subtotals under a state filter are "at least" when some state is unreadable', async () => {
+    const unreadable: HudTask = { ...githubTask('t2', 'Unreadable task'), status: 'unknown' };
+    const loader: GitHubLoader = async () => [repoResult('xiaolebao516/ai-one', [githubTask('t1', 'Read task'), unreadable])];
+    const container = await mount(loader);
+    await click(buttonByText(container, 'GitHub'));
+    await key(window, { key: '2', ctrlKey: true });
+    const group = () => container.querySelector('main section[aria-label="o/a"]')?.textContent ?? '';
+    expect(group()).toContain('o/a2'); // "All": the total is exact
+    const inProgress = [...container.querySelectorAll('[aria-label="Filter tasks"] [role="radio"]')].find((radio) =>
+      radio.textContent?.startsWith('In progress'),
+    );
+    await click(inProgress);
+    expect(inProgress?.textContent).toContain('\u22651');
+    expect(group()).toContain('o/a \u22651');
+  });
+
+  it('a partial read with only unreadable states scopes the headline to what was read', async () => {
+    const unreadable: HudTask = { ...githubTask('t2', 'Unreadable task'), status: 'unknown' };
+    const done: HudTask = { ...githubTask('t3', 'Done task'), status: 'done' };
+    for (const tasks of [[unreadable], [done, unreadable]]) {
+      const loader: GitHubLoader = async () => [repoResult('o/a', tasks), repoResult('o/b', [], 'error')];
+      const container = await mount(loader);
+      await click(buttonByText(container, 'GitHub'));
+      expect(h1(container)).toBe('In what could be read: 1 tasks with an unreadable state; the rest is unknown');
+    }
+  });
+
+  it('a loader that throws ends as "could not be read", not as an endless "reading"', async () => {
+    const loader: GitHubLoader = async () => {
+      throw new Error('boom');
+    };
+    const container = await mount(loader);
+    await click(buttonByText(container, 'GitHub'));
+    expect(h1(container)).toBe('GitHub could not be read');
+  });
+
   it('a stale snapshot shows "?" in the sidebar while refreshing', async () => {
     const calls: ReturnType<typeof deferred<GitHubRepoTasks[]>>[] = [];
     const loader: GitHubLoader = () => {

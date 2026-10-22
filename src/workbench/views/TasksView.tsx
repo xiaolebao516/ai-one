@@ -21,6 +21,8 @@ export function TasksView({ locale, tasks, health, onOpenTask }: TasksViewProps)
   const text = workbenchText(locale);
   const [filter, setFilter] = useState<TaskFilter>('all');
   const groups = groupByRepo(filterTasks(tasks, filter));
+  // Repository subtotals follow the active filter: the total for "all", counts by state otherwise.
+  const groupPrecision = filter === 'all' ? health : categoryHealth(health, tasks);
   return (
     <div className="mx-auto grid max-w-[1180px] gap-v2-lg p-v2-page">
       <header className="flex flex-wrap items-end justify-between gap-v2-md">
@@ -54,7 +56,11 @@ export function TasksView({ locale, tasks, health, onOpenTask }: TasksViewProps)
       ) : (
         groups.map((group) => (
           <section key={group.repo} aria-label={group.repo}>
-            <SectionHeader level={3} title={isExact(health) ? group.repo : `${group.repo} ${countLabel(group.tasks.length, health)}`} count={isExact(health) ? group.tasks.length : undefined} />
+            <SectionHeader
+              level={3}
+              title={isExact(groupPrecision) ? group.repo : `${group.repo} ${countLabel(group.tasks.length, groupPrecision)}`}
+              count={isExact(groupPrecision) ? group.tasks.length : undefined}
+            />
             <Card padding="none" className="mt-v2-sm">
               <ul className="divide-y divide-v2-line p-v2-xs">
                 {group.tasks.map((task) => (
