@@ -152,4 +152,23 @@ describe('discussion view model', () => {
     expect(model.summary.evidenceGaps).toEqual({ kind: 'value', text: 'Real gap text.' });
     expect(model.summary.nextSteps).toEqual({ kind: 'value', text: 'Real next step.' });
   });
+
+  it('does not close a fence with a mixed-character line', () => {
+    const report = 'The auditor reviewed everything carefully and wrote this report.\n\n'
+      + '## Evidence gaps\n````\n````~~~\n## Next steps\nfake step inside a fence\n````\nReal gap text.\n\n'
+      + '## Next steps\nReal next step.\n\n'
+      + '[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:AGREED]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]';
+    const model = buildDiscussionViewModel(state({ outputs: { audit1: report } }));
+    expect(model.summary.evidenceGaps).toEqual({ kind: 'value', text: 'Real gap text.' });
+    expect(model.summary.nextSteps).toEqual({ kind: 'value', text: 'Real next step.' });
+  });
+
+  it.each(['skipped', 'error', 'running', 'paused'] as const)('ignores a parseable audit output while the node is %s', (status) => {
+    const model = buildDiscussionViewModel(state({
+      outputs: { audit1: audit('FINISH', 'AGREED', 'NONE') },
+      statusByNode: { audit1: status },
+    }));
+    expect(model.summary.evidenceGaps).toEqual({ kind: 'missing' });
+    expect(model.summary.nextSteps).toEqual({ kind: 'missing' });
+  });
 });

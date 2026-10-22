@@ -261,7 +261,7 @@ function parseReportSection(text: string, section: AuditSectionName): string | u
     if (marker) {
       const char = marker[1][0];
       if (!fence) fence = { char, length: marker[1].length };
-      else if (char === fence.char && marker[1].length >= fence.length && /^\s*[`~]+\s*$/.test(line)) fence = undefined;
+      else if (char === fence.char && marker[1].length >= fence.length && line.trim() === marker[1]) fence = undefined;
       continue;
     }
     if (fence) continue;
