@@ -252,16 +252,19 @@ function valueField(text: string | undefined): DiscussionSummaryField {
 
 function parseReportSection(text: string, section: AuditSectionName): string | undefined {
   const lines = text.split(/\r?\n/);
-  let insideFence = false;
+  let fence: { char: string; length: number } | undefined;
   let collecting = false;
   let found = false;
   const content: string[] = [];
   for (const line of lines) {
-    if (/^\s*(?:\x60{3,}|~{3,})/.test(line)) {
-      insideFence = !insideFence;
+    const marker = /^\s*(`{3,}|~{3,})/.exec(line);
+    if (marker) {
+      const char = marker[1][0];
+      if (!fence) fence = { char, length: marker[1].length };
+      else if (char === fence.char && marker[1].length >= fence.length && /^\s*[`~]+\s*$/.test(line)) fence = undefined;
       continue;
     }
-    if (insideFence) continue;
+    if (fence) continue;
     const withoutMarkdown = line.trim().replace(/^#{1,6}\s*/, '').replace(/^(?:[-*+]|\d+[.)])\s+/, '');
     const heading = /^(?:\*\*|__)?(Evidence-backed findings|Shared conclusions|Disagreements|Evidence gaps|Next steps|有证据支持的发现|有證據支持的發現|共同结论|共同結論|分歧|证据缺口|證據缺口|证据空白|證據空白|下一步)(?:\*\*|__)?\s*(?::|：)?\s*(.*)$/i.exec(withoutMarkdown);
     if (!heading) {
@@ -285,12 +288,18 @@ function parseReportSection(text: string, section: AuditSectionName): string | u
   return found && result ? result : undefined;
 }
 
+// Only a node that finished cleanly may feed decisions and the summary; the output of a timed-out,
+// skipped or failed node is shown as such in the matrix and never used as a conclusion.
+function usableOutput(state: DiscussionRunState, nodeId: string): string | undefined {
+  return statusFor(state, nodeId) === 'done' ? readOutput(state.outputs, nodeId) : undefined;
+}
+
 function getRounds(state: DiscussionRunState): RoundData[] {
   const rounds: RoundData[] = [];
   for (let round = 1; round <= DELIBERATION_MAX_ROUNDS; round += 1) {
-    const firstText = readOutput(state.outputs, 'round' + round + '_first');
-    const secondText = readOutput(state.outputs, 'round' + round + '_second');
-    const auditText = readOutput(state.outputs, 'audit' + round);
+    const firstText = usableOutput(state, 'round' + round + '_first');
+    const secondText = usableOutput(state, 'round' + round + '_second');
+    const auditText = usableOutput(state, 'audit' + round);
     rounds.push({
       round,
       firstText,
@@ -379,7 +388,11 @@ function buildSummary(state: DiscussionRunState, rounds: readonly RoundData[]): 
       lastPair.firstDecision.openIssues.toUpperCase() === 'NONE' ? undefined : 'first：' + lastPair.firstDecision.openIssues,
       lastPair.secondDecision.openIssues.toUpperCase() === 'NONE' ? undefined : 'second：' + lastPair.secondDecision.openIssues,
     ].filter((item): item is string => Boolean(item));
-    disagreements = valueField(issues.length > 0 ? issues.join('；') : '双方均声明没有未解决问题。');
+    const consensus = Boolean(lastPair.firstText && lastPair.secondText
+      && hasDeliberationConsensus(lastPair.firstText, lastPair.secondText));
+    disagreements = valueField(issues.length > 0
+      ? issues.join('；')
+      : (consensus ? '双方均声明没有未解决问题。' : '决议未收敛，且审计报告缺少分歧段，无法确定具体分歧。'));
   }
 
   let nextStepsText = latestReport ? parseReportSection(latestReport, 'nextSteps') : undefined;

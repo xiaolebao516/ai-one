@@ -110,4 +110,46 @@ describe('discussion view model', () => {
     expect(model.summary.conclusion.kind).toBe('value');
     if (model.summary.conclusion.kind === 'value') expect(model.summary.conclusion.basis).toBe('unresolved');
   });
+
+  it('does not trust the output of a timed-out audit for the conclusion or report fields', () => {
+    const same = 'Use an explicit typed discussion state model';
+    const model = buildDiscussionViewModel(state({
+      outputs: {
+        round3_first: decision('AGREE', same, 'NONE'),
+        round3_second: decision('AGREE', same, 'NONE'),
+        audit3: audit('FINISH', 'AGREED', 'NONE'),
+      },
+      statusByNode: { audit3: 'timeout' },
+    }));
+    expect(model.matrix.rows[3].cells.auditor.tone).toBe('block');
+    if (model.summary.conclusion.kind === 'value') expect(model.summary.conclusion.basis).toBe('model-agreement');
+    expect(model.summary.evidenceGaps).toEqual({ kind: 'missing' });
+    expect(model.summary.nextSteps).toEqual({ kind: 'missing' });
+  });
+
+  it('does not claim "no open issues" when proposals differ and the audit report has no disagreement section', () => {
+    const model = buildDiscussionViewModel(state({
+      outputs: {
+        round1_first: decision('AGREE', 'Use an explicit typed discussion state model', 'NONE'),
+        round1_second: decision('AGREE', 'Keep the current workflow state as it is today', 'NONE'),
+      },
+    }));
+    expect(model.summary.disagreements).toEqual({
+      kind: 'value',
+      text: '决议未收敛，且审计报告缺少分歧段，无法确定具体分歧。',
+    });
+  });
+
+  it('keeps a code fence open until a matching closing fence, ignoring headings inside it', () => {
+    const report = 'The auditor reviewed everything carefully and wrote this report.\n\n'
+      + '## Disagreements\nOne real disagreement.\n\n'
+      + '## Evidence gaps\n````\n~~~\n## Next steps\nfake step inside a fence\n````\nReal gap text.\n\n'
+      + '## Next steps\nReal next step.\n\n'
+      + '[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:AGREED]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]';
+    const model = buildDiscussionViewModel(state({
+      outputs: { round1_first: decision('AGREE', 'Use an explicit typed discussion state model', 'NONE'), round1_second: decision('AGREE', 'Use an explicit typed discussion state model', 'NONE'), audit1: report },
+    }));
+    expect(model.summary.evidenceGaps).toEqual({ kind: 'value', text: 'Real gap text.' });
+    expect(model.summary.nextSteps).toEqual({ kind: 'value', text: 'Real next step.' });
+  });
 });

@@ -8,8 +8,10 @@ export type GrillCommandResult =
   | { matched: true; reason: 'invalid-option'; question: string; options: GrillOptions }
   | { matched: true; reason: 'ok'; question: string; options: GrillOptions };
 
-const TEAM_OPTION = /(?:^|\s)--team(?:\s*=\s*|\s+)(?:"([^"]*)"|'([^']*)'|([^\s]+))/i;
-const MALFORMED_TEAM_OPTION = /(?:^|\s)--team(?:\s|=|$)/i;
+// Options are accepted only before the question, so a literal "--team" inside the question text
+// (for example "What does --team do?") stays part of the question.
+const TEAM_OPTION = /^--team(?:\s*=\s*|\s+)(?:"([^"]*)"|'([^']*)'|([^\s]+))/i;
+const MALFORMED_TEAM_OPTION = /^--team(?:\s|=|$)/i;
 
 export function parseGrillCommand(input: string): GrillCommandResult {
   const source = input.trim();
@@ -21,7 +23,7 @@ export function parseGrillCommand(input: string): GrillCommandResult {
   const team = TEAM_OPTION.exec(body);
   if (team) {
     options.team = (team[1] ?? team[2] ?? team[3] ?? '').trim();
-    body = (body.slice(0, team.index) + ' ' + body.slice(team.index + team[0].length)).trim();
+    body = body.slice(team[0].length).trim();
     if (!options.team) {
       return { matched: true, reason: 'invalid-option', question: body, options };
     }

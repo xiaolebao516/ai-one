@@ -30,12 +30,21 @@ describe('/grill command parser', () => {
     });
   });
 
-  it('accepts team=value and preserves the question text', () => {
-    expect(parseGrillCommand('/grill Decide whether to cache this --team=first,second')).toEqual({
+  it('accepts team=value before the question', () => {
+    expect(parseGrillCommand('/grill --team=first,second Decide whether to cache this')).toEqual({
       matched: true,
       reason: 'ok',
       question: 'Decide whether to cache this',
       options: { team: 'first,second' },
+    });
+  });
+
+  it('keeps a literal --team inside the question text', () => {
+    expect(parseGrillCommand('/grill What does --team do?')).toEqual({
+      matched: true,
+      reason: 'ok',
+      question: 'What does --team do?',
+      options: {},
     });
   });
 
