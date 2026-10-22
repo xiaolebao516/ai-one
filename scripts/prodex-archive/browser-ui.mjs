@@ -69,9 +69,9 @@ export function inspectPage(expected) {
     if (r.width < 3 || r.height < 3) return null;
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   };
-  if (location.href !== expected || document.visibilityState !== 'visible')
+  if (globalThis.location.href !== expected || globalThis.document.visibilityState !== 'visible')
     return { error: 'Target thread changed or is hidden' };
-  const main = document.querySelector('main');
+  const main = globalThis.document.querySelector('main');
   if (!main) return { error: 'Chat main is missing' };
   const editor = main.querySelector('#prompt-textarea, [contenteditable="true"][data-placeholder], [role="textbox"][contenteditable="true"]');
   if (!editor || editor.textContent.trim()) return { error: 'Composer missing or has an unsent draft' };
@@ -80,8 +80,8 @@ export function inspectPage(expected) {
     return /stop generating|stop streaming|stop response|停止生成|stop-button/i.test(name);
   });
   if (generating) return { error: 'ChatGPT is still generating' };
-  const links = [...document.querySelectorAll('a[href]')].filter((a) => {
-    try { return new URL(a.getAttribute('href'), location.origin).href === expected; }
+  const links = [...globalThis.document.querySelectorAll('a[href]')].filter((a) => {
+    try { return new URL(a.getAttribute('href'), globalThis.location.origin).href === expected; }
     catch { return false; }
   });
   if (links.length !== 1) return { error: 'Thread sidebar row not uniquely identified' };
@@ -89,7 +89,7 @@ export function inspectPage(expected) {
   let menuButton = null;
   for (let parent = link.parentElement, depth = 0; parent && depth < 5; parent = parent.parentElement, depth++) {
     const chatLinks = [...parent.querySelectorAll('a[href]')].filter((a) => {
-      try { return new URL(a.getAttribute('href'), location.origin).pathname.includes('/c/'); }
+      try { return new URL(a.getAttribute('href'), globalThis.location.origin).pathname.includes('/c/'); }
       catch { return false; }
     });
     if (chatLinks.length !== 1) break;
@@ -108,9 +108,9 @@ export function inspectPage(expected) {
 }
 
 export function inspectArchiveAction(expected) {
-  if (location.href !== expected || document.visibilityState !== 'visible')
+  if (globalThis.location.href !== expected || globalThis.document.visibilityState !== 'visible')
     return { error: 'Thread changed before archive' };
-  const matches = [...document.querySelectorAll('[role="menuitem"]')]
+  const matches = [...globalThis.document.querySelectorAll('[role="menuitem"]')]
     .filter((item) => /^(Archive|归档)$/i.test(item.textContent.trim()));
   if (matches.length !== 1) return { error: 'Archive menu action not uniquely found' };
   const r = matches[0].getBoundingClientRect();
@@ -119,8 +119,17 @@ export function inspectArchiveAction(expected) {
 }
 
 export function inspectSidebarRemoval(expected) {
-  return [...document.querySelectorAll('a[href]')].every((a) => {
-    try { return new URL(a.getAttribute('href'), location.origin).href !== expected; }
+  const doc = globalThis.document;
+  if (!doc || doc.visibilityState !== 'visible' || !doc.querySelector('main')) return false;
+  const chatLinks = [...doc.querySelectorAll('a[href]')].filter((a) => {
+    try { return new URL(a.getAttribute('href'), expected).pathname.includes('/c/'); }
+    catch { return false; }
+  });
+  // An empty/unloaded sidebar is not proof of success. If this was the last chat,
+  // leave the result unconfirmed so a human can inspect Archived chats.
+  if (chatLinks.length === 0) return false;
+  return chatLinks.every((a) => {
+    try { return new URL(a.getAttribute('href'), expected).href !== expected; }
     catch { return true; }
   });
 }
@@ -157,8 +166,8 @@ export async function archiveConversation({ port, threadUrl }) {
     }
     if (!action?.ok) throw new Error(action?.error || 'Archive option unavailable');
     // Check identity once more before the destructive-to-sidebar (but reversible) action.
-    const stillTarget = await cdp.eval((expected) => location.href === expected &&
-      document.visibilityState === 'visible', threadUrl);
+    const stillTarget = await cdp.eval((expected) => globalThis.location.href === expected &&
+      globalThis.document.visibilityState === 'visible', threadUrl);
     if (stillTarget !== true) throw new Error('Thread changed during archive; refusing click');
     await cdp.mouse(action.point, true);
     for (let i = 0; i < 12; i++) {

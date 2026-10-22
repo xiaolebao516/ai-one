@@ -3,10 +3,11 @@ import test from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { JSDOM } from 'jsdom';
 import { parseArgs } from '../cli.mjs';
 import { canonicalThread, digest, finish, skip, statusFor, validateFinish,
   validateHandoffUrl, verifyHandoff, withLock } from '../archive.mjs';
-import { selectExactTab } from '../browser-ui.mjs';
+import { inspectSidebarRemoval, selectExactTab } from '../browser-ui.mjs';
 import { addSlots, claimSlot, readClaim } from '../../prodex-slots/slots.mjs';
 
 const A = 'https://chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013';
@@ -28,7 +29,7 @@ test('the Handoff must actually exist and attest the exact thread/request and co
     'Archive-ready: true', 'Task: #94', 'Thread-SHA256: ' + digest(A),
     'Request-ID: req-12345', 'Reply-verified: true', 'Artifacts-saved: true', 'No-followups: true',
   ];
-  const fetchComment = (_cmd, _args) => ({ status: 0, stdout: JSON.stringify({ body: values.join('\n') }) });
+  const fetchComment = () => ({ status: 0, stdout: JSON.stringify({ body: values.join('\n') }) });
   assert.equal(verifyHandoff(input(), fetchComment), true);
   assert.throws(() => verifyHandoff({ ...input(), threadUrl: B }, fetchComment), /refuse/);
   assert.throws(() => verifyHandoff(input(), () => ({ status: 1, error: 'network' })), /Could not verify/);
@@ -113,6 +114,32 @@ test('CDP selection never chooses a different visible chat', () => {
   assert.throws(() => selectExactTab([tabs[0]], A), /No unique/);
   assert.throws(() => selectExactTab([tabs[1], tabs[1]], A), /No unique/);
 });
+test('sidebar disappearance is not confirmed when the sidebar is empty or the target remains', () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const setDocument = (document) => Object.defineProperty(globalThis, 'document', {
+    configurable: true, writable: true, value: document,
+  });
+  const empty = new JSDOM('<main></main><nav></nav>', { url: A, pretendToBeVisual: true });
+  const present = new JSDOM('<main></main><nav><a href="' + A + '">target</a><a href="' + B + '">other</a></nav>',
+    { url: A, pretendToBeVisual: true });
+  const removed = new JSDOM('<main></main><nav><a href="' + B + '">other</a></nav>',
+    { url: A, pretendToBeVisual: true });
+  try {
+    setDocument(empty.window.document);
+    assert.equal(inspectSidebarRemoval(A), false);
+    setDocument(present.window.document);
+    assert.equal(inspectSidebarRemoval(A), false);
+    setDocument(removed.window.document);
+    assert.equal(inspectSidebarRemoval(A), true);
+  } finally {
+    empty.window.close();
+    present.window.close();
+    removed.window.close();
+    if (original) Object.defineProperty(globalThis, 'document', original);
+    else delete globalThis.document;
+  }
+});
+
 test('CLI requires explicit completion evidence and refuses ambiguous options', () => {
   const args = ['finish', '--slot', '1', '--task', '94', '--thread-url', A,
     '--request-id', 'req-12345', '--handoff-url', handoff];

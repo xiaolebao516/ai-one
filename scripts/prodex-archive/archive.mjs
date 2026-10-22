@@ -12,7 +12,7 @@ const storageFile = (home) => path.join(storageDir(home), 'statuses.json');
 
 export function validateHandoffUrl(url, task) {
   let u;
-  try { u = new URL(url); } catch { throw new Error('A GitHub Handoff comment URL is required'); }
+  try { u = new URL(url); } catch (error) { throw new Error('A GitHub Handoff comment URL is required', { cause: error }); }
   const pathMatch = /^\/xiaolebao516\/ai-one\/issues\/([1-9]\d*)$/.exec(u.pathname);
   const commentMatch = /^#issuecomment-(\d+)$/.exec(u.hash);
   if (u.origin !== 'https://github.com' || !pathMatch || !commentMatch ||
@@ -47,22 +47,51 @@ export async function withLock(file, action) {
   const temp = file + '.' + process.pid + '.' + crypto.randomUUID() + '.tmp';
   fs.writeFileSync(temp, String(process.pid) + '\n', { flag: 'wx' });
   let owned = false;
+  let result;
+  let operationFailed = false;
+  let operationError;
   try {
     try { fs.linkSync(temp, file); owned = true; }
     catch (error) {
-      if (error.code === 'EEXIST') throw new Error('Archive/send lock is busy; do not interrupt the other operation');
+      if (error.code === 'EEXIST')
+        throw new Error('Archive/send lock is busy; do not interrupt the other operation', { cause: error });
       throw error;
     }
-    return await action();
-  } finally {
+    result = await action();
+  } catch (error) {
+    operationFailed = true;
+    operationError = error;
+  }
+
+  // Cleanup is deliberately outside finally: cleanup failures must not silently
+  // replace an action error, and an identity mismatch must never delete another lock.
+  let cleanupFailed = false;
+  let cleanupError;
+  if (owned) {
     try {
-      if (owned) {
-        const a = fs.statSync(temp), b = fs.statSync(file);
-        if (a.dev !== b.dev || a.ino !== b.ino) throw new Error('Lock identity changed: not releasing another owner');
+      const a = fs.statSync(temp), b = fs.statSync(file);
+      if (a.dev !== b.dev || a.ino !== b.ino) {
+        cleanupFailed = true;
+        cleanupError = new Error('Lock identity changed: not releasing another owner');
+      } else {
         fs.rmSync(file);
       }
-    } finally { fs.rmSync(temp, { force: true }); }
+    } catch (error) {
+      cleanupFailed = true;
+      cleanupError = error;
+    }
   }
+  try { fs.rmSync(temp, { force: true }); }
+  catch (error) {
+    if (cleanupFailed) cleanupError = new AggregateError([cleanupError, error], 'Multiple lock cleanup failures');
+    else { cleanupFailed = true; cleanupError = error; }
+  }
+
+  if (operationFailed && cleanupFailed)
+    throw new AggregateError([operationError, cleanupError], 'Archive action and lock cleanup both failed');
+  if (operationFailed) throw operationError;
+  if (cleanupFailed) throw cleanupError;
+  return result;
 }
 
 function readJournal(home) {
@@ -73,7 +102,7 @@ function readJournal(home) {
     return x;
   } catch (error) {
     if (error.code === 'ENOENT') return { version: 1, items: {} };
-    throw new Error('Archive journal corrupt or unreadable; manual recovery required');
+    throw new Error('Archive journal corrupt or unreadable; manual recovery required', { cause: error });
   }
 }
 export function statusFor(home, threadUrl) {
@@ -139,6 +168,9 @@ export async function finish(args, { home = slotsHome(), verify = verifyHandoff,
     }
     const definition = slotDefinition(slot, home);
     let outcome = 'failed';
+    let result;
+    let operationFailed = false;
+    let operationError;
     try {
       otherClaims(home, slot, threadUrl);
       await withLock(definition.lockFile ?? path.join(home, 'browser-send.lock'), async () => {
@@ -147,14 +179,39 @@ export async function finish(args, { home = slotsHome(), verify = verifyHandoff,
       });
       outcome = 'archived';
       await setStatus(home, threadUrl, { status: outcome, task, slot });
-      return { status: outcome };
+      result = { status: outcome };
     } catch (error) {
-      await setStatus(home, threadUrl, { status: 'failed', task, slot, reason: error.message });
-      throw error;
-    } finally {
-      if (!claim.release()) throw new Error('Slot claim could not be released; check prodex-slots list');
-      writeClosure(home, slot, { ownership: { task, threadUrl }, note: 'thread closed; archive ' + outcome });
+      operationFailed = true;
+      operationError = error;
+      try {
+        await setStatus(home, threadUrl, { status: 'failed', task, slot, reason: error?.message });
+      } catch (statusError) {
+        operationError = new AggregateError([error, statusError], 'Archive failed and failure status could not be recorded');
+      }
     }
+
+    const cleanupErrors = [];
+    let released = false;
+    try {
+      released = claim.release();
+      if (!released) cleanupErrors.push(new Error('Slot claim could not be released; check prodex-slots list'));
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (released) {
+      try {
+        writeClosure(home, slot, { ownership: { task, threadUrl }, note: 'thread closed; archive ' + outcome });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+
+    if (operationFailed && cleanupErrors.length > 0)
+      throw new AggregateError([operationError, ...cleanupErrors], 'Archive operation and slot cleanup failed');
+    if (operationFailed) throw operationError;
+    if (cleanupErrors.length === 1) throw cleanupErrors[0];
+    if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, 'Slot cleanup failed');
+    return result;
   });
 }
 
