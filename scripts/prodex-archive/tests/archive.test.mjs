@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 import { main, parseArgs } from '../cli.mjs';
 import { canonicalThread, digest, finish, getArchivePolicy, setArchivePolicy, skip, statusFor, validateFinish,
   validateHandoffUrl, verifyHandoff, withLock } from '../archive.mjs';
-import { inspectSidebarRemoval, selectExactTab } from '../browser-ui.mjs';
+import { inspectPage, inspectSidebarRemoval, selectExactTab } from '../browser-ui.mjs';
 import { addSlots, claimSlot, readClaim } from '../../prodex-slots/slots.mjs';
 
 const A = 'https://chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013';
@@ -147,6 +147,43 @@ test('auto-finish calls the guarded lifecycle under the default auto policy', as
   });
   assert.equal(code, 0);
   assert.equal(called, true);
+});
+
+test('Chat actions is recognized as the row menu and an offscreen target is scrolled into view', () => {
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  const dom = new JSDOM('<main><div id="prompt-textarea" contenteditable="true"></div></main>' +
+    '<nav><div id="row"><a href="' + A + '">target</a>' +
+    '<button aria-label="Chat actions">actions</button><button aria-label="Pin chat">pin</button></div></nav>',
+    { url: A, pretendToBeVisual: true });
+  const link = dom.window.document.querySelector('a[href]');
+  const actions = dom.window.document.querySelector('[aria-label="Chat actions"]');
+  const pin = dom.window.document.querySelector('[aria-label="Pin chat"]');
+  let scrollCalls = 0;
+  let rowRect = { left: 10, top: -62, right: 90, bottom: -22, width: 80, height: 40 };
+  link.getBoundingClientRect = () => rowRect;
+  link.scrollIntoView = (options) => {
+    scrollCalls++;
+    assert.deepEqual(options, { block: 'center', inline: 'nearest', behavior: 'instant' });
+    rowRect = { left: 10, top: 100, right: 90, bottom: 140, width: 80, height: 40 };
+  };
+  actions.getBoundingClientRect = () => ({ left: 500, top: 100, right: 540, bottom: 140, width: 40, height: 40 });
+  pin.getBoundingClientRect = () => ({ left: 700, top: 100, right: 740, bottom: 140, width: 40, height: 40 });
+  try {
+    Object.defineProperty(globalThis, 'document', { configurable: true, writable: true, value: dom.window.document });
+    Object.defineProperty(globalThis, 'location', { configurable: true, writable: true, value: dom.window.location });
+    const result = inspectPage(A);
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.row, { x: 50, y: 120 });
+    assert.deepEqual(result.menu, { x: 520, y: 120 });
+    assert.equal(scrollCalls, 1);
+  } finally {
+    dom.window.close();
+    if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
+    else delete globalThis.document;
+    if (originalLocation) Object.defineProperty(globalThis, 'location', originalLocation);
+    else delete globalThis.location;
+  }
 });
 
 test('sidebar disappearance is not confirmed when the sidebar is empty or the target remains', () => {

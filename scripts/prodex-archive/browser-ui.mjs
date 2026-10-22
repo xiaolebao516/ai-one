@@ -67,7 +67,13 @@ export function inspectPage(expected) {
   const rect = (element) => {
     const r = element.getBoundingClientRect();
     if (r.width < 3 || r.height < 3) return null;
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    const point = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    const width = globalThis.innerWidth;
+    const height = globalThis.innerHeight;
+    if (point.x < 0 || point.y < 0 ||
+      (Number.isFinite(width) && point.x >= width) ||
+      (Number.isFinite(height) && point.y >= height)) return null;
+    return point;
   };
   if (globalThis.location.href !== expected || globalThis.document.visibilityState !== 'visible')
     return { error: 'Target thread changed or is hidden' };
@@ -86,6 +92,10 @@ export function inspectPage(expected) {
   });
   if (links.length !== 1) return { error: 'Thread sidebar row not uniquely identified' };
   const link = links[0];
+  // Sidebar rows can be outside the scroll viewport; bring the exact identified
+  // target into view before measuring any coordinates used for mouse input.
+  if (typeof link.scrollIntoView === 'function')
+    link.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
   let menuButton = null;
   for (let parent = link.parentElement, depth = 0; parent && depth < 5; parent = parent.parentElement, depth++) {
     const chatLinks = [...parent.querySelectorAll('a[href]')].filter((a) => {
@@ -95,7 +105,7 @@ export function inspectPage(expected) {
     if (chatLinks.length !== 1) break;
     const buttons = [...parent.querySelectorAll('button')].filter((b) => {
       const label = [b.getAttribute('aria-label'), b.getAttribute('title'), b.getAttribute('data-testid')].filter(Boolean).join(' ');
-      return /options|more|menu|更多|选项/i.test(label);
+      return /options|more|menu|更多|选项|chat actions/i.test(label);
     });
     if (buttons.length === 1) { menuButton = buttons[0]; break; }
   }
