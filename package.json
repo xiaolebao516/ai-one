@@ -17,12 +17,13 @@
     "agent:status": "node scripts/agent/status.mjs",
     "agent:stop": "node scripts/agent/stop.mjs",
     "agent:verify": "node --test scripts/agent/tests/*.test.mjs",
+    "slots:verify": "node --test scripts/prodex-slots/tests/*.test.mjs",
     "pack:portable": "node scripts/pack-portable.mjs",
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "verify": "pnpm build:injected && pnpm typecheck && pnpm lint && pnpm test && pnpm agent:verify && node scripts/check-adapters.mjs"
+    "verify": "pnpm build:injected && pnpm typecheck && pnpm lint && pnpm test && pnpm agent:verify && pnpm slots:verify && node scripts/check-adapters.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
@@ -44,6 +45,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.4.16",
     "globals": "^15.14.0",
+    "jsdom": "25.0.1",
     "postcss": "^8.5.23",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",

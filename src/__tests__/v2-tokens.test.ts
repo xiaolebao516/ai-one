@@ -41,8 +41,11 @@ describe('v2 design tokens', () => {
       for (const surface of [c.surface, c.panel, c.bg]) {
         expect(contrastRatio(c.ink, surface), `${skin}/${mode} ink`).toBeGreaterThanOrEqual(7);
         expect(contrastRatio(c.ink2, surface), `${skin}/${mode} ink2`).toBeGreaterThanOrEqual(4.5);
-        // ink3 is metadata only (documented); it still has to clear the non-text / large-text floor.
-        expect(contrastRatio(c.ink3, surface), `${skin}/${mode} ink3`).toBeGreaterThanOrEqual(3);
+        // ink3 also carries 11–12px metadata/count labels, so it needs normal-text AA.
+        expect(contrastRatio(c.ink3, surface), `${skin}/${mode} ink3 on ${surface}`).toBeGreaterThanOrEqual(4.5);
+        // Tertiary text must remain visually weaker than secondary text in both modes.
+        expect(contrastRatio(c.ink2, surface), `${skin}/${mode} ink2 vs ink3`)
+          .toBeGreaterThan(contrastRatio(c.ink3, surface));
       }
       expect(contrastRatio(c.onPrimary, c.primary), `${skin}/${mode} primary button`).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(c.onIsland, c.island), `${skin}/${mode} island`).toBeGreaterThanOrEqual(7);

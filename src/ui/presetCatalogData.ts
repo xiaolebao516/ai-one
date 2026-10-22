@@ -56,6 +56,18 @@ export const PRESET_CATALOG: PresetCatalogEntry[] = [
     source: 'builtin',
   },
   {
+    id: 'deliberation',
+    graphId: 'consult',
+    displayNameKey: 'preset.deliberation.displayName',
+    metaKey: 'preset.deliberation.meta',
+    descriptionKey: 'preset.deliberation.description',
+    costLabelKey: 'preset.deliberation.costLabel',
+    requiredProviders: ['chatgpt', 'gemini', 'claude'],
+    estMinutes: 8,
+    ramHint: 'medium',
+    source: 'builtin',
+  },
+  {
     id: 'coding',
     graphId: 'coding',
     displayNameKey: 'preset.coding.displayName',
@@ -97,12 +109,27 @@ export function presetForId(presetId: WorkflowPresetId): PresetCatalogEntry {
   return PRESET_CATALOG.find((preset) => preset.id === presetId) ?? PRESET_CATALOG[0];
 }
 
+/** The preset is the source of truth for *required* providers, even if it reuses a legacy mode. */
+export function requiredProvidersForPreset(
+  mode: ChatMode,
+  presetId: WorkflowPresetId,
+  assignments: ModeRoleAssignments = DEFAULT_MODE_ROLE_ASSIGNMENTS,
+): AIProvider[] {
+  if (presetId === 'deliberation') return [...new Set<AIProvider>(['chatgpt', 'gemini', assignments.consult.reviewer])];
+  const roles = defaultRolesForPreset(mode, presetId, assignments);
+  return roles ? ([...new Set(Object.values(roles))] as AIProvider[]) : [...presetForId(presetId).requiredProviders];
+}
+
 export function defaultRolesForPreset(
   mode: ChatMode,
   presetId?: WorkflowPresetId,
   assignments: ModeRoleAssignments = DEFAULT_MODE_ROLE_ASSIGNMENTS,
 ): ModeRoles | undefined {
   if (presetId === 'brainstorm') return { ...assignments.roundtable };
+  if (presetId === 'deliberation') {
+    const roles = { ...assignments.consult, first: 'chatgpt' as const, second: 'gemini' as const, auditor: assignments.consult.reviewer };
+    return roles;
+  }
   if (mode === 'free') return undefined;
   if (mode === 'debate') return { ...assignments.debate };
   if (mode === 'consult') return { ...assignments.consult };

@@ -59,6 +59,15 @@ const LIST_FILTERS: StatusFilter[] = [ALL, 'inProgress', 'needsYou', 'attention'
 const CI_TONE: Record<CiView['state'], V2BadgeTone> = { success: 'done', failure: 'block', running: 'run', unknown: 'unknown' };
 
 /**
+ * True while focus is on one of the HUD's own tabs: arrow keys, Home/End and clicking a tab all
+ * move focus there, and the view effect must leave it alone so view switching stays continuous.
+ */
+function hudTabHasFocus(): boolean {
+  const active = typeof document === 'undefined' || typeof HTMLElement === 'undefined' ? null : document.activeElement;
+  return active instanceof HTMLElement && active.getAttribute('role') === 'tab' && active.id.startsWith(`${ID}-tabs-tab-`);
+}
+
+/**
  * Task HUD (#40): a full-window v2 view over the chat. The chat stays mounted underneath (made
  * inert by App), so leaving the HUD returns to exactly the same conversation, draft and provider.
  */
@@ -74,9 +83,12 @@ export function TaskHud({ locale, onClose, tasks = TASK_HUD_MOCK_TASKS, initialS
   const [opener] = useState(() => (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null));
   useEffect(() => () => opener?.focus(), [opener]);
 
-  // Each view change moves focus to the view heading and scrolls to the top.
+  // Each view change scrolls to the top. Focus goes to the view heading only when the change did
+  // not come from the HUD's own tab list: Tabs already moves focus to the activated tab, and taking
+  // it away here would make the next arrow key land on the heading instead of the tab list.
   useEffect(() => {
     scrollRef.current?.scrollTo?.({ top: 0 });
+    if (hudTabHasFocus()) return;
     headingRef.current?.focus({ preventScroll: true });
   }, [state.view, state.selectedId, state.scenario]);
 

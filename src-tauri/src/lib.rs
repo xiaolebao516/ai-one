@@ -1,5 +1,6 @@
 mod adapters;
 mod bridge;
+mod github_readonly;
 mod session_checkpoint;
 mod settings;
 mod snapshots;
@@ -52,7 +53,9 @@ pub fn run() {
             snapshots::snapshot_delete,
             session_checkpoint::session_checkpoint_save,
             session_checkpoint::session_checkpoint_load,
-            session_checkpoint::session_checkpoint_clear
+            session_checkpoint::session_checkpoint_clear,
+            github_readonly::github_readonly_get,
+            github_readonly::github_readonly_associations
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
