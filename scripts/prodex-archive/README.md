@@ -8,6 +8,16 @@ The tool only acts on threads explicitly owned by a Prodex task. It does not sea
 personal chats. It uses the already-open exact thread in an idle, visible Prodex tab,
 never creates a browser or navigates a tab, and refuses uncertain UI.
 
+## Policy and automatic task-finalization hook
+
+The local policy defaults to `auto` and is stored in `~/.local/share/prodex/archive/policy.json` (or under `PRODEX_SLOTS_HOME`). Set or inspect it with:
+
+    node scripts/prodex-archive/cli.mjs policy
+    node scripts/prodex-archive/cli.mjs policy --mode auto
+    node scripts/prodex-archive/cli.mjs policy --mode manual
+
+The task dispatcher must call `auto-finish` only after the task is truly terminal and its Handoff has been posted. This is the lifecycle hook that automates archiving for the user; it is deliberately not run after every `ask` or `release`. In `manual` mode, `auto-finish` safely does nothing. `finish` remains an explicit override, and `skip` retains an individual thread.
+
 ## Finish procedure
 
 1. Recover the exact Prodex request if necessary with its thread URL/request ID.
@@ -31,7 +41,7 @@ never creates a browser or navigates a tab, and refuses uncertain UI.
    with #issuecomment-ID.
 3. Run finish, specifying the slot CURRENTLY displaying that exact thread:
 
-       node scripts/prodex-archive/cli.mjs finish --task 94 --slot 2 --thread-url "$THREAD" --request-id "$REQUEST_ID" --handoff-url "$COMMENT_URL"
+       node scripts/prodex-archive/cli.mjs auto-finish --task 94 --slot 2 --thread-url "$THREAD" --request-id "$REQUEST_ID" --handoff-url "$COMMENT_URL"
 
    The tool uses signed-in gh to fetch and validate the real Handoff comment, claims
    the slot, takes Prodex's per-slot send lock, verifies an idle thread and an empty

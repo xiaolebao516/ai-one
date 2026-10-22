@@ -75,7 +75,7 @@
 - **每轮在 Issue 留上下文**：把该轮提问要点、结论、阻塞写成短评论，作为可恢复的 Handoff；回复正文不进 Issue。
 - **中断即停**：出现 `request_mismatch`、页签被切走或结果不确定时停止发送，先按 request-id、线程 URL 和 Issue Handoff 恢复核对，禁止盲目重发。
 - **用完显式释放**：确认线程不再续用后释放槽位并核对实际状态，在 Task Issue 写明「本轮线程已闭合，槽位可复用」；未释放成功就记阻塞，不得宣称可复用。本阶段不自动删除聊天记录，线程状态与槽位占用分开管理。
-- **已完成线程可归档（#94）**：确认最后一次 Prodex 请求已恢复/核验、产物与 Handoff 已保存、线程不会再续聊后，依 scripts/prodex-archive/README.md 在该线程当前所属槽位执行 finish（先验证 GitHub Archive-ready 评论，再由浏览器 UI 归档），取代一次额外的手工 release。单条 ask 完成不触发归档；未满足条件则保留线程。归档失败必须记录 failed/pending，先人工核查，不自动重试点击，更不能误归档个人聊天。
+- **已完成线程可归档（#94）**：确认最后一次 Prodex 请求已恢复/核验、产物与 Handoff 已保存、线程不会再续聊后，依 scripts/prodex-archive/README.md 在该线程当前所属槽位执行 auto-finish（先验证 GitHub Archive-ready 评论，再由浏览器 UI 归档）；该命令遵循本机 archive policy，默认 auto，可设为 manual。单条 ask 完成不触发归档；未满足条件则保留线程。归档失败必须记录 failed/pending，先人工核查，不自动重试点击，更不能误归档个人聊天。
 
 ## 账号与安全
 

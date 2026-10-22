@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
-import { parseArgs } from '../cli.mjs';
-import { canonicalThread, digest, finish, skip, statusFor, validateFinish,
+import { main, parseArgs } from '../cli.mjs';
+import { canonicalThread, digest, finish, getArchivePolicy, setArchivePolicy, skip, statusFor, validateFinish,
   validateHandoffUrl, verifyHandoff, withLock } from '../archive.mjs';
 import { inspectSidebarRemoval, selectExactTab } from '../browser-ui.mjs';
 import { addSlots, claimSlot, readClaim } from '../../prodex-slots/slots.mjs';
@@ -114,6 +114,41 @@ test('CDP selection never chooses a different visible chat', () => {
   assert.throws(() => selectExactTab([tabs[0]], A), /No unique/);
   assert.throws(() => selectExactTab([tabs[1], tabs[1]], A), /No unique/);
 });
+test('archive policy defaults to auto, persists manual mode, and refuses invalid values', async () => {
+  const home = temp();
+  assert.deepEqual(getArchivePolicy(home), { version: 1, mode: 'auto' });
+  assert.deepEqual(await setArchivePolicy(home, 'manual'), { version: 1, mode: 'manual' });
+  assert.equal(getArchivePolicy(home).mode, 'manual');
+  await assert.rejects(setArchivePolicy(home, 'sometimes'), /auto or manual/);
+});
+
+test('auto-finish obeys manual policy while explicit finish remains available', async () => {
+  const home = temp();
+  await setArchivePolicy(home, 'manual');
+  const args = ['--slot', '1', '--task', '94', '--thread-url', A,
+    '--request-id', 'req-12345', '--handoff-url', handoff];
+  let calls = 0;
+  const common = { home, runFinish: async () => { calls++; return { status: 'archived' }; },
+    out: () => {}, err: () => {} };
+  assert.equal(await main(['auto-finish', ...args], common), 0);
+  assert.equal(calls, 0);
+  assert.equal(await main(['finish', ...args], common), 0);
+  assert.equal(calls, 1);
+});
+
+test('auto-finish calls the guarded lifecycle under the default auto policy', async () => {
+  const home = temp();
+  let called = false;
+  const args = ['auto-finish', '--slot', '1', '--task', '94', '--thread-url', A,
+    '--request-id', 'req-12345', '--handoff-url', handoff];
+  const code = await main(args, { home,
+    runFinish: async (input) => { called = input.retry === false && input.threadUrl === A; return { status: 'archived' }; },
+    out: () => {}, err: () => {},
+  });
+  assert.equal(code, 0);
+  assert.equal(called, true);
+});
+
 test('sidebar disappearance is not confirmed when the sidebar is empty or the target remains', () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'document');
   const setDocument = (document) => Object.defineProperty(globalThis, 'document', {

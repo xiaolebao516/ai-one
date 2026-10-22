@@ -282,7 +282,9 @@ the 10 s send spacing is shared by all slots; slot windows are visible windows.
 ## Archive finished ChatGPT conversations
 
 Archive is distinct from release: release only frees the slot. For a task that is truly
-finished and has a verified Handoff, use the fail-closed finish-time workflow in
-[scripts/prodex-archive/README.md](../prodex-archive/README.md) (Issue #94). It uses
+finished and has a verified Handoff, the dispatcher calls `auto-finish` as its task-finalization
+hook using the fail-closed workflow in [scripts/prodex-archive/README.md](../prodex-archive/README.md)
+(Issue #94). The default policy is `auto`; set `policy --mode manual` to disable automatic
+archiving. It uses
 the existing slot claims and send lock, storing archive status separately from lastClosed.
 Never archive immediately after a single ask or while a worker may continue the chat.

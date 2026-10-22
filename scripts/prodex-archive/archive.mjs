@@ -10,6 +10,40 @@ export const canonicalThread = (url) => normalizeOwnership({ threadUrl: url }).t
 const storageDir = (home) => path.join(home, 'archive');
 const storageFile = (home) => path.join(storageDir(home), 'statuses.json');
 
+const policyFile = (home) => path.join(storageDir(home), 'policy.json');
+
+export function getArchivePolicy(home) {
+  let config;
+  try {
+    config = JSON.parse(fs.readFileSync(policyFile(home), 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') return { version: 1, mode: 'auto' };
+    throw new Error('Archive policy unreadable; manual recovery required', { cause: error });
+  }
+  if (config?.version !== 1 || !['auto', 'manual'].includes(config.mode))
+    throw new Error('Archive policy is invalid; expected version 1 and mode auto or manual');
+  return { version: 1, mode: config.mode };
+}
+
+export async function setArchivePolicy(home, mode) {
+  if (!['auto', 'manual'].includes(mode))
+    throw new Error('Archive mode must be auto or manual');
+  return withLock(path.join(storageDir(home), 'policy.lock'), async () => {
+    getArchivePolicy(home); // Refuse to overwrite a corrupt policy silently.
+    const file = policyFile(home);
+    const temp = file + '.' + crypto.randomUUID() + '.tmp';
+    try {
+      fs.writeFileSync(temp, JSON.stringify({ version: 1, mode }, null, 2) + '\n',
+        { flag: 'wx', mode: 0o600 });
+      fs.renameSync(temp, file);
+    } finally {
+      fs.rmSync(temp, { force: true });
+    }
+    return getArchivePolicy(home);
+  });
+}
+
+
 export function validateHandoffUrl(url, task) {
   let u;
   try { u = new URL(url); } catch (error) { throw new Error('A GitHub Handoff comment URL is required', { cause: error }); }
