@@ -32,13 +32,14 @@ export function auditRequestsContinuation(text: string): boolean {
   return parseDeliberationAudit(text)?.decision === 'CONTINUE';
 }
 
-/** The five headings the audit prompt asks for, in order, with the localized report label for each. */
+/** The five headings the audit prompt asks for, in order, with the localized report label for each.
+ * The prompt asks for the Chinese headings; the English ones (and Traditional script) are still accepted. */
 const REPORT_SECTIONS: readonly { pattern: string; label: I18nKey }[] = [
-  { pattern: 'evidence[\\s-]*backed\\s+findings', label: 'deliberationReport.sectionFindings' },
-  { pattern: 'shared\\s+conclusions', label: 'deliberationReport.sectionShared' },
-  { pattern: 'disagreements', label: 'deliberationReport.sectionDisagreements' },
-  { pattern: 'evidence\\s+gaps', label: 'deliberationReport.sectionGaps' },
-  { pattern: 'next\\s+steps', label: 'deliberationReport.sectionNext' },
+  { pattern: 'evidence[\\s-]*backed\\s+findings|有(?:证据|證據)支持的(?:发现|發現)', label: 'deliberationReport.sectionFindings' },
+  { pattern: 'shared\\s+conclusions|共同(?:结论|結論)', label: 'deliberationReport.sectionShared' },
+  { pattern: 'disagreements|分歧', label: 'deliberationReport.sectionDisagreements' },
+  { pattern: 'evidence\\s+gaps|(?:证据|證據)(?:缺口|空白)', label: 'deliberationReport.sectionGaps' },
+  { pattern: 'next\\s+steps|下一步', label: 'deliberationReport.sectionNext' },
 ];
 /** Fewer recognized headings than this means the audit ignored the format; show it as-is instead. */
 const MIN_REPORT_SECTIONS = 3;
@@ -51,7 +52,7 @@ const CONTROL_TAG = /`?\[\[\s*AI_ONE_AUDIT_[A-Z_]+\s*:[^\]\n]*\]\]`?/gi;
 function sectionHeading(pattern: string, inline: boolean): RegExp {
   return new RegExp(
     (inline ? '(?:^|(?<=[\\n.。;；!?！？]))' : '(?:^|(?<=\\n))') +
-      '[\\t ]*(#{1,6}[\\t ]*)?((?:[-*+]|\\d+[.)])[\\t ]+)?(\\*\\*|__)?[\\t ]*(?:' + pattern + ')' +
+      '[\\t ]*(#{1,6}[\\t ]*)?((?:[-*+]|\\d+[.)])[\\t ]+|[一二三四五][、.．][\\t ]*)?(\\*\\*|__)?[\\t ]*(?:' + pattern + ')' +
       '[\\t ]*(?:\\*\\*|__)?[\\t ]*(?:[:：][\\t ]*(?:\\*\\*|__)?|(?=\\n)|$)',
     'gi',
   );

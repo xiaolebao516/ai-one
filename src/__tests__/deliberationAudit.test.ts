@@ -166,6 +166,28 @@ describe('deliberation final report', () => {
     expect(report).not.toContain('## Disagreements\n');
   });
 
+  it('reads the Chinese headings the audit prompt now asks for, in Simplified or Traditional script', () => {
+    const simplified = reportFor([
+      '### 有证据支持的发现', 'A 有来源支持。',
+      '**共同结论**：双方都接受测量结果。',
+      '1. 分歧', '校准方法仍有争议。',
+      '二、证据缺口', '缺少重复实验。',
+      '## 下一步', '再测一次。',
+    ].join('\n') + footer);
+    expect(sectionOf(simplified, '### Evidence-backed findings')).toBe('A 有来源支持。');
+    expect(sectionOf(simplified, '### Shared conclusions')).toBe('双方都接受测量结果。');
+    expect(sectionOf(simplified, '### Remaining disagreements')).toBe('校准方法仍有争议。');
+    expect(sectionOf(simplified, '### Evidence gaps')).toBe('缺少重复实验。');
+    expect(sectionOf(simplified, '### Next steps')).toBe('再测一次。');
+
+    const traditional = reportFor(['## 有證據支持的發現', 'A。', '## 共同結論', 'B。', '## 分歧', '無', '## 證據缺口', 'D。', '## 下一步', 'E。'].join('\n') + footer);
+    expect(sectionOf(traditional, '### Shared conclusions')).toBe('B。');
+    expect(sectionOf(traditional, '### Remaining disagreements')).toBe('None');
+    // A heading word inside a sentence is still prose, not a section.
+    expect(sectionOf(reportFor(['## 有证据支持的发现', 'A。', '## 共同结论', '主要分歧：无。', '## 证据缺口', 'D。', '## 下一步', 'E。'].join('\n') + footer),
+      '### Shared conclusions')).toBe('主要分歧：无。');
+  });
+
   // "A. Shared conclusions: B." (a real inline section) and "Both teams agree. Disagreements: none."
   // (prose naming a section) have the same shape, so a missing section that appears on a
   // "Heading: text" line cannot be placed safely: the whole report falls back to plain text.

@@ -101,10 +101,14 @@ describe('response language policy', () => {
   it('adds a concrete final language instruction independent of the English workflow and Traditional UI', () => {
     const policy = createResponseLanguagePolicy('auto', 'zh-TW');
     const prompt = prependResponseLanguagePolicy('English audit instructions and participant replies.', policy, '请比较这两个方案。');
-    expect(prompt).toContain('Otherwise, write all natural-language text and follow-up questions in Simplified Chinese (zh-CN).');
-    expect(prompt).toContain('所有正文和后续问题必须使用简体中文');
+    // The known target is stated in Simplified Chinese at both ends, without the English rule set or the zh-TW fallback.
+    expect(prompt).toContain('全部自然语言内容和后续问题都使用简体中文，不要使用繁体中文或英文');
+    expect(prompt).not.toContain('Traditional Chinese');
+    expect(prompt).not.toContain('primary language of the user-authored prose');
+    expect(prompt.startsWith('<response-language-policy')).toBe(true);
     expect(prompt.endsWith('</response-language-policy>')).toBe(true);
-    expect(prompt.lastIndexOf('Simplified Chinese (zh-CN)')).toBeGreaterThan(prompt.indexOf('English audit instructions'));
+    expect(prompt.lastIndexOf('使用简体中文')).toBeGreaterThan(prompt.indexOf('English audit instructions'));
+    expect(prompt.indexOf('使用简体中文')).toBeLessThan(prompt.indexOf('English audit instructions'));
     expect(responseLanguagePolicyFromPrompt(prompt)).toEqual(policy);
   });
 
@@ -113,10 +117,8 @@ describe('response language policy', () => {
     for (const question of ['请用英文回答这个问题。', '请将这句话翻译成西班牙语。', '请把标题用英文写，正文用中文写。']) {
       const prompt = prependResponseLanguagePolicy('Audit instructions', policy, question);
       const reminder = prompt.slice(prompt.lastIndexOf('<response-language-policy'));
-      expect(reminder).toContain('explicit output-language requests');
-      expect(reminder).toContain('per-section requests and translation targets');
-      expect(reminder).toContain('take precedence');
-      expect(reminder).toContain('Keep required parser headings and machine-readable control tags exactly as specified');
+      expect(reminder).toContain('除非用户在原问题中明确要求其他输出语言（包括分节使用不同语言或翻译目标）');
+      expect(reminder).toContain('要求原样输出的解析标题和机器标签保持原样');
     }
   });
 

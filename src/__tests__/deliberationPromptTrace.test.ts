@@ -45,13 +45,13 @@ describe('deliberation audit prompt evidence', () => {
     const evidence = redactDeliberationAuditPrompt(snapshot, text);
     expect(evidence).toMatchObject({ templateMatched: true, round, languagePolicyPresent: true, questionBlockPresent: true });
     expect(evidence.prompt).toContain('<response-language-policy version="1" setting="auto" interface-locale="zh-TW">');
-    expect(evidence.prompt).toContain('same language and script as the original user question');
-    expect(evidence.prompt).toContain('kept in English because the app parses them');
+    expect(evidence.prompt).toContain('否则全部内容（包括提出的后续问题）都使用简体中文');
+    expect(evidence.prompt).toContain('有证据支持的发现、共同结论、分歧、证据缺口、下一步');
     expect(evidence.prompt).toContain('[[AI_ONE_AUDIT_QUESTION:NONE]]');
     expect(evidence.prompt).toContain('[REDACTED original user question]');
     expect(evidence.prompt).not.toContain('PRIVATE_');
     expect(evidence.prompt).not.toContain('setting="de"');
-    expect(evidence.prompt).toContain('Otherwise, write all natural-language text and follow-up questions in Simplified Chinese (zh-CN).');
+    expect(evidence.prompt).toContain('全部自然语言内容和后续问题都使用简体中文');
     expect(evidence.prompt?.endsWith('</response-language-policy>')).toBe(true);
   });
 
@@ -62,7 +62,7 @@ describe('deliberation audit prompt evidence', () => {
 
   it('fails closed on edited prompts, missing question blocks or unavailable snapshot text', () => {
     const { snapshot, text } = fixture();
-    for (const altered of [text + '\nPRIVATE_EDIT', text.replace('Original user question', 'PRIVATE_EDIT')]) {
+    for (const altered of [text + '\nPRIVATE_EDIT', text.replace('用户的原问题', 'PRIVATE_EDIT')]) {
       const evidence = redactDeliberationAuditPrompt(snapshot, altered);
       expect(evidence.templateMatched).toBe(false);
       expect(evidence.prompt).toBeUndefined();

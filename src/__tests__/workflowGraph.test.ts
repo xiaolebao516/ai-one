@@ -360,12 +360,12 @@ describe('workflow graph foundation', () => {
     expect(prompts[3].text).toContain('independent chatgpt');
     expect(prompts[4].text).toContain('independent chatgpt');
     expect(prompts[4].text).toContain('reasoned response');
-    expect(prompts[4].text).toContain('kept in English because the app parses them');
-    // Every turn restates the user's question so the response language survives later rounds.
+    expect(prompts[4].text).toContain('严格使用以下五个小标题，依次为：有证据支持的发现、共同结论、分歧、证据缺口、下一步');
+    // Every turn is written in Simplified Chinese and restates the user's question.
     for (const entry of prompts) {
-      expect(entry.text).toContain('Original user question (the only user-authored text here; it sets the response language');
-      expect(entry.text).toContain('\nAssess design');
-      expect(entry.text).toContain('same language and script as the original user question');
+      expect(entry.text).toContain('用户的原问题（本消息中唯一由用户本人写的内容）：\nAssess design');
+      expect(entry.text).toContain('否则全部内容（包括提出的后续问题）都使用简体中文');
+      expect(entry.text).not.toMatch(/Discussion round|INDEPENDENT THIRD-PARTY|Give your independent answer/);
     }
     expect(system).toHaveLength(1);
     expect(system[0]).toContain('COMPLETE_AGREED (round 1');
@@ -397,11 +397,12 @@ describe('workflow graph foundation', () => {
       expect(evidence.map((entry) => entry.round)).toEqual([1, 2, 3]);
       for (const entry of evidence) {
         expect(entry).toMatchObject({ templateMatched: true, languagePolicyPresent: true, questionBlockPresent: true, dispatch: 'dispatched' });
-        expect(entry.prompt).toContain('same language and script as the original user question');
+        expect(entry.prompt).toContain('否则全部内容（包括提出的后续问题）都使用简体中文');
         expect(entry.prompt).toContain('setting="auto" interface-locale="zh-TW"');
         expect(entry.prompt).not.toContain('PRIVATE_QUESTION');
         expect(entry.prompt).not.toContain('討論這些證據與局限');
-        expect(entry.prompt).toContain('Otherwise, write all natural-language text and follow-up questions in Simplified Chinese (zh-CN).');
+        expect(entry.prompt).not.toContain('Traditional Chinese');
+        expect(entry.prompt).toContain('全部自然语言内容和后续问题都使用简体中文');
         expect(entry.prompt?.endsWith('</response-language-policy>')).toBe(true);
       }
     } finally {
@@ -414,8 +415,8 @@ describe('workflow graph foundation', () => {
     ]);
     for (const { text } of prompts) {
       const footer = text.slice(text.lastIndexOf('<response-language-policy'));
-      expect(footer).toContain('Otherwise, write all natural-language text and follow-up questions in Simplified Chinese (zh-CN).');
-      expect(footer).not.toContain('Traditional Chinese');
+      expect(footer).toContain('全部自然语言内容和后续问题都使用简体中文');
+      expect(text).not.toContain('Traditional Chinese');
       expect(footer).not.toContain('English (en)');
       expect(footer.endsWith('</response-language-policy>')).toBe(true);
     }

@@ -539,9 +539,11 @@ describe('workflow engine', () => {
     for (const prompt of freePrompts) {
       expect(prompt).toContain('Explain dependency injection in simple terms.');
       expect(prompt).toContain('<response-language-policy version="1" setting="auto" interface-locale="zh-TW">');
-      expect(prompt).toContain('primary language of the user-authored prose');
-      expect(prompt).toContain('Traditional Chinese (zh-TW) (the app interface language fallback)');
+      // The inferred English target replaces the generic rules, so the zh-TW fallback is never named.
+      expect(prompt).not.toContain('Traditional Chinese');
       expect(prompt.startsWith('<response-language-policy')).toBe(true);
+      const header = prompt.slice(0, prompt.indexOf('</response-language-policy>'));
+      expect(header).toContain('Otherwise, write all natural-language text and follow-up questions in English (en).');
       const footer = prompt.slice(prompt.lastIndexOf('<response-language-policy'));
       expect(footer).toContain('Otherwise, write all natural-language text and follow-up questions in English (en).');
       expect(footer.endsWith('</response-language-policy>')).toBe(true);
@@ -569,7 +571,7 @@ describe('workflow engine', () => {
         prompt.includes('<response-language-policy version="1" setting="auto" interface-locale="zh-TW">'),
       ),
     ).toBe(true);
-    expect(serialPrompts.every((prompt) => prompt.includes('Do not infer it from these workflow instructions, other AI responses'))).toBe(true);
+    expect(serialPrompts.every((prompt) => !prompt.includes('Traditional Chinese'))).toBe(true);
     expect(serialPrompts.every((prompt) => prompt.startsWith('<response-language-policy'))).toBe(true);
     for (const prompt of serialPrompts) {
       const footer = prompt.slice(prompt.lastIndexOf('<response-language-policy'));
@@ -597,7 +599,7 @@ describe('workflow engine', () => {
     for (const prompt of prompts) {
       expect(prompt).toContain('Please continue in English.');
       const footer = prompt.slice(prompt.lastIndexOf('<response-language-policy'));
-      expect(footer).toContain('Otherwise, write all natural-language text and follow-up questions in Simplified Chinese (zh-CN).');
+      expect(footer).toContain('全部自然语言内容和后续问题都使用简体中文');
       expect(footer).not.toContain('Traditional Chinese');
       expect(footer).not.toContain('English (en)');
     }
