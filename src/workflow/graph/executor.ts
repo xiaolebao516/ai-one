@@ -9,7 +9,7 @@ import { deliberationAuditReport } from './deliberationAudit';
 import { fillAndAwaitNativeSend } from '../nativeEdit';
 import { providerResponseError, ProviderResponseError } from '../providerResponse';
 import { reserveProviderTurn, sendAndWait } from '../sendAndWait';
-import { prependResponseLanguagePolicy, type ResponseLanguagePolicy } from '../responseLanguage';
+import { prependResponseLanguagePolicy, resolveResponseLanguage, type ResponseLanguagePolicy } from '../responseLanguage';
 import { runStep } from '../stepRunner';
 import { clearActiveTurn, SKIP_RESPONSE } from '../state';
 import { cancelPendingStepTimeoutAction } from '../stepTimeout';
@@ -483,6 +483,7 @@ function renderPromptSpec(prompt: PromptSpec, context: ExecutionContext, nodeId:
     provider,
     targets: context.targets,
     locale: context.locale,
+    responseLanguage: resolveResponseLanguage(context.responseLanguagePolicy, context.question),
   });
   return prependResponseLanguagePolicy(rendered, context.responseLanguagePolicy, context.question);
 }

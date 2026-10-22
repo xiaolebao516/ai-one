@@ -5,6 +5,7 @@ import { deliberationGraph } from '../workflow/graph/deliberationGraph';
 import { promptBuilders } from '../workflow/graph/registries';
 import {
   prependResponseLanguagePolicy,
+  resolveResponseLanguage,
   responseLanguagePolicyFromPrompt,
 } from '../workflow/responseLanguage';
 import { getCurrentSnapshot } from '../workflow/snapshot/recorder';
@@ -49,8 +50,10 @@ export function redactDeliberationAuditPrompt(snapshot: ExecutionSnapshot, text:
     });
     if (history.some((item) => item === undefined)) continue;
     const replies = history.filter((item) => item !== undefined);
+    // The reply language comes from the real question, exactly as the executor resolves it.
+    const responseLanguage = resolveResponseLanguage(policy, question.text);
     const render = (userQuestion: string, items: typeof replies) => prependResponseLanguagePolicy(
-      promptBuilders['deliberation.audit']([round, userQuestion, items], { graph: deliberationGraph }), policy, question.text,
+      promptBuilders['deliberation.audit']([round, userQuestion, items], { graph: deliberationGraph, responseLanguage }), policy, question.text,
     );
     if (render(question.text, replies) !== text) continue;
     return {

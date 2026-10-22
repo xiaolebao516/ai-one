@@ -361,14 +361,45 @@ describe('workflow graph foundation', () => {
     expect(prompts[4].text).toContain('independent chatgpt');
     expect(prompts[4].text).toContain('reasoned response');
     expect(prompts[4].text).toContain('严格使用以下五个小标题，依次为：有证据支持的发现、共同结论、分歧、证据缺口、下一步');
-    // Every turn is written in Simplified Chinese and restates the user's question.
+    // Every turn is written in Chinese workflow text and restates the user's question; without a
+    // response-language policy it does not impose a language of its own.
     for (const entry of prompts) {
       expect(entry.text).toContain('用户的原问题（本消息中唯一由用户本人写的内容）：\nAssess design');
-      expect(entry.text).toContain('否则全部内容（包括提出的后续问题）都使用简体中文');
+      expect(entry.text).toContain('没有说明时，使用与原问题相同的语言和字体，不要因为本流程说明是中文而改用中文');
+      expect(entry.text).not.toContain('使用简体中文');
       expect(entry.text).not.toMatch(/Discussion round|INDEPENDENT THIRD-PARTY|Give your independent answer/);
     }
     expect(system).toHaveLength(1);
     expect(system[0]).toContain('COMPLETE_AGREED (round 1');
+  });
+
+  it.each([
+    { question: 'What are the risks of this design?', setting: 'auto' as const, expected: '都使用英文（English）', absent: '使用简体中文' },
+    { question: '請比較這兩個方案的風險。', setting: 'auto' as const, expected: '都使用繁體中文', absent: '使用简体中文' },
+    { question: 'この設計のリスクは何ですか？', setting: 'auto' as const, expected: '都使用日文（日本語）', absent: '使用简体中文' },
+    { question: '请比较这两个方案的风险。', setting: 'de' as const, expected: '都使用德文（Deutsch）', absent: '使用简体中文' },
+    { question: '请比较这两个方案的风险。', setting: 'auto' as const, expected: '都使用简体中文', absent: '使用英文' },
+  ])('deliberation states the resolved reply language ($setting: $question) on every turn', async ({ question, setting, expected, absent }) => {
+    const prompts: string[] = [];
+    vi.mocked(host.provider.send).mockImplementation(async (provider, text) => {
+      prompts.push(text);
+      publishBridgeMessage(done(provider, provider === 'claude'
+        ? '## Evidence-backed findings\nA\n## Shared conclusions\nB\n## Disagreements\nNONE\n## Evidence gaps\nNONE\n## Next steps\nE\n[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:AGREED]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]'
+        : 'reply from ' + provider));
+    });
+    await expect(executeGraph(deliberationGraph, {
+      text: question,
+      roles: { first: 'chatgpt', second: 'gemini', auditor: 'claude' },
+      responseLanguagePolicy: createResponseLanguagePolicy(setting, 'zh-TW'),
+    })).resolves.toBeUndefined();
+    expect(prompts).toHaveLength(5);
+    for (const text of prompts) {
+      expect(text).toContain(expected);
+      expect(text).not.toContain(absent);
+      // An explicit request in the question still wins over the resolved default.
+      expect(text).toMatch(/除非(?:用户在原问题|使用者在原問題)中明[确確]要求其他[语語]言/);
+    }
+    expect(prompts[4]).toContain('使用与审计正文相同的语言');
   });
 
   it('deliberation keeps the original Simplified Chinese language through every round and reports at the limit', async () => {

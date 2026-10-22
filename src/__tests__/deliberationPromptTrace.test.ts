@@ -26,8 +26,10 @@ function fixture(round = 1) {
   ['first', 'second', `round${round}_first`, `round${round}_second`].forEach((nodeId, index) => {
     recordStep({ nodeId, provider: index % 2 ? 'gemini' : 'chatgpt', input: '', output: history[index].text, status: 'done', startedAt: '' });
   });
+  // Mirrors the executor: without a policy no reply language is resolved; with it, the question gives zh-CN.
   const body = promptBuilders['deliberation.audit']([round, question, history], { graph: deliberationGraph });
-  return { snapshot, body, text: prependResponseLanguagePolicy(body, policy, question) };
+  const withPolicy = promptBuilders['deliberation.audit']([round, question, history], { graph: deliberationGraph, responseLanguage: 'zh-CN' });
+  return { snapshot, body, text: prependResponseLanguagePolicy(withPolicy, policy, question) };
 }
 
 let trace: ReturnType<typeof startDeliberationAuditTrace> | undefined;

@@ -88,6 +88,7 @@ type SectionMatch = { label: I18nKey; start: number; end: number };
 /** Picks one heading per section, or undefined when the headings are too few, ambiguous or out of order. */
 function pickSections(masked: string, inline: boolean): SectionMatch[] | undefined {
   const found: SectionMatch[] = [];
+  const strengths: number[] = [];
   for (const section of REPORT_SECTIONS) {
     const candidates = [...masked.matchAll(sectionHeading(section.pattern, inline))].map((match) => ({
       start: match.index,
@@ -100,7 +101,11 @@ function pickSections(masked: string, inline: boolean): SectionMatch[] | undefin
     const strongest = candidates.filter((candidate) => candidate.strength === best);
     if (strongest.length > 1 || (inline && candidates.length > 1)) return undefined;
     found.push({ label: section.label, start: strongest[0].start, end: strongest[0].end });
+    strengths.push(best);
   }
+  // A plain "分歧：无" / "Disagreements: none" line among marked headings is as likely to be body
+  // text as a section of its own, so mixed heading styles are not trusted.
+  if (strengths.some((strength) => strength > 1) && strengths.includes(1)) return undefined;
   // Inline headings cannot be told apart from prose that names a section, so an all-inline audit
   // is only trusted when every section is present exactly once.
   if (found.length < (inline ? REPORT_SECTIONS.length : MIN_REPORT_SECTIONS)) return undefined;

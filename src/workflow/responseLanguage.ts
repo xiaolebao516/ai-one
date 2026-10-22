@@ -12,7 +12,7 @@ export interface ResponseLanguagePolicy {
   interfaceLocale: Locale;
 }
 
-type QuestionLanguage = Locale | 'zh-CN';
+export type QuestionLanguage = Locale | 'zh-CN';
 
 const LOCALE_NAMES: Record<QuestionLanguage, string> = {
   en: 'English (en)',
@@ -120,10 +120,15 @@ export function responseLanguagePolicyFromPrompt(prompt: unknown): ResponseLangu
   return undefined;
 }
 
+/** The concrete reply language: a fixed setting, else the language inferred from the original question. */
+export function resolveResponseLanguage(policy: ResponseLanguagePolicy | undefined, originalQuestion: string | undefined): QuestionLanguage | undefined {
+  if (!policy || originalQuestion === undefined) return undefined;
+  return policy.setting === 'auto' ? inferQuestionLanguage(originalQuestion) : policy.setting;
+}
+
 export function prependResponseLanguagePolicy(prompt: string, policy?: ResponseLanguagePolicy, originalQuestion?: string): string {
   if (!policy) return prompt;
-  const language = originalQuestion === undefined ? undefined
-    : policy.setting === 'auto' ? inferQuestionLanguage(originalQuestion) : policy.setting;
+  const language = resolveResponseLanguage(policy, originalQuestion);
   if (!language) return `${responseLanguageDirective(policy)}\n\n${prompt}`;
   // A known target is stated in that language at both ends. Windows tests showed the long English
   // rule set (and its interface-locale fallback name) pulled replies to English or Traditional Chinese.

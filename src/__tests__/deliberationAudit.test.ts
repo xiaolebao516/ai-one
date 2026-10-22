@@ -166,6 +166,19 @@ describe('deliberation final report', () => {
     expect(report).not.toContain('## Disagreements\n');
   });
 
+  it('falls back instead of promoting a plain "分歧：" body line among marked headings', () => {
+    const report = reportFor([
+      '## 有证据支持的发现', 'A。',
+      '## 共同结论', '双方已一致。', '分歧：无',
+      '## 证据缺口', 'D。', '## 下一步', 'E。',
+    ].join('\n') + footer);
+    unstructured(report);
+    expect(report).toContain('分歧：无');
+    // The same holds for the English headings.
+    unstructured(reportFor(['## Evidence-backed findings', 'A.', '## Shared conclusions', 'Agreed.', 'Disagreements: none',
+      '## Evidence gaps', 'D.', '## Next steps', 'E.'].join('\n') + footer));
+  });
+
   it('reads the Chinese headings the audit prompt now asks for, in Simplified or Traditional script', () => {
     const simplified = reportFor([
       '### 有证据支持的发现', 'A 有来源支持。',
