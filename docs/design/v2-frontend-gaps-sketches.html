@@ -76,7 +76,7 @@ code{font-family:var(--mono);font-size:12px;background:var(--sunken);padding:1px
 <p class="sub">补齐新工作台还没做的界面：发起任务、聊天页、阶段与流程、任务现场补全、讨论接入、CC 协调设置。每一屏都是线框，决定已和你逐屏确认。文字规格见 <code>v2-frontend-gaps.md</code>，两者冲突以文字规格为准。</p>
 
 <nav id="nav" aria-label="草图">
-  <a href="#overview">总览与决定</a><a href="#s1">1 发起任务</a><a href="#s2">2 聊天页</a><a href="#s3">3 阶段与流程</a><a href="#s4">4 任务现场</a><a href="#s5">5 讨论接入</a><a href="#s6">6 协调设置</a><a href="#split">拆分与顺序</a>
+  <a href="#overview">总览与决定</a><a href="#s1">1 发起任务</a><a href="#s2">2 聊天页</a><a href="#s3">3 阶段与流程</a><a href="#s4">4 任务现场</a><a href="#s5">5 讨论接入</a><a href="#s6">6 协调设置</a><a href="#s7">7 额度 HUD</a><a href="#split">拆分与顺序</a>
 </nav>
 
 <section class="pg" id="p-overview">
@@ -189,14 +189,14 @@ code{font-family:var(--mono);font-size:12px;background:var(--sunken);padding:1px
         <div class="row sp"><span class="mut">● 审计 REVISE：2 项</span><span class="chip new">审计原文 ›</span></div>
       </div>
       <div class="card new"><div class="row"><span class="mut" style="flex:1">给 CC 留言… 写成 Issue 评论，注明来自你；CC 下次读到 Issue 时会看到。</span><button class="btn sm pri">留言</button></div></div>
-      <div class="card new"><b style="font-size:13px">所有写入先行内确认</b><p class="mut">显示将发出的完整文字，你点「发出」才执行；写完回读 GitHub 再更新界面。回读不到就显示「已发出，但没能确认」，不自动重试。</p></div>
+      <div class="card new"><b style="font-size:13px">写入不加审批层</b><p class="mut">点按钮即执行；按钮旁只读显示将发出的文字。写完回读 GitHub 再更新界面，四种结果如实显示：已确认 / 部分成功 / 已发出未确认 / 失败。评论发出后不能撤回。</p></div>
     </div>
     <div class="body" style="background:var(--sunken);display:grid;gap:10px;align-content:start">
       <div class="row sp"><b>检查器抽屉 <i class="tag">新</i></b><span class="mut">Esc 关闭</span></div>
       <div class="seg"><button class="on">派工单</button><button>原始回复</button><button>Diff</button><button>测试</button></div>
       <p class="mut">Prodex 回执 · request_id 已保存 · 状态：已完成</p>
-      <div class="card" style="font-family:var(--mono);font-size:11px;color:var(--ink2)">发给 ChatGPT 的首条消息（节选）…<br>仓库：owner/repo　Issue：#42　HEAD：a1c93e0…</div>
-      <p class="mut">只读。「原始回复」只显示已回读的 GitHub 内容，不含 AI 网页对话正文；Diff 链到 GitHub。</p>
+      <div class="card" style="font-family:var(--mono);font-size:11px;color:var(--ink2)">request_id：req_7f3a…　槽位：2<br>状态：已完成　时间：10:36<br>对话地址：已折叠 ›</div>
+      <p class="mut">只读。派工单只含回执元数据，不含派工消息正文；「原始回复」只显示已回读的 GitHub 内容，不含 AI 网页对话正文；Diff 链到 GitHub。</p>
       <div class="card new"><b style="font-size:13px">接管（右栏「团队」每个网页 AI 一行）<i class="tag">新</i></b><p class="mut">切到那个 AI 的真实网页，你自己操作；顶部提示条：ai-one 不会读取网页内容，需要时用留言告诉 CC。本地 Agent（CC、Codex）没有「接管」。</p></div>
     </div>
   </div></div>
@@ -227,12 +227,28 @@ code{font-family:var(--mono);font-size:12px;background:var(--sunken);padding:1px
   </div></div>
 </section>
 
+<section class="pg" id="p-s7">
+  <p class="note"><b>额度 HUD：移植 Agent HUD Open（jazzenchen/agent-hud-open）。</b>规格以 L8 开工时固定的上游提交为准，布局和行为原样沿用，这里只列验收对照用的状态清单，不另画线框。</p>
+  <div class="card scroll"><table>
+    <tr><th>状态</th><th>要求</th></tr>
+    <tr><td>简单模式</td><td>屏幕边缘小浮窗：每个 agent 的 logo 套额度环，旁边百分比</td></tr>
+    <tr><td>动态模式</td><td>一排 agent logo，后面是发光</td></tr>
+    <tr><td>发光颜色</td><td>已用 &lt;70% 绿，≥70% 黄，≥90% 红；额度将用尽前有预警</td></tr>
+    <tr><td>悬停展开</td><td>额度与重置时间、燃烧速率、24 小时 token、会话列表（等你的排最前）</td></tr>
+    <tr><td>token 统计</td><td>时间范围、token 类型、agent/模型占比、会话明细、缓存命中、成本估算标 ≈</td></tr>
+    <tr><td>额度未知</td><td>网页订阅拿不到的额度显示“未知”，不画假进度；读取失败显示失败原因</td></tr>
+    <tr><td>不移</td><td>iPhone / Apple Watch / Remote、刘海模式、Liquid Glass；内置 MCP 另行评估</td></tr>
+    <tr><td>风险</td><td>上游 Windows 版是 preview，必须真机逐项验证；不过的写进“未移 / 已知问题”</td></tr>
+  </table></div>
+</section>
+
 <section class="pg" id="p-split">
   <p class="note"><b>实施拆分。</b>评审通过后，在 #32 下建一个总 Spec，按线拆分，每线一个工作树。合并顺序由依赖决定。</p>
   <div class="card scroll"><table>
     <tr><th>线</th><th>内容</th><th>依赖</th></tr>
     <tr><td>L0 视觉基线</td><td>衬线（Claude 风格）用于大标题和 AI 回复正文，其余无衬线；留白加大、少用边框</td><td>无，最先合并</td></tr>
     <tr><td>L8 额度 HUD</td><td>移植 Agent HUD Open（Tauri/Rust/React，Apache-2.0）：屏幕边缘 HUD、额度、token 统计</td><td>无，独立并行（并入 #82）</td></tr>
+    <tr><td>L9 Chat 主导</td><td>网页 AI 协调，程序转发给其他 Chat，结束后清理对话（#113）</td><td>#94/#102；独立并行</td></tr>
     <tr><td>L1 GitHub 写入桥</td><td>五个白名单动作，写后回读</td><td>无</td></tr>
     <tr><td>L2 流程与阶段</td><td>数据模型、本机存储、编辑页、导入导出</td><td>无</td></tr>
     <tr><td>L3 CC 协调设置</td><td>存储、简报渲染、设置页</td><td>与 L2 共用存储工具</td></tr>
@@ -241,12 +257,12 @@ code{font-family:var(--mono);font-size:12px;background:var(--sunken);padding:1px
     <tr><td>L6 聊天页</td><td>对比卡片、网页标签、转发/引用</td><td>无</td></tr>
     <tr><td>L7 讨论接入</td><td>矩阵与汇总卡接进任务现场</td><td>#81 已合并；L4 提供入口</td></tr>
   </table></div>
-  <p class="mut" style="margin-top:10px">建议顺序：L0 最先 → L1、L2、L6 并行 → L3 → L4 → L5、L7；L8 独立并行。资源页（#98 / #82）与这些线文件不重叠，继续独立进行。</p>
+  <p class="mut" style="margin-top:10px">建议顺序：L0 最先 → L1、L2、L6 并行 → L5 → L3 → L7 → L4；L8、L9 独立并行。L1 与 L8 都改 src-tauri 的注册文件，后合并的 rebase。资源页（#98 / #82）与这些线文件不重叠，继续独立进行。</p>
 </section>
 </div>
 
 <script>
-var pages=['overview','s1','s2','s3','s4','s5','s6','split'];
+var pages=['overview','s1','s2','s3','s4','s5','s6','s7','split'];
 function show(){
   var h=(location.hash||'').replace('#','');if(pages.indexOf(h)<0)h='overview';
   pages.forEach(function(p){document.getElementById('p-'+p).classList.toggle('on',p===h)});
