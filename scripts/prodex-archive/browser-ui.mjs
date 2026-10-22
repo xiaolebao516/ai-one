@@ -99,9 +99,11 @@ export function inspectPage(expected) {
     });
     if (buttons.length === 1) { menuButton = buttons[0]; break; }
   }
-  if (!menuButton) return { error: 'Thread options button not uniquely identified' };
-  const row = rect(link), menu = rect(menuButton);
-  if (!row || !menu) return { error: 'Thread options are not visible' };
+  const row = rect(link);
+  if (!row) return { error: 'Thread row not visible' };
+  // Some ChatGPT layouts mount the options button only after the row is hovered.
+  // First inspection only needs the row; after hover the menu button is mandatory.
+  const menu = menuButton ? rect(menuButton) : null;
   return { ok: true, row, menu };
 }
 
@@ -145,10 +147,15 @@ export async function archiveConversation({ port, threadUrl }) {
     await cdp.mouse(first.row); // hover the *identified* conversation, not a fixed coordinate
     await sleep(150);
     const second = await cdp.eval(inspectPage, threadUrl);
-    if (!second.ok) throw new Error(second.error || 'Chat UI changed after hover');
+    if (!second.ok || !second.menu) throw new Error(second.error || 'Thread options unavailable after hover');
     await cdp.mouse(second.menu, true);
-    const action = await cdp.eval(inspectArchiveAction, threadUrl);
-    if (!action.ok) throw new Error(action.error || 'Archive option unavailable');
+    let action;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      action = await cdp.eval(inspectArchiveAction, threadUrl);
+      if (action.ok) break;
+      await sleep(120);
+    }
+    if (!action?.ok) throw new Error(action?.error || 'Archive option unavailable');
     // Check identity once more before the destructive-to-sidebar (but reversible) action.
     const stillTarget = await cdp.eval((expected) => location.href === expected &&
       document.visibilityState === 'visible', threadUrl);
