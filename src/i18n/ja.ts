@@ -327,6 +327,7 @@ export const ja: Record<I18nKey, string> = {
   'settings.save': '保存',
   'settings.diagnostics': '診断',
   'settings.diagnosticsDescription': 'メモリ内のイベントログです。アプリを閉じる前にコピーしてください。',
+  'settings.deliberationDiagnosticsDescription': '開発版では質問と回答本文を伏せた監査プロンプトを自動収集します。「すべて」を選択してログをコピーすると一緒にコピーされます。Console は不要です。',
   'settings.provider': 'プロバイダー',
   'settings.all': 'すべて',
   'settings.copied': 'コピーしました',

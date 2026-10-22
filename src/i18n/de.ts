@@ -327,6 +327,7 @@ export const de: Record<I18nKey, string> = {
   'settings.save': 'Speichern',
   'settings.diagnostics': 'Diagnose',
   'settings.diagnosticsDescription': 'Ereignisprotokoll im Arbeitsspeicher. Vor dem Schließen der App kopieren.',
+  'settings.deliberationDiagnosticsDescription': 'Entwicklungsversion: Audit-Prompts werden automatisch mit ausgeblendeten Fragen und Antworten erfasst. Mit Alle und Protokoll kopieren werden sie mitkopiert. Keine Konsole nötig.',
   'settings.provider': 'Anbieter',
   'settings.all': 'Alle',
   'settings.copied': 'Kopiert',

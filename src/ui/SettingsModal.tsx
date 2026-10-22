@@ -32,6 +32,7 @@ import {
   type EventLogProviderFilter,
 } from '../diagnostics/eventLog';
 import { buildDebugBundle, debugBundleFilename } from '../diagnostics/debugBundle';
+import { readDeliberationAuditTrace } from '../dev/deliberationPromptTrace';
 import { useEventLog } from './useEventLog';
 import { ModalDialog } from './ModalDialog';
 import { createSettingsPersistence } from './settingsPersistence';
@@ -809,7 +810,11 @@ export function DiagnosticsSection({
     setCopyState('idle');
     try {
       if (!navigator.clipboard) throw new Error('Clipboard unavailable');
-      await navigator.clipboard.writeText(formatEventLogText(filteredEvents));
+      const eventLog = formatEventLogText(filteredEvents);
+      const text = import.meta.env.DEV && providerFilter === 'all'
+        ? JSON.stringify({ eventLog, auditPrompts: readDeliberationAuditTrace() }, null, 2)
+        : eventLog;
+      await navigator.clipboard.writeText(text);
       if (generation === copyGeneration.current) setCopyState('copied');
     } catch {
       if (generation === copyGeneration.current) setCopyState('error');
@@ -851,6 +856,9 @@ export function DiagnosticsSection({
         <div>
           <h3 className="text-xs font-medium text-zinc-700 dark:text-zinc-300">{t('settings.diagnostics')}</h3>
           <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">{t('settings.diagnosticsDescription')}</div>
+          {import.meta.env.DEV ? (
+            <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{t('settings.deliberationDiagnosticsDescription')}</div>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { host } from '../host';
-import { redactDeliberationAuditPrompt, startDeliberationAuditTrace } from '../dev/deliberationPromptTrace';
+import { readDeliberationAuditTrace, redactDeliberationAuditPrompt, startDeliberationAuditTrace } from '../dev/deliberationPromptTrace';
 import { deliberationGraph } from '../workflow/graph/deliberationGraph';
 import { promptBuilders } from '../workflow/graph/registries';
 import { createResponseLanguagePolicy, prependResponseLanguagePolicy } from '../workflow/responseLanguage';
@@ -109,5 +109,20 @@ describe('deliberation audit prompt evidence', () => {
   it('cannot be enabled in production', () => {
     vi.stubEnv('DEV', false);
     expect(() => startDeliberationAuditTrace()).toThrow('development');
+  });
+
+  it('does not let an old handle clear evidence from a newer completed run', async () => {
+    const old = startDeliberationAuditTrace();
+    old.stop();
+    const { text } = fixture();
+    vi.mocked(host.provider.send).mockResolvedValue(undefined);
+    trace = startDeliberationAuditTrace();
+    await host.provider.send('claude', text);
+    trace.stop();
+    old.clear();
+    expect(readDeliberationAuditTrace()).toHaveLength(1);
+    trace = startDeliberationAuditTrace();
+    trace.clear();
+    expect(readDeliberationAuditTrace()).toEqual([]);
   });
 });

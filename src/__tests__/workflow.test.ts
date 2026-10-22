@@ -46,6 +46,7 @@ import {
 import { resetWorkflowRuntimeForTests, runWorkflow } from '../workflow';
 import { createResponseLanguagePolicy } from '../workflow/responseLanguage';
 import { activeProvidersForStandby, normalizeSettings } from '../ui/settingsModel';
+import { readDeliberationAuditTrace } from '../dev/deliberationPromptTrace';
 
 vi.mock('../host', () => ({
   host: {
@@ -866,6 +867,25 @@ describe('workflow engine', () => {
       `🔍 ${providerName(DEFAULT_CONSULT_ROLES.summary)} — Summary in progress…`,
       '',
     ]);
+  });
+
+  it('automatically captures sanitized deliberation audit evidence and restores the sender after the run', async () => {
+    const originalSend = host.provider.send;
+    vi.mocked(originalSend).mockImplementation(async (provider) => {
+      const response = provider === 'claude'
+        ? 'Evidence-backed findings: PRIVATE_AUDIT\nShared conclusions: NONE\nDisagreements: NONE\nEvidence gaps: NONE\nNext steps: NONE\n[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:AGREED]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]'
+        : 'PRIVATE_PARTICIPANT_REPLY';
+      publishBridgeMessage(done(provider, response));
+    });
+    await expect(runWorkflow({
+      text: '请比较两种方案。PRIVATE_QUESTION', mode: 'consult', presetId: 'deliberation',
+      roles: DEFAULT_CONSULT_ROLES,
+      responseLanguagePolicy: createResponseLanguagePolicy('auto', 'zh-TW'),
+    })).resolves.toEqual({ ok: true });
+    expect(readDeliberationAuditTrace()).toHaveLength(1);
+    expect(readDeliberationAuditTrace()[0]).toMatchObject({ templateMatched: true, languagePolicyPresent: true, questionBlockPresent: true, dispatch: 'dispatched' });
+    expect(JSON.stringify(readDeliberationAuditTrace())).not.toContain('PRIVATE_');
+    expect(host.provider.send).toBe(originalSend);
   });
 
   it('lets Brainstorm retry a provider error and complete the same workflow', async () => {

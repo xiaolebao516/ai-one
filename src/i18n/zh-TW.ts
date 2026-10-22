@@ -314,6 +314,7 @@ export const zhTW: Record<I18nKey, string> = {
   'settings.save': '儲存',
   'settings.diagnostics': '診斷',
   'settings.diagnosticsDescription': '記憶體中的事件紀錄。關閉 app 前請先複製。',
+  'settings.deliberationDiagnosticsDescription': '開發版會自動擷取審計提示詞，隱去原問題與回覆正文。選擇「全部」後「複製 log」即可一併複製，不需要 Console。',
   'settings.provider': 'Provider',
   'settings.all': '全部',
   'settings.copied': '已複製',

@@ -325,6 +325,7 @@ export const en: Record<I18nKey, string> = {
   'settings.save': 'Save',
   'settings.diagnostics': 'Diagnostics',
   'settings.diagnosticsDescription': 'In-memory event log. Copy before closing the app.',
+  'settings.deliberationDiagnosticsDescription': 'Development build: audit prompts are captured automatically with questions and replies redacted. Select All and Copy log to include them. No Console needed.',
   'settings.provider': 'Provider',
   'settings.all': 'All',
   'settings.copied': 'Copied',

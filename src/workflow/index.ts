@@ -16,6 +16,7 @@ import { persistSnapshotIfEnabled } from './snapshot/persistence';
 import type { SnapshotRedactionTier } from './snapshot/types';
 import { tearDownWaiters } from './teardown';
 import { cancelPendingStepTimeoutAction } from './stepTimeout';
+import { startDeliberationAuditTrace } from '../dev/deliberationPromptTrace';
 
 export interface RunWorkflowParams {
   text: string;
@@ -70,7 +71,12 @@ async function runPreparedWorkflow({
     enabled: snapshotPersistence,
     tier: snapshotRedactionTier,
   };
+  let promptTrace: ReturnType<typeof startDeliberationAuditTrace> | undefined;
   try {
+    if (import.meta.env.DEV && presetId === 'deliberation') {
+      promptTrace = startDeliberationAuditTrace();
+      promptTrace.clear();
+    }
     const appVersion = await getRuntimeAppVersion();
     const graphOptions = {
       onSnapshotComplete: (snapshot: Parameters<typeof persistSnapshotIfEnabled>[0]) =>
@@ -131,6 +137,8 @@ async function runPreparedWorkflow({
     }
     sendWorkflowStatus('');
     return { ok: true };
+  } finally {
+    promptTrace?.stop();
   }
 }
 

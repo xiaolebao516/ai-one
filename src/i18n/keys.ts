@@ -305,6 +305,7 @@ export const I18N_KEYS = [
   'settings.save',
   'settings.diagnostics',
   'settings.diagnosticsDescription',
+  'settings.deliberationDiagnosticsDescription',
   'settings.provider',
   'settings.all',
   'settings.copied',

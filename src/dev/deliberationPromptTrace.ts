@@ -1,4 +1,4 @@
-// Manually import from the app's Vite devtools. Never imported by the app entry point.
+// Development-only audit evidence. The workflow starts it automatically; no storage or logging.
 import { AI_PROVIDERS } from '../../shared/constants';
 import { host } from '../host';
 import { deliberationGraph } from '../workflow/graph/deliberationGraph';
@@ -65,6 +65,11 @@ export function redactDeliberationAuditPrompt(snapshot: ExecutionSnapshot, text:
 }
 
 let activeTrace: ReturnType<typeof installTrace> | undefined;
+let lastEvidence: AuditSendEvidence[] = [];
+
+export function readDeliberationAuditTrace(): AuditSendEvidence[] {
+  return activeTrace?.read() ?? lastEvidence.map((entry) => ({ ...entry }));
+}
 
 export function startDeliberationAuditTrace() {
   if (!import.meta.env.DEV) throw new Error('Prompt tracing is available only in development.');
@@ -72,6 +77,7 @@ export function startDeliberationAuditTrace() {
 }
 
 function installTrace() {
+  lastEvidence = [];
   const originalSend = host.provider.send;
   const entries: AuditSendEvidence[] = [];
   let snapshotId: string | undefined;
@@ -101,9 +107,18 @@ function installTrace() {
   const handle = {
     // Only sanitized strings and metadata leave this module. No storage or logging.
     read: () => entries.map((entry) => ({ ...entry })),
+    clear: () => {
+      if (activeTrace !== handle) return;
+      entries.length = 0;
+      lastEvidence = [];
+      snapshotId = undefined;
+    },
     stop: () => {
       if (host.provider.send === send) host.provider.send = originalSend;
-      if (activeTrace === handle) activeTrace = undefined;
+      if (activeTrace === handle) {
+        lastEvidence = handle.read();
+        activeTrace = undefined;
+      }
     },
   };
   return handle;
