@@ -150,11 +150,40 @@ const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),
 export function withMutex(file, fn, { timeoutMs = 5000, staleMs = 10_000 } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const deadline = Date.now() + timeoutMs;
+  const staleMutexError = () => new Error(`${file} was left behind by a process that stopped inside a short critical section. Delete it by hand if no other prodex-slots command is running: powershell -NoProfile -Command "Remove-Item -LiteralPath '${file}'"`);
+  const timeoutError = () => new Error(`Timed out waiting for ${file}`);
+  let attempted = false;
+  let lastOpenError = null;
   for (;;) {
+    // Never make another open attempt after the deadline. If EPERM persisted, preserve that
+    // permission error; if EEXIST persisted, retain the stale-lock diagnostic when applicable.
+    if (attempted && Date.now() >= deadline) {
+      if (process.platform === 'win32' && lastOpenError?.code === 'EPERM') throw lastOpenError;
+      if (lastOpenError?.code === 'EEXIST') {
+        let age;
+        try {
+          age = Date.now() - fs.statSync(file).mtimeMs;
+        } catch {
+          throw timeoutError();
+        }
+        if (age > staleMs) throw staleMutexError();
+      }
+      throw timeoutError();
+    }
+    attempted = true;
     try {
-      fs.writeFileSync(file, `${process.pid}\n`, { flag: 'wx' });
+      fs.writeFileSync(file, `${process.pid}\\n`, { flag: 'wx' });
       break;
     } catch (error) {
+      lastOpenError = error;
+      // Windows can briefly report EPERM when a competing process deletes/recreates this file.
+      // Retry only this error, in bounded intervals; a persistent EPERM remains visible at timeout.
+      if (process.platform === 'win32' && error.code === 'EPERM') {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw error;
+        sleepSync(Math.min(25, remaining));
+        continue;
+      }
       if (error.code !== 'EEXIST') throw error;
     }
     let age;
@@ -163,11 +192,10 @@ export function withMutex(file, fn, { timeoutMs = 5000, staleMs = 10_000 } = {})
     } catch {
       continue;
     }
-    if (age > staleMs) {
-      throw new Error(`${file} was left behind by a process that stopped inside a short critical section. Delete it by hand if no other prodex-slots command is running: powershell -NoProfile -Command "Remove-Item -LiteralPath '${file}'"`);
-    }
-    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${file}`);
-    sleepSync(25);
+    if (age > staleMs) throw staleMutexError();
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw timeoutError();
+    sleepSync(Math.min(25, remaining));
   }
   try {
     return fn();
