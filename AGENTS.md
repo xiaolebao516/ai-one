@@ -82,6 +82,8 @@
 ## Git
 
 - 开工前先 `git fetch`，当前工作树没有本地改动时执行 `git pull --ff-only` 拉平 main；快进失败（已分叉或存在未提交改动）就停下报告，不做 merge 或 rebase。
+- 索引陈旧会伪装成“有改动”：`git status` 报 `M` 但 `git diff` 与 `git diff --cached` 都为空时，用 `git add <这些路径>` 重建索引即可（不会暂存任何内容）；不要用 `git checkout` / `git restore` 去“清”它。
+- `main` 工作树只做落地与读取，不在其中开发；任务一律从 `origin/main` 新建工作树，开工时天然最新。
 - 从最新 `main` 建任务分支；不直接向 `main` 提交或推送。
 - 遇到既有未提交改动，先确认是否属于当前任务；保留所有用户和其他协作者的文件。
 - 除上面的快进拉取外，不自动 merge、rebase、reset、stash、丢弃改动或 force-push；不自动合并 PR。
