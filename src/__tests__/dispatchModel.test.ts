@@ -60,6 +60,7 @@ describe('repository path normalization', () => {
     expect(normalizeRepoPath('/repo/../other')).toBeUndefined();
     expect(normalizeRepoPath('C:\\repo\\..\\other')).toBeUndefined();
     expect(normalizeRepoPath('/repo\nname')).toBeUndefined();
+    expect(normalizeRepoPath('\nC:\\repo\n')).toBeUndefined();
     expect(normalizeRepoPath('/repo\rname')).toBeUndefined();
     expect(normalizeRepoPath('/repo\0name')).toBeUndefined();
     expect(normalizeRepoPath('/' + 'a'.repeat(1024))).toBeUndefined();

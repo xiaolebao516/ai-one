@@ -94,11 +94,12 @@ export function summarizeDispatch(snapshot: DispatchSnapshot, now: number): Chan
 
 /** Normalize an absolute local repository path without resolving or changing its case. */
 export function normalizeRepoPath(input: string): string | undefined {
+  if (/[\0\r\n]/.test(input)) return undefined;
   let value = input.trim();
   if (value.length >= 2 && (value[0] === '"' || value[0] === "'") && value[value.length - 1] === value[0]) {
     value = value.slice(1, -1).trim();
   }
-  if (!value || value.length > 1024 || /[\0\r\n]/.test(value)) return undefined;
+  if (!value || value.length > 1024) return undefined;
   if (value.startsWith('\\') || value.startsWith('//')) return undefined;
   if (!value.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(value)) return undefined;
   if (/(^|[\\/])\.\.(?:[\\/]|$)/.test(value)) return undefined;
