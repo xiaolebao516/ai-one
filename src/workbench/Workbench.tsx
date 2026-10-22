@@ -112,7 +112,7 @@ export function Workbench({ locale, onOpenClassic }: WorkbenchProps) {
   }
 
   return (
-    <V2Scope mode={mode} className="flex h-screen flex-col overflow-hidden bg-v2-bg" data-testid="workbench">
+    <V2Scope mode={mode} className="fixed inset-0 flex flex-col overflow-hidden bg-v2-bg" data-testid="workbench">
       <TitleBar text={text} tasks={data.tasks} known={data.health === 'demo' || data.health === 'ok'} onPalette={() => setPaletteOpen(true)} onShowTasks={() => go({ view: 'tasks' })} />
       <div className="flex min-h-0 flex-1">
         <Sidebar
@@ -218,7 +218,7 @@ function Sidebar({ text, locale, tasks, known, active, activeTaskId, theme, onNa
   const groups = groupByRepo(activeTasks(tasks));
   const themeLabel = text.t(theme === 'system' ? 'themeSystem' : theme === 'light' ? 'themeLight' : 'themeDark');
   return (
-    <nav aria-label={text.t('navAria')} className="flex w-[236px] shrink-0 flex-col gap-v2-md overflow-y-auto overflow-x-hidden px-v2-sm pb-v2-sm max-[1099px]:w-[60px]">
+    <nav aria-label={text.t('navAria')} className="flex min-h-0 w-[236px] shrink-0 flex-col gap-v2-md overflow-y-auto overflow-x-hidden px-v2-sm pb-v2-sm max-[1099px]:w-[60px]">
       <ul className="grid gap-0.5">
         {NAV_VIEWS.map((view, index) => {
           const label = text.t(NAV_KEY[view]);
