@@ -193,6 +193,7 @@ describe('flow import/export', () => {
     const exported = buildExport(file, 'flow.quick');
     expect(exported).toMatchObject({ schemaVersion: 1, kind: 'flow', flows: [{ id: 'flow.quick' }] });
     expect(exported?.stages.map((stage) => stage.id)).toEqual(['stage.plan', 'stage.build', 'stage.ship']);
+    expect(parseFlowsFile(JSON.stringify(exported))).toMatchObject({ ok: true });
     expect(buildExport(file, 'missing')).toBeNull();
   });
 
