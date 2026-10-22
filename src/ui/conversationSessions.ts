@@ -374,7 +374,9 @@ function isChatMode(value: unknown): value is ChatMode {
 }
 
 function normalizePresetId(value: unknown, mode: ChatMode): WorkflowPresetId | undefined {
-  return value === 'brainstorm' && mode === 'free' ? value : undefined;
+  if (value === 'brainstorm' && mode === 'free') return value;
+  if (value === 'deliberation' && mode === 'consult') return value;
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -2,6 +2,7 @@ export { workflowGraphs } from './builtinGraphs';
 export { brainstormGraph } from './brainstormGraph';
 export { codingGraph } from './codingGraph';
 export { consultGraph } from './consultGraph';
+export { deliberationGraph } from './deliberationGraph';
 export { debateGraph } from './debateGraph';
 export { executeGraph } from './executor';
 export { freeGraph } from './freeGraph';

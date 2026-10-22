@@ -1229,6 +1229,14 @@ describe('injected engine input hardening', () => {
 
     expect(env.sendButton?.clickCount).toBe(1);
     expect(keyEventCount(env.input)).toBe(0);
+    const sendReports = env.titleEmits
+      .filter((entry) => entry.action === 'STATUS_REPORT')
+      .map((entry) => entry.payload as Record<string, unknown>)
+      .filter((payload) => typeof payload.sendDiagnostic === 'string');
+    expect(sendReports).toEqual([
+      expect.objectContaining({ sendDiagnostic: 'activated', sendPath: 'button-click', activationOk: true }),
+      expect.objectContaining({ sendDiagnostic: 'unconfirmed', composerState: 'cleared', userTurnObserved: false }),
+    ]);
     expect(errorDone(env)?.payload).toBe(
       '[Error: chatgpt send could not be confirmed; composer cleared before a matching user turn appeared]',
     );

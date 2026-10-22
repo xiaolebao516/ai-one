@@ -19,6 +19,7 @@ export interface StepTimeoutEvent {
   requestId?: number;
   failureKind?: StepRecoveryFailureKind;
   recoveryDetail?: StepRecoveryDetail;
+  skipAllowed?: boolean;
 }
 
 interface PendingAction {
@@ -26,6 +27,7 @@ interface PendingAction {
   provider: string;
   failureKind: StepRecoveryFailureKind;
   recoveryDetail?: StepRecoveryDetail;
+  skipAllowed?: boolean;
   resolve: (action: StepTimeoutAction) => void;
   reject: (error: Error) => void;
 }
@@ -49,6 +51,7 @@ export function chooseStepTimeoutAction(action: StepTimeoutAction, requestId?: n
   if (!activeAction && requestId === undefined && pendingActions.length > 0) activateNextAction();
   if (activeAction) {
     if (requestId !== undefined && requestId !== activeAction.requestId) return false;
+    if (action === 'skip' && activeAction.skipAllowed === false) return false;
     const current = activeAction;
     activeAction = undefined;
     nextAction = undefined;
@@ -72,11 +75,12 @@ export function awaitStepTimeoutAction(
   provider = 'unknown',
   failureKind: StepRecoveryFailureKind = 'timeout',
   recoveryDetail?: StepRecoveryDetail,
+  skipAllowed = true,
 ): Promise<StepTimeoutAction> {
   const action = consumeStepTimeoutAction();
   if (action) return Promise.resolve(action);
   return new Promise((resolve, reject) => {
-    pendingActions.push({ requestId: nextRequestId, provider, failureKind, recoveryDetail, resolve, reject });
+    pendingActions.push({ requestId: nextRequestId, provider, failureKind, recoveryDetail, skipAllowed, resolve, reject });
     nextRequestId += 1;
     activateNextAction();
   });
@@ -112,6 +116,7 @@ function activateNextAction(): void {
     requestId: activeAction.requestId,
     failureKind: activeAction.failureKind,
     ...(activeAction.recoveryDetail ? { recoveryDetail: activeAction.recoveryDetail } : {}),
+    ...(activeAction.skipAllowed === false ? { skipAllowed: false } : {}),
   });
 }
 
