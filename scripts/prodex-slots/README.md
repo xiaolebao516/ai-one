@@ -66,6 +66,15 @@ slot), `4` every ready slot stayed busy past `--wait-ms`.
   is not verified). Memory and CPU grow with the slot count.
 - Several simultaneous logged-in browsers on one ChatGPT account may meet rate limits or
   verification prompts; not observed so far, not guaranteed.
+- Slot windows must stay visible: a minimized window (or a tab behind another) reads as
+  `hidden` and cannot send. Do not minimize them; `--minimized` window modes of Prodex were not
+  tried here.
+- Prodex spaces visible-browser sends at least 10 s apart (`send_pacing`, an anti-bot
+  measure, `PRODEX_MIN_SEND_INTERVAL_MS`). It applies across slots too, so parallel jobs start
+  seconds apart. Do not override it.
+- Observed on 2026-10-22 (Prodex 0.40.40, instant level): two `run --slot auto` jobs started
+  together went to slots 2 and 3, generated in overlapping time, both `request_verified: yes`,
+  total 33 s; each answer held only its own marker text.
 - ChatGPT's model slider may be remembered per profile or per account. Always pass `--effort`
   explicitly for real work, and restore the level after tests.
 - Test runs create chats in the user's account; mark them as tests and let the user delete them.
