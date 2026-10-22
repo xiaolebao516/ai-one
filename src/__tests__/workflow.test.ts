@@ -542,7 +542,9 @@ describe('workflow engine', () => {
       expect(prompt).toContain('primary language of the user-authored prose');
       expect(prompt).toContain('Traditional Chinese (zh-TW) (the app interface language fallback)');
       expect(prompt.startsWith('<response-language-policy')).toBe(true);
-      expect(prompt.endsWith('Explain dependency injection in simple terms.')).toBe(true);
+      const footer = prompt.slice(prompt.lastIndexOf('<response-language-policy'));
+      expect(footer).toContain('Otherwise, write all natural-language text and follow-up questions in English (en).');
+      expect(footer.endsWith('</response-language-policy>')).toBe(true);
     }
 
     vi.mocked(host.provider.send).mockClear();
@@ -569,6 +571,36 @@ describe('workflow engine', () => {
     ).toBe(true);
     expect(serialPrompts.every((prompt) => prompt.includes('Do not infer it from these workflow instructions, other AI responses'))).toBe(true);
     expect(serialPrompts.every((prompt) => prompt.startsWith('<response-language-policy'))).toBe(true);
+    for (const prompt of serialPrompts) {
+      const footer = prompt.slice(prompt.lastIndexOf('<response-language-policy'));
+      expect(footer).toContain('Otherwise, write all natural-language text and follow-up questions in English (en).');
+      expect(footer.endsWith('</response-language-policy>')).toBe(true);
+    }
+  });
+
+  it('infers the response language only from the current question rather than restored conversation context', async () => {
+    const prompts: string[] = [];
+    vi.mocked(host.provider.send).mockImplementation(async (provider, prompt) => {
+      prompts.push(prompt);
+      publishBridgeMessage(done(provider, 'An English answer that must not change the next prompt language.'));
+    });
+
+    await expect(runWorkflow({
+      text: '请解释这些方案的证据和局限。',
+      context: 'User:\nPlease continue in English.\n\nGemini:\n請使用繁體中文討論。',
+      mode: 'debate',
+      roles: DEFAULT_DEBATE_ROLES,
+      responseLanguagePolicy: createResponseLanguagePolicy('auto', 'zh-TW'),
+    })).resolves.toEqual({ ok: true });
+
+    expect(prompts).toHaveLength(4);
+    for (const prompt of prompts) {
+      expect(prompt).toContain('Please continue in English.');
+      const footer = prompt.slice(prompt.lastIndexOf('<response-language-policy'));
+      expect(footer).toContain('Otherwise, write all natural-language text and follow-up questions in Simplified Chinese (zh-CN).');
+      expect(footer).not.toContain('Traditional Chinese');
+      expect(footer).not.toContain('English (en)');
+    }
   });
 
   it('replays restored conversation context without replacing the current snapshot question', async () => {

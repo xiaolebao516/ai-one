@@ -50,7 +50,7 @@ export function redactDeliberationAuditPrompt(snapshot: ExecutionSnapshot, text:
     if (history.some((item) => item === undefined)) continue;
     const replies = history.filter((item) => item !== undefined);
     const render = (userQuestion: string, items: typeof replies) => prependResponseLanguagePolicy(
-      promptBuilders['deliberation.audit']([round, userQuestion, items], { graph: deliberationGraph }), policy,
+      promptBuilders['deliberation.audit']([round, userQuestion, items], { graph: deliberationGraph }), policy, question.text,
     );
     if (render(question.text, replies) !== text) continue;
     return {

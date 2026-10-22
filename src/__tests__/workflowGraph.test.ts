@@ -371,7 +371,7 @@ describe('workflow graph foundation', () => {
     expect(system[0]).toContain('COMPLETE_AGREED (round 1');
   });
 
-  it('deliberation uses the independent auditor question on each next round and always reports at the limit', async () => {
+  it('deliberation keeps the original Simplified Chinese language through every round and reports at the limit', async () => {
     const prompts: { provider: AIProvider; text: string }[] = [];
     const system: string[] = [];
     const off = onBridgeMessage((event) => {
@@ -383,7 +383,7 @@ describe('workflow graph foundation', () => {
       const response = provider === 'claude'
         ? 'Evidence-backed findings: Some facts are supported.\nShared conclusions: Agreement is partial.\nDisagreements: Several assumptions remain disputed.\nEvidence gaps: Citation still missing.\nNext steps: ' + (round < 3 ? 'Investigate specific source ' + round : 'Document the remaining gaps.') +
           '\n[[AI_ONE_AUDIT_DECISION:' + (round < 3 ? 'CONTINUE' : 'FINISH') + ']]\n[[AI_ONE_AUDIT_RESULT:DISAGREEMENTS]]\n[[AI_ONE_AUDIT_QUESTION:' + (round < 3 ? 'Investigate source ' + round + ' now' : 'NONE') + ']]'
-        : prompts.length <= 2 ? 'independent ' + provider : 'discussion of facts by ' + provider;
+        : prompts.length <= 2 ? 'independent ' + provider : '討論這些證據與局限 by ' + provider;
       publishBridgeMessage(done(provider, response));
     });
     const trace = startDeliberationAuditTrace();
@@ -400,7 +400,9 @@ describe('workflow graph foundation', () => {
         expect(entry.prompt).toContain('same language and script as the original user question');
         expect(entry.prompt).toContain('setting="auto" interface-locale="zh-TW"');
         expect(entry.prompt).not.toContain('PRIVATE_QUESTION');
-        expect(entry.prompt).not.toContain('discussion of facts by');
+        expect(entry.prompt).not.toContain('討論這些證據與局限');
+        expect(entry.prompt).toContain('Otherwise, write all natural-language text and follow-up questions in Simplified Chinese (zh-CN).');
+        expect(entry.prompt?.endsWith('</response-language-policy>')).toBe(true);
       }
     } finally {
       trace.stop();
@@ -410,6 +412,13 @@ describe('workflow graph foundation', () => {
       'chatgpt', 'gemini', 'chatgpt', 'gemini', 'claude',
       'chatgpt', 'gemini', 'claude', 'chatgpt', 'gemini', 'claude',
     ]);
+    for (const { text } of prompts) {
+      const footer = text.slice(text.lastIndexOf('<response-language-policy'));
+      expect(footer).toContain('Otherwise, write all natural-language text and follow-up questions in Simplified Chinese (zh-CN).');
+      expect(footer).not.toContain('Traditional Chinese');
+      expect(footer).not.toContain('English (en)');
+      expect(footer.endsWith('</response-language-policy>')).toBe(true);
+    }
     expect(prompts[5].text).toContain('Investigate source 1 now');
     expect(prompts[8].text).toContain('Investigate source 2 now');
     expect(prompts[5].text).not.toContain('independent gemini');

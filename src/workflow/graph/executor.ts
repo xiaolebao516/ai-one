@@ -484,7 +484,7 @@ function renderPromptSpec(prompt: PromptSpec, context: ExecutionContext, nodeId:
     targets: context.targets,
     locale: context.locale,
   });
-  return prependResponseLanguagePolicy(rendered, context.responseLanguagePolicy);
+  return prependResponseLanguagePolicy(rendered, context.responseLanguagePolicy, context.question);
 }
 
 function renderTextTemplate(template: TextTemplate, context: ExecutionContext, nodeId: NodeId, provider?: AIProvider): string {

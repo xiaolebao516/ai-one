@@ -27,7 +27,7 @@ function fixture(round = 1) {
     recordStep({ nodeId, provider: index % 2 ? 'gemini' : 'chatgpt', input: '', output: history[index].text, status: 'done', startedAt: '' });
   });
   const body = promptBuilders['deliberation.audit']([round, question, history], { graph: deliberationGraph });
-  return { snapshot, body, text: prependResponseLanguagePolicy(body, policy) };
+  return { snapshot, body, text: prependResponseLanguagePolicy(body, policy, question) };
 }
 
 let trace: ReturnType<typeof startDeliberationAuditTrace> | undefined;
@@ -51,6 +51,8 @@ describe('deliberation audit prompt evidence', () => {
     expect(evidence.prompt).toContain('[REDACTED original user question]');
     expect(evidence.prompt).not.toContain('PRIVATE_');
     expect(evidence.prompt).not.toContain('setting="de"');
+    expect(evidence.prompt).toContain('Otherwise, write all natural-language text and follow-up questions in Simplified Chinese (zh-CN).');
+    expect(evidence.prompt?.endsWith('</response-language-policy>')).toBe(true);
   });
 
   it('reports a missing policy without inventing one', () => {
