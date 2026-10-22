@@ -81,10 +81,10 @@
 
 ## Git
 
-- 修改前运行 `git status --short --branch` 并 fetch；本地落后或分叉时停止，不自动同步。
+- 开工前先 `git fetch`，当前工作树没有本地改动时执行 `git pull --ff-only` 拉平 main；快进失败（已分叉或存在未提交改动）就停下报告，不做 merge 或 rebase。
 - 从最新 `main` 建任务分支；不直接向 `main` 提交或推送。
 - 遇到既有未提交改动，先确认是否属于当前任务；保留所有用户和其他协作者的文件。
-- 不自动 pull、merge、rebase、reset、stash、丢弃改动或 force-push；不自动合并 PR。
+- 除上面的快进拉取外，不自动 merge、rebase、reset、stash、丢弃改动或 force-push；不自动合并 PR。
 - 审查最终 diff 后，只暂存本任务路径并提交；禁止 `git add .`。推送任务分支（`git push -u origin <分支>`）后创建 PR。
 - 阶段变更、范围扩展或验收标准存在实质歧义时先询问用户。
 
