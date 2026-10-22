@@ -20,6 +20,17 @@ export function sendRoleAssignment(provider: AIProvider, role: string, label: st
   });
 }
 
+/** Persist a deterministic workflow result in the transcript as a System message. */
+export function emitSystemNotice(message: string): void {
+  publishBridgeMessage({
+    v: 1,
+    action: 'RESPONSE_DONE',
+    provider: 'system' as AIProvider,
+    payload: message,
+    transport: 'local',
+  });
+}
+
 export function emitSystemError(message: string): void {
   publishBridgeMessage({
     v: 1,

@@ -8,6 +8,7 @@ import { emitSystemError } from './events';
 let workflowAborted = false;
 const inFlight = new Set<AIProvider>();
 const abortListeners = new Set<(reason: Error) => void>();
+const pendingStops = new Map<AIProvider, Promise<ProviderStopResult>>();
 let stopNoticeLocale: Locale = 'en';
 
 export function resetCancelState(): void {
@@ -49,7 +50,15 @@ export function onWorkflowAbort(listener: (reason: Error) => void): () => void {
 // Stop is only called for a provider with a step in flight, so anything short of a clicked stop
 // control means its page may still be generating. Say so instead of failing silently; the page
 // engine also refuses the next send until it sees the page stay idle.
-export async function stopProvider(provider: AIProvider): Promise<ProviderStopResult> {
+export function stopProvider(provider: AIProvider): Promise<ProviderStopResult> {
+  const existing = pendingStops.get(provider);
+  if (existing) return existing;
+  const pending = stopProviderOnce(provider).finally(() => pendingStops.delete(provider));
+  pendingStops.set(provider, pending);
+  return pending;
+}
+
+async function stopProviderOnce(provider: AIProvider): Promise<ProviderStopResult> {
   let result: ProviderStopResult;
   try {
     result = await host.provider.stop(provider);

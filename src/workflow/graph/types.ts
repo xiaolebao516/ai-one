@@ -17,7 +17,10 @@ export interface WorkflowGraph {
   preflight: GraphPreflight;
   nodes: Record<NodeId, GraphNode>;
   edges: GraphEdge[];
-  onComplete?: { status: '' };
+  onComplete?: {
+    status: '';
+    report?: { kind: 'deliberation'; rounds: { round: number; first: NodeId; second: NodeId; auditor: NodeId }[] };
+  };
 }
 
 export interface GraphRole {
@@ -135,6 +138,8 @@ export type TextRef =
   | { kind: 'literal'; text: string };
 
 export type TextCondition =
+  | { type: 'deliberationConsensus'; first: TextRef; second: TextRef }
+  | { type: 'deliberationAuditContinue'; ref: TextRef }
   | { type: 'always' }
   | { type: 'textIncludes'; ref: TextRef; value: string; caseSensitive?: boolean }
   | { type: 'regex'; ref: TextRef; pattern: string; flags?: string }

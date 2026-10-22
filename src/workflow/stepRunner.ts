@@ -16,6 +16,7 @@ export const SEND_REJECTION_RETRY_DELAY_MS = 1_500;
 
 export interface RunStepOptions {
   recoverProviderErrors?: boolean;
+  allowSkip?: boolean;
 }
 
 function waitForSendRetry(): Promise<void> {
@@ -58,13 +59,16 @@ export async function runStep(
       if (error instanceof ProviderResponseError && options.recoverProviderErrors !== true) throw error;
       const failureKind = error instanceof ProviderResponseError ? 'provider-error' : 'timeout';
       const recoveryDetail = isProviderPageReloadedError(error) ? 'provider-page-reloaded' : undefined;
-      const action = await awaitStepTimeoutAction(provider, failureKind, recoveryDetail);
+      const action = await awaitStepTimeoutAction(provider, failureKind, recoveryDetail, options.allowSkip !== false);
       if (action === 'retry') {
         await stopProvider(provider);
         resetProviderPullState(provider);
         continue;
       }
-      if (action === 'skip') return { response: SKIP_RESPONSE, turn: -1 };
+      if (action === 'skip') {
+        if (options.allowSkip === false) throw new Error('Deliberation step was skipped; independent audit is incomplete.');
+        return { response: SKIP_RESPONSE, turn: -1 };
+      }
       if (action === 'cancel') {
         abortWorkflow();
         await stopProvider(provider);

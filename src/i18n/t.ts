@@ -2,11 +2,13 @@ import type { I18nKey } from './keys';
 import { de } from './de';
 import { en } from './en';
 import { ja } from './ja';
+import { zhCN } from './zh-CN';
 import { zhTW } from './zh-TW';
 import type { Locale } from './resolve';
 
 const DICTIONARIES: Record<Locale, Record<I18nKey, string>> = {
   en,
+  'zh-CN': zhCN,
   'zh-TW': zhTW,
   ja,
   de,

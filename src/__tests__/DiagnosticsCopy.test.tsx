@@ -7,6 +7,10 @@ import { t } from '../i18n/t';
 import { DiagnosticsSection } from '../ui/SettingsModal';
 import { normalizeSettings } from '../ui/settingsModel';
 
+vi.mock('../dev/deliberationPromptTrace', () => ({
+  readDeliberationAuditTrace: () => [{ round: 1, templateMatched: true, prompt: '[REDACTED original user question]' }],
+}));
+
 vi.mock('../host', () => ({
   host: {
     app: { version: vi.fn().mockResolvedValue('1.8.9') },
@@ -22,7 +26,7 @@ vi.mock('../ui/useEventLog', () => ({ useEventLog: () => [
   { ts: 1, provider: 'meta', kind: 'provider-state', summary: 'meta-only' },
   { ts: 2, provider: 'grok', kind: 'provider-state', summary: 'grok-only' },
 ] }));
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 type Props = { children?: ReactNode; disabled?: boolean; onClick?: () => void; onChange?: (event: { target: { value: string } }) => void };
 function find(node: ReactNode, type: string, label?: string): ReactElement<Props> | undefined {
@@ -96,6 +100,23 @@ function harness(writeText = vi.fn().mockResolvedValue(undefined)) {
 }
 
 describe('diagnostics copy completion scope', () => {
+  it('includes sanitized audit evidence with All logs in development without a Console', async () => {
+    const ui = harness();
+    ui.copy();
+    const bundle = JSON.parse(ui.writeText.mock.calls[0][0]);
+    expect(bundle.auditPrompts).toEqual([{ round: 1, templateMatched: true, prompt: '[REDACTED original user question]' }]);
+    expect(bundle.eventLog).toContain('meta-only');
+    expect(bundle.eventLog).toContain('grok-only');
+  });
+
+  it('keeps production log copy free of development audit diagnostics', () => {
+    vi.stubEnv('DEV', false);
+    const ui = harness();
+    ui.copy();
+    expect(ui.writeText.mock.calls[0][0]).toContain('meta-only');
+    expect(ui.writeText.mock.calls[0][0]).not.toContain('auditPrompts');
+  });
+
   it.each(['success', 'failure'] as const)('ignores old provider %s after the new provider copy has settled', async (oldResult) => {
     const old = deferred();
     const writeText = vi.fn().mockReturnValueOnce(old.promise);

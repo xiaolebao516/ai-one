@@ -51,6 +51,55 @@ describe('shared v2 skin preference', () => {
     expect(b).toHaveBeenCalledTimes(2);
   });
 
+
+  it('fans out a storage event to all subscribers and detaches the shared handler on final unsubscribe', async () => {
+    const storage = memoryStorage();
+    const handlers = new Set<(event: StorageEvent) => void>();
+    const addEventListener = vi.fn((type: string, handler: (event: StorageEvent) => void) => {
+      if (type === 'storage') handlers.add(handler);
+    });
+    const removeEventListener = vi.fn((type: string, handler: (event: StorageEvent) => void) => {
+      if (type === 'storage') handlers.delete(handler);
+    });
+    vi.stubGlobal('window', { localStorage: storage, addEventListener, removeEventListener });
+    const { getV2Skin, subscribeV2Skin } = await freshModule();
+    const a = vi.fn();
+    const b = vi.fn();
+    const stopA = subscribeV2Skin(a);
+    const stopB = subscribeV2Skin(b);
+
+    const dispatchStorage = (newValue: string | null) => {
+      for (const handler of [...handlers]) {
+        handler({ key: 'ai-one.v2.skin', newValue } as StorageEvent);
+      }
+    };
+    expect(addEventListener).toHaveBeenCalledTimes(1);
+    expect(handlers.size).toBe(1);
+
+    dispatchStorage('mist');
+    expect(getV2Skin()).toBe('mist');
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(1);
+
+    dispatchStorage('mist'); // Unchanged value must not trigger a re-render.
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(1);
+
+    stopA();
+    expect(removeEventListener).not.toHaveBeenCalled();
+    dispatchStorage('paper');
+    expect(getV2Skin()).toBe('paper');
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(2);
+
+    stopB();
+    expect(removeEventListener).toHaveBeenCalledTimes(1);
+    expect(handlers.size).toBe(0);
+    dispatchStorage('mist');
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps working in memory when storage throws', async () => {
     vi.stubGlobal('window', {
       get localStorage(): Storage {
