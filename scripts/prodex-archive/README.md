@@ -39,7 +39,7 @@ The task dispatcher must call `auto-finish` only after the task is truly termina
 
    Replace 94 with the actual Issue. Copy the resulting GitHub comment URL ending
    with #issuecomment-ID.
-3. Run finish, specifying the slot CURRENTLY displaying that exact thread:
+3. The task dispatcher runs `auto-finish`, specifying the slot CURRENTLY displaying that exact thread:
 
        node scripts/prodex-archive/cli.mjs auto-finish --task 94 --slot 2 --thread-url "$THREAD" --request-id "$REQUEST_ID" --handoff-url "$COMMENT_URL"
 
@@ -63,7 +63,7 @@ pending, failed, skipped, archived. Archived is idempotent. Retry explicitly
 overrides skipped.
 
 The ordinary run command continues to release its short-lived slot claim when one
-ask finishes. At FINAL THREAD closure, use finish instead of another manual release.
+ask finishes. At FINAL THREAD closure, the dispatcher runs `auto-finish` instead of another manual release.
 Archive status is separate from slot closure. A failed UI archive does not
 intentionally hold the claim; a failed Handoff check never takes a claim.
 
