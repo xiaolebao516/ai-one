@@ -4,6 +4,7 @@ import { TASK_HUD_MOCK_TASKS } from '../ui/taskHudMockData';
 import { loadGitHubTasks, type GitHubRepoTasks } from '../ui/taskHudGithub';
 import type { HudTask } from '../ui/taskHudModel';
 import { MAX_REPOS, normalizeRepo, type ThemePreference, type WorkbenchSource } from './workbenchModel';
+import { normalizeRepoPath } from './dispatchModel';
 import { loadPrefs, savePrefs, type WorkbenchPrefs } from './workbenchStorage';
 
 export type RepoNotice =
@@ -101,6 +102,7 @@ export interface WorkbenchData {
   setTheme: (theme: ThemePreference) => void;
   addRepo: (input: string) => AddRepoResult;
   removeRepo: (repo: string) => void;
+  setDispatchRepo: (input: string) => 'saved' | 'cleared' | 'invalid';
   refresh: () => void;
 }
 
@@ -176,6 +178,16 @@ export function useWorkbenchData(load: GitHubLoader = readGitHub): WorkbenchData
     removeRepo: (repo) => {
       const repos = prefs.repos.filter((item) => item !== repo);
       if (repos.length) update({ repos });
+    },
+    setDispatchRepo: (input) => {
+      if (!input.trim()) {
+        update({ dispatchRepo: '' });
+        return 'cleared';
+      }
+      const repo = normalizeRepoPath(input);
+      if (!repo) return 'invalid';
+      update({ dispatchRepo: repo });
+      return 'saved';
     },
     refresh: () => setRefreshToken((token) => token + 1),
   };

@@ -1,4 +1,5 @@
 import { DEFAULT_REPOS, MAX_REPOS, normalizeRepo, type ThemePreference, type WorkbenchSource } from './workbenchModel';
+import { normalizeRepoPath } from './dispatchModel';
 
 /**
  * Per-viewer preferences of the workbench. localStorage can be missing or throw (private mode,
@@ -16,9 +17,10 @@ export interface WorkbenchPrefs {
   source: WorkbenchSource;
   repos: string[];
   theme: ThemePreference;
+  dispatchRepo: string;
 }
 
-export const DEFAULT_PREFS: WorkbenchPrefs = { source: 'demo', repos: [...DEFAULT_REPOS], theme: 'system' };
+export const DEFAULT_PREFS: WorkbenchPrefs = { source: 'demo', repos: [...DEFAULT_REPOS], theme: 'system', dispatchRepo: '' };
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
 
@@ -92,7 +94,8 @@ export function loadPrefs(storage: StorageLike | undefined = defaultStorage()): 
     const repos = Array.isArray(parsed.repos)
       ? [...new Set(parsed.repos.map((repo) => (typeof repo === 'string' ? normalizeRepo(repo) : undefined)).filter((repo): repo is string => Boolean(repo)))].slice(0, MAX_REPOS)
       : [];
-    return { source, theme, repos: repos.length ? repos : [...DEFAULT_REPOS] };
+    const dispatchRepo = typeof parsed.dispatchRepo === 'string' ? normalizeRepoPath(parsed.dispatchRepo) ?? '' : '';
+    return { source, theme, repos: repos.length ? repos : [...DEFAULT_REPOS], dispatchRepo };
   } catch {
     return { ...DEFAULT_PREFS, repos: [...DEFAULT_PREFS.repos] };
   }
