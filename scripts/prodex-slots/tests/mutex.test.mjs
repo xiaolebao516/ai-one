@@ -69,6 +69,30 @@ test('withMutex stops retrying persistent Windows EPERM at the deadline and pres
   assert.equal(fs.existsSync(file), false, 'a failed open never creates or removes a mutex');
 });
 
+test('withMutex does not retry after the deadline when EEXIST is followed by ENOENT', (t) => {
+  const file = path.join(tempHome(), 'slots.json.lock');
+  let now = 1_000;
+  const deadline = 1_050;
+  t.mock.method(Date, 'now', () => now);
+  const originalStatSync = fs.statSync;
+  t.mock.method(fs, 'statSync', function (filePath, ...args) {
+    if (filePath === file) throw Object.assign(new Error('simulated disappearing mutex'), { code: 'ENOENT' });
+    return originalStatSync.call(fs, filePath, ...args);
+  });
+  const attempts = mockMutexOpen(t, file, (attempt) => {
+    now += 25;
+    return attempt < 5 ? Object.assign(new Error('simulated lock contention'), { code: 'EEXIST' }) : undefined;
+  });
+
+  assert.throws(
+    () => withMutex(file, () => assert.fail('callback must not run after timeout'), { timeoutMs: 50 }),
+    /Timed out waiting/,
+  );
+  assert.equal(attempts(), 2, 'the deadline is checked before a third open attempt');
+  assert.equal(now, deadline);
+  assert.equal(fs.existsSync(file), false);
+});
+
 test('withMutex does not retry unrelated Windows EACCES errors', (t) => {
   const file = path.join(tempHome(), 'slots.json.lock');
   const denied = codedError('EACCES');
