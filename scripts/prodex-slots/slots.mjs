@@ -184,7 +184,7 @@ export function removeClaimFile(file) {
   try {
     fs.rmSync(file, { force: true });
   } catch (error) {
-    throw new Error(`could not delete ${file} (${error.code ?? 'unknown'}). Deletion is blocked by an external policy; remove it by hand: powershell -NoProfile -Command "Remove-Item -LiteralPath '${file}'"`);
+    throw new Error(`could not delete ${file} (${error.code ?? 'unknown'}). Deletion is blocked by an external policy; remove it by hand: powershell -NoProfile -Command "Remove-Item -LiteralPath '${file}'"`, { cause: error });
   }
 }
 
@@ -218,7 +218,7 @@ export function sweepSlots(home, ids, { alive = processAlive, staleMs = CLAIM_ST
         const dir = path.dirname(file);
         if (fs.existsSync(dir)) {
           let claimStats = null;
-          try { claimStats = fs.statSync(file); } catch { claimStats = null; }
+          try { claimStats = fs.statSync(file); } catch { /* no claim file: nothing shares its inode */ }
           for (const entry of fs.readdirSync(dir)) {
             if (!entry.startsWith(`slot-${id}.json.`) || !entry.endsWith('.tmp')) continue;
             const temp = path.join(dir, entry);
