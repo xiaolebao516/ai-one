@@ -712,7 +712,6 @@ test('sweep deletes a .tmp that is a hard link of the claim and an old orphan, k
   const old = new Date(Date.now() - 10 * 60_000);
   fs.writeFileSync(`${claimPath(home, 2)}.orphan.tmp`, 'x\n');
   fs.utimesSync(`${claimPath(home, 2)}.orphan.tmp`, old, old);
-  const dir = path.dirname(claimPath(home, 2));
   const report = sweepSlots(home, [2], { alive: () => true });
   assert.deepEqual(report.map((r) => r.removed).sort(), ['claim', 'temp', 'temp'].sort().filter((x) => x === 'temp'));
   assert.ok(report.every((r) => r.removed === 'temp'), 'the live claim itself stays');
