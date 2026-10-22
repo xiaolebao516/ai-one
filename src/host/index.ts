@@ -1,6 +1,6 @@
 import type { AIProvider, BridgeMessage, ProviderState } from '../../shared/types';
 import { getVersion } from '@tauri-apps/api/app';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { onBridgeMessage } from '../bridge/bus';
 import type { AdapterNotice } from '../ui/reportBroken';
@@ -72,6 +72,7 @@ function safeSnapshotId(snapshotId: string): string {
 
 export const host = {
   app: {
+    isDesktop: (): boolean => isTauri(),
     version: (): Promise<string> => getVersion(),
     openExternal: (url: string): Promise<void> => invoke('open_external_url', { url }),
   },
@@ -196,6 +197,16 @@ export const host = {
     get: (path: string): Promise<unknown> => readOnlyGitHub(invoke('github_readonly_get', { path })),
     associations: (repo: string, numbers: number[]): Promise<unknown> =>
       readOnlyGitHub(invoke('github_readonly_associations', { repo, numbers })),
+  },
+  /** Local Prodex metadata only. No dispatch, reply retrieval or file writes. */
+  dispatch: {
+    snapshot: async (repoPath: string): Promise<unknown> => {
+      try {
+        return await invoke('dispatch_readonly_snapshot', { repoPath });
+      } catch {
+        throw new Error('派工元数据读取失败，请检查仓库路径和本机文件权限');
+      }
+    },
   },
   share: {
     exportMarkdown: (suggestedName: string, content: string): Promise<string | null> =>

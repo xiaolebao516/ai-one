@@ -41,9 +41,11 @@ async function collide(mode, home, count, slotBase = 0, rounds = 1) {
   const children = Array.from({ length: count }, () => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [childScript, mode, home, String(count), String(slotBase), String(rounds)]);
     let stdout = '';
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.on('error', reject);
-    child.on('close', (code) => (code === 0 ? resolve(JSON.parse(stdout)) : reject(new Error(`child exited ${code}`))));
+    child.on('close', (code) => (code === 0 ? resolve(JSON.parse(stdout)) : reject(new Error(`child exited ${code}: ${stderr.slice(-2000)}`))));
   }));
   return Promise.all(children);
 }
