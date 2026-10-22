@@ -12,6 +12,8 @@ import {
 import { onBridgeMessage, publishBridgeMessage, resetBusForTests } from '../bridge/bus';
 import { resetBridgePullForTests } from '../bridge/pull';
 import { host } from '../host';
+import { startDeliberationAuditTrace } from '../dev/deliberationPromptTrace';
+import { createResponseLanguagePolicy } from '../workflow/responseLanguage';
 import { resetCancelState } from '../workflow/cancel';
 import {
   brainstormGraph,
@@ -384,7 +386,25 @@ describe('workflow graph foundation', () => {
         : prompts.length <= 2 ? 'independent ' + provider : 'discussion of facts by ' + provider;
       publishBridgeMessage(done(provider, response));
     });
-    await expect(executeGraph(deliberationGraph, { text: 'Test disagreement', roles: { first: 'chatgpt', second: 'gemini', auditor: 'claude' } })).resolves.toBeUndefined();
+    const trace = startDeliberationAuditTrace();
+    try {
+      await expect(executeGraph(deliberationGraph, {
+        text: '请比较证据和局限。PRIVATE_QUESTION',
+        roles: { first: 'chatgpt', second: 'gemini', auditor: 'claude' },
+        responseLanguagePolicy: createResponseLanguagePolicy('auto', 'zh-TW'),
+      })).resolves.toBeUndefined();
+      const evidence = trace.read();
+      expect(evidence.map((entry) => entry.round)).toEqual([1, 2, 3]);
+      for (const entry of evidence) {
+        expect(entry).toMatchObject({ templateMatched: true, languagePolicyPresent: true, questionBlockPresent: true, dispatch: 'dispatched' });
+        expect(entry.prompt).toContain('same language and script as the original user question');
+        expect(entry.prompt).toContain('setting="auto" interface-locale="zh-TW"');
+        expect(entry.prompt).not.toContain('PRIVATE_QUESTION');
+        expect(entry.prompt).not.toContain('discussion of facts by');
+      }
+    } finally {
+      trace.stop();
+    }
     off();
     expect(prompts.map((entry) => entry.provider)).toEqual([
       'chatgpt', 'gemini', 'chatgpt', 'gemini', 'claude',
