@@ -192,3 +192,34 @@ describe('host snapshot bindings', () => {
     expect(handler).toHaveBeenCalledWith({ provider: 'chatgpt', host: 'auth.openai.com' });
   });
 });
+
+describe('host read-only GitHub bindings (#51)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('passes the path / repo and numbers to the read-only commands', async () => {
+    const path = 'repos/xiaolebao516/ai-one/issues?state=open&sort=created&direction=desc&per_page=10&page=1';
+    invokeMock.mockResolvedValueOnce([{ number: 1 }]);
+    await expect(host.github.get(path)).resolves.toEqual([{ number: 1 }]);
+    expect(invokeMock).toHaveBeenLastCalledWith('github_readonly_get', { path });
+
+    invokeMock.mockResolvedValueOnce({ data: {} });
+    await expect(host.github.associations('xiaolebao516/ai-one', [38, 19])).resolves.toEqual({ data: {} });
+    expect(invokeMock).toHaveBeenLastCalledWith('github_readonly_associations', { repo: 'xiaolebao516/ai-one', numbers: [38, 19] });
+  });
+
+  it('rejects with Error objects carrying the command message, as collectSnapshot expects', async () => {
+    invokeMock.mockRejectedValueOnce('Request not allowed.');
+    await expect(host.github.get('user')).rejects.toThrow(new Error('Request not allowed.'));
+    invokeMock.mockRejectedValueOnce({ unexpected: true });
+    await expect(host.github.associations('o/r', [1])).rejects.toThrow(/^GitHub query failed/);
+    // Anything outside the fixed message set (e.g. text echoed from elsewhere) is normalised.
+    invokeMock.mockRejectedValueOnce('fatal: token ghp_secret for account someone');
+    await expect(host.github.get('user')).rejects.toThrow(/^GitHub query failed/);
+    invokeMock.mockRejectedValueOnce('command is only available to the main control webview');
+    await expect(host.github.get('user')).rejects.toThrow(/^GitHub query failed/);
+    invokeMock.mockRejectedValueOnce('gh query timed out; snapshot is incomplete.');
+    await expect(host.github.get('user')).rejects.toThrow(new Error('gh query timed out; snapshot is incomplete.'));
+  });
+});

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-github-readonly-associations"
+description = "Enables the github_readonly_associations command without any pre-configured scope."
+commands.allow = ["github_readonly_associations"]
+
+[[permission]]
+identifier = "deny-github-readonly-associations"
+description = "Denies the github_readonly_associations command without any pre-configured scope."
+commands.deny = ["github_readonly_associations"]

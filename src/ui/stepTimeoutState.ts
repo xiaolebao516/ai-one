@@ -16,5 +16,6 @@ export function nextStepTimeoutState(
     ...(event.requestId === undefined ? {} : { requestId: event.requestId }),
     ...(event.failureKind === undefined ? {} : { failureKind: event.failureKind }),
     ...(event.recoveryDetail === undefined ? {} : { recoveryDetail: event.recoveryDetail }),
+    ...(event.skipAllowed === undefined ? {} : { skipAllowed: event.skipAllowed }),
   };
 }

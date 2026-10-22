@@ -10,6 +10,18 @@ const STORAGE_KEY = 'ai-one.v2.skin';
 const listeners = new Set<() => void>();
 let current: V2SkinId = readStored();
 
+function notifyListeners(): void {
+  for (const listener of [...listeners]) listener();
+}
+
+function onStorage(event: StorageEvent): void {
+  if (event.key !== STORAGE_KEY) return;
+  const next = isV2SkinId(event.newValue) ? event.newValue : V2_DEFAULT_SKIN;
+  if (next === current) return;
+  current = next;
+  notifyListeners();
+}
+
 function storage(): Storage | undefined {
   try {
     return typeof window === 'undefined' ? undefined : window.localStorage;
@@ -39,22 +51,19 @@ export function setV2Skin(skin: V2SkinId): void {
   } catch {
     // Not persisted; the in-memory choice still applies.
   }
-  for (const listener of [...listeners]) listener();
+  notifyListeners();
 }
 
 export function subscribeV2Skin(listener: () => void): () => void {
+  if (listeners.size === 0 && typeof window !== 'undefined') {
+    window.addEventListener('storage', onStorage);
+  }
   listeners.add(listener);
-  const onStorage = (event: StorageEvent) => {
-    if (event.key !== STORAGE_KEY) return;
-    const next = isV2SkinId(event.newValue) ? event.newValue : V2_DEFAULT_SKIN;
-    if (next === current) return;
-    current = next;
-    listener();
-  };
-  if (typeof window !== 'undefined') window.addEventListener('storage', onStorage);
   return () => {
     listeners.delete(listener);
-    if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage);
+    if (listeners.size === 0 && typeof window !== 'undefined') {
+      window.removeEventListener('storage', onStorage);
+    }
   };
 }
 

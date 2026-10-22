@@ -322,6 +322,8 @@ class InactiveSendOperationError extends Error {
   let lastCompletionActivityAt = 0;
   let lastGrokThinking: boolean | undefined;
   let pendingPromptText = '';
+  let lastChatGptSendPath: SendActivationResult['path'] | 'unknown' = 'unknown';
+  let chatGptConfirmedDiagnosticEmitted = false;
   let matchingChatGptUserTurnBaseline = 0;
   let activeChatGptUserTurnAnchor: Element | null = null;
   let chatGptPreSendUserTurns: Element[] = [];
@@ -386,6 +388,40 @@ class InactiveSendOperationError extends Error {
     } catch {
       // best effort diagnostic only
     }
+  }
+
+  /** Metadata-only confirmation trace; never publish prompt text or provider HTML. */
+  function emitChatGptSendDiagnostic(
+    stage: 'activated' | 'confirmed' | 'unconfirmed',
+    details: {
+      path?: SendActivationResult['path'] | 'unknown';
+      activationOk?: boolean;
+      composerState?: 'cleared' | 'changed' | 'disappeared';
+      evidence?: 'reply' | 'user-turn';
+    } = {},
+  ): void {
+    if (adapter?.provider !== 'chatgpt') return;
+    try {
+      if (typeof bridge.emitTitle !== 'function') return;
+      bridge.emitTitle('STATUS_REPORT', {
+        sendDiagnostic: stage,
+        sendPath: details.path ?? lastChatGptSendPath,
+        promptChars: pendingPromptText.length,
+        ...(details.activationOk !== undefined ? { activationOk: details.activationOk } : {}),
+        ...(details.composerState ? { composerState: details.composerState } : {}),
+        ...(details.evidence ? { sendEvidence: details.evidence } : {}),
+        userTurnObserved: Boolean(activeChatGptUserTurnAnchor || chatGptUserTurnAnchorLatched),
+        generationObserved: chatGptResponseGenerationObserved,
+      }, { immediate: true });
+    } catch {
+      // Metadata-only diagnostics must not affect provider send or retry.
+    }
+  }
+
+  function emitChatGptUnconfirmed(composerState: 'cleared' | 'changed' | 'disappeared'): void {
+    if (adapter?.provider !== 'chatgpt') return;
+    refreshChatGptUserTurnAnchor(adapter);
+    emitChatGptSendDiagnostic('unconfirmed', { composerState });
   }
 
   bridge.onDispatch((message: BridgeMessage) => {
@@ -751,6 +787,8 @@ class InactiveSendOperationError extends Error {
     lastResponseText = '';
     lastCompletionActivityAt = Date.now();
     pendingPromptText = text;
+    lastChatGptSendPath = 'unknown';
+    chatGptConfirmedDiagnosticEmitted = false;
     chatGptPreSendUserTurns = matchingChatGptUserTurns(activeAdapter, text);
     matchingChatGptUserTurnBaseline = chatGptPreSendUserTurns.length;
     activeChatGptUserTurnAnchor = null;
@@ -821,6 +859,8 @@ class InactiveSendOperationError extends Error {
         const firstAttempt = await activateSend(input, sendOperation, true);
 
         if (!isActiveSendOperation(sendOperation) || !waitingForResponse) return;
+        lastChatGptSendPath = firstAttempt.path;
+        emitChatGptSendDiagnostic('activated', { path: firstAttempt.path, activationOk: firstAttempt.ok });
         window.setTimeout(() => {
           void retrySendIfStillPending(input, firstAttempt, activeAdapter, sendOperation);
         }, initialSendConfirmationDelay(activeAdapter));
@@ -851,6 +891,7 @@ class InactiveSendOperationError extends Error {
     const currentInput = queryInput(adapter);
     if (!currentInput) {
       if (adapter.provider === 'chatgpt') {
+        emitChatGptUnconfirmed('disappeared');
         doneWithError(
           'chatgpt send could not be confirmed; composer disappeared before a matching user turn appeared',
           originalAdapter.provider,
@@ -870,6 +911,7 @@ class InactiveSendOperationError extends Error {
     const inputText = getInputText(currentInput).trim();
     if (!inputText) {
       if (adapter.provider === 'chatgpt') {
+        emitChatGptUnconfirmed('cleared');
         doneWithError(
           'chatgpt send could not be confirmed; composer cleared before a matching user turn appeared',
           originalAdapter.provider,
@@ -880,6 +922,7 @@ class InactiveSendOperationError extends Error {
     }
 
     if (adapter.provider === 'chatgpt' && !composerTextMatches(currentInput, pendingPromptText)) {
+      emitChatGptUnconfirmed('changed');
       doneWithError(
         'chatgpt send could not be confirmed; composer changed before a matching user turn appeared',
         originalAdapter.provider,
@@ -896,6 +939,8 @@ class InactiveSendOperationError extends Error {
     const retryInput = currentInput ?? originalInput;
     const retryAttempt = await activateSend(retryInput, sendOperation, false);
     if (!isActiveSendOperation(sendOperation) || !waitingForResponse) return;
+    lastChatGptSendPath = retryAttempt.path;
+    emitChatGptSendDiagnostic('activated', { path: retryAttempt.path, activationOk: retryAttempt.ok });
 
     if (!retryAttempt.ok) {
       doneWithError(
@@ -935,6 +980,7 @@ class InactiveSendOperationError extends Error {
     const currentInput = queryInput(activeAdapter);
     if (!currentInput) {
       if (activeAdapter.provider === 'chatgpt') {
+        emitChatGptUnconfirmed('disappeared');
         doneWithError(
           'chatgpt send could not be confirmed; composer disappeared before a matching user turn appeared',
           activeAdapter.provider,
@@ -945,6 +991,7 @@ class InactiveSendOperationError extends Error {
     }
 
     if (activeAdapter.provider === 'chatgpt' && !composerTextMatches(currentInput, pendingPromptText)) {
+      emitChatGptUnconfirmed(getInputText(currentInput).trim() ? 'changed' : 'cleared');
       doneWithError(
         `chatgpt send could not be confirmed; composer ${getInputText(currentInput).trim() ? 'changed' : 'cleared'} before a matching user turn appeared`,
         activeAdapter.provider,
@@ -989,6 +1036,7 @@ class InactiveSendOperationError extends Error {
       const finalInput = queryInput(adapter);
       if (adapter.provider === 'chatgpt') {
         if (finalInput && composerTextMatches(finalInput, pendingPromptText)) {
+          emitChatGptUnconfirmed('changed');
           doneWithError(
             'chatgpt send was not accepted; draft is still in composer',
             adapter.provider,
@@ -1000,6 +1048,7 @@ class InactiveSendOperationError extends Error {
               ? 'changed'
               : 'cleared'
             : 'disappeared';
+          emitChatGptUnconfirmed(composerState);
           doneWithError(
             `chatgpt send could not be confirmed; composer ${composerState} before a matching user turn appeared`,
             adapter.provider,
@@ -2216,11 +2265,22 @@ class InactiveSendOperationError extends Error {
       // the send-confirmation deadline while its final controls are still rendering.
       // Without an anchor, getLatestResponseCandidate still requires generation observed
       // during this wait and rejects baseline elements/text, user messages, and prompt echoes.
-      if (getLatestResponseCandidate()) return true;
+      if (getLatestResponseCandidate()) {
+        if (!chatGptConfirmedDiagnosticEmitted) {
+          chatGptConfirmedDiagnosticEmitted = true;
+          emitChatGptSendDiagnostic('confirmed', { evidence: 'reply' });
+        }
+        return true;
+      }
       // A previously adopted bubble can detach, but an optimistic bubble alone does not
       // prove the composer was consumed. Keep the bounded retry for an idle exact draft.
       if (!anchor && !chatGptUserTurnAnchorLatched) return false;
-      return !chatGptPendingDraftStillInComposer(activeAdapter);
+      const confirmed = !chatGptPendingDraftStillInComposer(activeAdapter);
+      if (confirmed && !chatGptConfirmedDiagnosticEmitted) {
+        chatGptConfirmedDiagnosticEmitted = true;
+        emitChatGptSendDiagnostic('confirmed', { evidence: 'user-turn' });
+      }
+      return confirmed;
     }
     if (isThinking()) return true;
     const responses = document.querySelectorAll(activeAdapter.responseSelectors.join(', '));

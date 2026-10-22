@@ -1,53 +1,28 @@
 name: CI
 
+# Opt-in checks: PR reviews are not blocked by automatically triggered CI.
+# Run from Actions > CI > Run workflow and select a branch + suite.
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'quick = JS/TS/agent/adapters; full = quick + Rust'
+        type: choice
+        required: true
+        default: quick
+        options:
+          - quick
+          - full
 
 permissions:
   contents: read
-  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  changes:
-    runs-on: windows-latest
-    outputs:
-      adapters: ${{ steps.filter.outputs.adapters }}
-      app: ${{ steps.filter.outputs.app }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
-        id: filter
-        with:
-          filters: |
-            adapters:
-              - 'adapters/**'
-            app:
-              - '**'
-              - '!adapters/**'
-
-  adapters:
-    needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.adapters == 'true'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: node scripts/check-adapters.mjs
-
   frontend:
-    needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.app == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -56,36 +31,19 @@ jobs:
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          # Exercise the lowest supported source-development Node line here.
           node-version: 22.13
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build:injected
+      # pnpm verify already includes injected build, TS, lint, vitest, agent tests and adapter validation.
       - run: pnpm verify
 
-  # Cross-platform compile + lint gate (M7): proves the Rust app builds against the real
-  # WebView2 (Windows), WKWebView (macOS), and WebKitGTK (Linux) SDKs. The document.title
-  # transport is cross-platform via Tauri's WebviewBuilder::on_document_title_changed, so this
-  # is where mac/linux compilation is actually verified (the dev box is Windows-only).
   cargo-clippy:
-    needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.app == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        # ai-one targets Windows only. macOS/Linux entries from upstream are dropped to keep
-        # private-repo CI minutes low; restore them if those platforms become targets.
-        os: [windows-latest]
-    runs-on: ${{ matrix.os }}
+    if: inputs.suite == 'full'
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Linux WebKitGTK build deps
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-16
         with:
           components: clippy
@@ -95,9 +53,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm agent:verify
-      # gen/injected/*.js is gitignored + include_str!'d by the Rust build, so it must be
-      # generated before cargo can compile.
+      # Rust embeds generated JS during compilation.
       - run: pnpm build:injected
       - run: cargo test --manifest-path src-tauri/Cargo.toml --lib
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings

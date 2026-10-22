@@ -130,6 +130,40 @@ describe('event log reducer', () => {
     expect(filterEventLogByProvider(events, 'all')).toEqual([...mixedEvents, events[6]]);
   });
 
+  it('records only whitelisted send confirmation metadata, never prompt content', () => {
+    const event = eventFromBridgeMessage({
+      v: 1,
+      action: 'STATUS_REPORT',
+      provider: 'chatgpt',
+      transport: 'title',
+      payload: {
+        sendDiagnostic: 'unconfirmed',
+        sendPath: 'button-click',
+        promptChars: 10094,
+        composerState: 'cleared',
+        userTurnObserved: false,
+        generationObserved: false,
+        text: 'PRIVATE USER PROMPT',
+      },
+    });
+    expect(event?.summary).toContain('send unconfirmed via button-click');
+    expect(event?.detail).toMatchObject({
+      promptChars: 10094,
+      composerState: 'cleared',
+      userTurnObserved: false,
+      generationObserved: false,
+    });
+    expect(formatEventLogText(appendEvent([], event!))).not.toContain('PRIVATE USER PROMPT');
+  });
+
+  it('rejects arbitrary diagnostic payload labels', () => {
+    const event = eventFromBridgeMessage({
+      v: 1, action: 'STATUS_REPORT', provider: 'chatgpt', transport: 'title',
+      payload: { sendDiagnostic: 'my-secret-string', sendPath: 'my-secret-path' },
+    });
+    expect(event?.summary).not.toContain('my-secret');
+  });
+
   it('stores prompt length instead of prompt text', () => {
     const prompt = 'private user prompt';
     const events = appendEvent([], eventFromProviderSend('claude', prompt), { now: () => 456 });

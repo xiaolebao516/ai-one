@@ -5,7 +5,7 @@ import { host } from '../host';
 import type { Locale } from '../i18n/resolve';
 import { formatI18n, t } from '../i18n/t';
 import { abortWorkflow, getInFlightProviders, setStopNoticeLocale } from './cancel';
-import { emitSystemError, sendWorkflowStatus } from './events';
+import { emitSystemError, emitSystemNotice, sendWorkflowStatus } from './events';
 import { executeGraph, preflightGraph, workflowGraphs } from './graph';
 import type { PreflightResult } from './preflight';
 import { prepareWorkflowRun } from './runtime';
@@ -16,6 +16,7 @@ import { persistSnapshotIfEnabled } from './snapshot/persistence';
 import type { SnapshotRedactionTier } from './snapshot/types';
 import { tearDownWaiters } from './teardown';
 import { cancelPendingStepTimeoutAction } from './stepTimeout';
+import { startDeliberationAuditTrace } from '../dev/deliberationPromptTrace';
 
 export interface RunWorkflowParams {
   text: string;
@@ -70,13 +71,29 @@ async function runPreparedWorkflow({
     enabled: snapshotPersistence,
     tier: snapshotRedactionTier,
   };
+  let promptTrace: ReturnType<typeof startDeliberationAuditTrace> | undefined;
   try {
+    if (import.meta.env.DEV && presetId === 'deliberation') {
+      promptTrace = startDeliberationAuditTrace();
+      promptTrace.clear();
+    }
     const appVersion = await getRuntimeAppVersion();
     const graphOptions = {
       onSnapshotComplete: (snapshot: Parameters<typeof persistSnapshotIfEnabled>[0]) =>
         persistSnapshotIfEnabled(snapshot, snapshotOptions),
       ...(appVersion ? { appVersion } : {}),
     };
+    if (presetId === 'deliberation') {
+      const graph = workflowGraphs.deliberation;
+      const preflight = await preflightGraph(graph, roles, activeProviders);
+      if (!preflight.ok) {
+        emitSystemNotice('INCOMPLETE_BLOCKED: An independent third-party auditor and both distinct discussion participants must be available.');
+        return { ok: false, preflight };
+      }
+      await executeGraph(graph, { text, context, roles, checkpoints, locale, responseLanguagePolicy }, graphOptions);
+      return { ok: true };
+    }
+
     if (presetId === 'brainstorm') {
       const graph = workflowGraphs.brainstorm;
       const preflight = await preflightGraph(graph, roles, activeProviders);
@@ -112,9 +129,16 @@ async function runPreparedWorkflow({
     return { ok: true };
   } catch (error) {
     await tearDownWaiters(getInFlightProviders(), { stopClick: true });
-    emitSystemError(workflowFailureText(error, locale));
+    if (presetId === 'deliberation') {
+      const cancelled = error instanceof Error && error.message === 'Workflow cancelled by user';
+      emitSystemNotice((cancelled ? 'CANCELLED' : 'INCOMPLETE_BLOCKED') + ': ' + workflowFailureText(error, locale));
+    } else {
+      emitSystemError(workflowFailureText(error, locale));
+    }
     sendWorkflowStatus('');
     return { ok: true };
+  } finally {
+    promptTrace?.stop();
   }
 }
 

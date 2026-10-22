@@ -253,7 +253,12 @@ function validateTextCondition(context: ValidationContext, condition: TextCondit
     addError(context, 'unknown-condition', `Text condition "${String(typed.type)}" is not registered`, path);
     return;
   }
-  if (condition.type === 'textIncludes' || condition.type === 'regex') {
+  if (condition.type === 'deliberationConsensus') {
+    validateTextRef(context, condition.first, `${path}.first`);
+    validateTextRef(context, condition.second, `${path}.second`);
+    return;
+  }
+  if (condition.type === 'textIncludes' || condition.type === 'regex' || condition.type === 'deliberationAuditContinue') {
     validateTextRef(context, condition.ref, `${path}.ref`);
     return;
   }
