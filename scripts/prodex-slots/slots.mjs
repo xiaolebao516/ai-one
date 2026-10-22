@@ -19,33 +19,37 @@ export const OWNERSHIP_LIMITS = { sessionKey: 64, threadUrl: 300 };
 const TASK_PATTERN = /^#?\d{1,6}$/;
 const SESSION_KEY_PATTERN = new RegExp(`^[A-Za-z0-9._:-]{1,${OWNERSHIP_LIMITS.sessionKey}}$`);
 const THREAD_HOST = 'chatgpt.com';
-// A thread is either /c/<id> or, inside a project, /g/<project>/c/<id>. Anything else - a
-// query string, a fragment, user:pass in the authority - is refused: the URL is written to a
-// file other sessions read, so it must not be able to carry a token or credentials.
-const THREAD_PATH_PATTERN = /^\/(?:c\/[A-Za-z0-9-]{8,64}|g\/[A-Za-z0-9._-]{1,64}\/c\/[A-Za-z0-9-]{8,64})$/;
+// A thread is either /c/<uuid> or, inside a project, /g/g-p-<project>/c/<uuid>. Anything else -
+// a query string, a fragment, user:pass in the authority, an arbitrary segment where the id goes
+// - is refused. The id shape is a format constraint on trusted CLI input, not proof that the id
+// is real; what it does buy is that a pasted token cannot pass as a thread id.
+const THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const THREAD_PROJECT_PATTERN = /^g-p-[a-z0-9]{1,40}$/;
 
 // One validator per field, returning a value or the reason it was refused. `normalizeOwnership`
 // throws on refusal (a typo must not be written); `claimOwnership` drops the value instead (a
 // hand-edited file must not break `list`, and must not leak whatever it was edited to say).
+//
+// No refusal message repeats the offending value. A rejected field is by definition text this
+// tool did not expect, so it may be a token that got pasted in the wrong place, and stderr ends
+// up in logs; the message says what the rule is and leaves the value out.
 const OWNERSHIP_FIELDS = {
   task(raw) {
     const value = String(raw).trim();
-    if (!TASK_PATTERN.test(value)) return { error: `--task must be a task number like 71 or #71, got ${JSON.stringify(raw)}` };
+    if (!TASK_PATTERN.test(value)) return { error: '--task must be a task number like 71 or #71' };
     return { value: value.startsWith('#') ? value : `#${value}` };
   },
   sessionKey(raw) {
     const value = String(raw);
     if (!SESSION_KEY_PATTERN.test(value)) {
-      return { error: `--session must be 1-64 characters of letters, digits, dot, underscore, colon or dash (it is shown to other sessions), got ${JSON.stringify(raw)}` };
+      return { error: `--session must be 1-${OWNERSHIP_LIMITS.sessionKey} characters of letters, digits, dot, underscore, colon or dash (it is shown to other sessions)` };
     }
     return { value };
   },
   threadUrl(raw) {
     const value = String(raw);
-    // Nothing below echoes the value back: a rejected URL may be exactly where a token was
-    // pasted, and stderr ends up in logs.
     if (value.length > OWNERSHIP_LIMITS.threadUrl) {
-      return { error: `--thread-url must be at most ${OWNERSHIP_LIMITS.threadUrl} characters, got ${value.length}` };
+      return { error: `--thread-url must be at most ${OWNERSHIP_LIMITS.threadUrl} characters` };
     }
     if (/[\u0000-\u001f\u007f]/.test(value)) return { error: '--thread-url must not contain control characters' };
     // Checked on the raw text, because an empty "?" or "#" disappears from url.search/url.hash
@@ -60,9 +64,15 @@ const OWNERSHIP_FIELDS = {
     if (url.protocol !== 'https:') return { error: '--thread-url must use https' };
     if (url.hostname !== THREAD_HOST) return { error: `--thread-url must be on ${THREAD_HOST}` };
     if (url.username || url.password) return { error: '--thread-url must not carry credentials (user:pass@)' };
-    if (url.port) return { error: `--thread-url must not use a port, got :${url.port}` };
-    if (!THREAD_PATH_PATTERN.test(url.pathname)) {
-      return { error: `--thread-url must point at a thread (/c/<thread-id> or /g/<project>/c/<thread-id>), got ${url.pathname}` };
+    if (url.port) return { error: '--thread-url must not use a port' };
+    // Split without dropping empty segments, so "//c/<id>" and a trailing separator are refused
+    // here instead of being tidied up.
+    const parts = url.pathname.split('/');
+    const isThread = parts.length === 3 && parts[0] === '' && parts[1] === 'c' && THREAD_ID_PATTERN.test(parts[2]);
+    const isProjectThread = parts.length === 5 && parts[0] === '' && parts[1] === 'g'
+      && THREAD_PROJECT_PATTERN.test(parts[2]) && parts[3] === 'c' && THREAD_ID_PATTERN.test(parts[4]);
+    if (!isThread && !isProjectThread) {
+      return { error: `--thread-url must point at a thread: https://${THREAD_HOST}/c/<thread-id> or https://${THREAD_HOST}/g/g-p-<project>/c/<thread-id>, where <thread-id> is the id from the address bar` };
     }
     // The URL parser silently normalizes "/SECRET/../c/x", "%2e%2e", ":443" and similar. Storing
     // the text it would normalize would put whatever sat in front of the path into the claim, so

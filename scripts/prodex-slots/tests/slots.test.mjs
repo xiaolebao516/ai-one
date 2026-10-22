@@ -198,6 +198,10 @@ test('a thread URL is accepted only in one exact, canonical form', () => {
     ['https://chatgpt.com/c/1234\n5678', /control characters/],
     [`https://chatgpt.com//c/${id}`, /must point at a thread/],
     [`https://chatgpt.com/c/${id}/`, /must point at a thread/],
+    ['https://chatgpt.com/c/Bearer-SECRET', /must point at a thread/],
+    ['https://chatgpt.com/c/12345678', /must point at a thread/],
+    ['https://chatgpt.com/SENTINEL-token-9f', /must point at a thread/],
+    [`https://CHATGPT.COM/c/${id}`, /written exactly/],
     [`http://chatgpt.com/c/${id}`, /must use https/],
     [`https://evil.example/c/${id}`, /must be on chatgpt\.com/],
     ['https://chatgpt.com/c/abc', /must point at a thread/],
@@ -514,22 +518,30 @@ test('a hand-edited claim cannot smuggle text or a credential into the listing',
   assert.deepEqual(JSON.parse(h.log.out[0])[0].busyWith, { pid: 4242 }, 'invalid fields are dropped, not shown');
 });
 
-test('a rejected thread URL writes no claim and leaves no token in the output', async () => {
+test('a rejected ownership value writes no claim and is never echoed', async () => {
   const sentinel = 'SENTINEL-token-9f';
+  const thread = 'https://chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013';
   const cases = [
-    `https://chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013?token=${sentinel}`,
-    `https://chatgpt.com/${sentinel}/../c/6ad9e501-da24-83e9-81f9-8b5aae1f7013`,
-    `https://user:${sentinel}@chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013`,
+    ['--thread-url', `${thread}?token=${sentinel}`],
+    ['--thread-url', `https://chatgpt.com/${sentinel}/../c/6ad9e501-da24-83e9-81f9-8b5aae1f7013`],
+    ['--thread-url', `https://user:${sentinel}@chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013`],
+    // A path that is not a thread: the refusal must not repeat the path it did not like.
+    ['--thread-url', `https://chatgpt.com/${sentinel}`],
+    // A rejected value can be any text, so a token can arrive through the other two fields too.
+    ['--session', `Bearer ${sentinel}`],
+    ['--task', sentinel],
   ];
-  for (const threadUrl of cases) {
+  for (const [flag, value] of cases) {
     const h = harness();
-    assert.equal(await h.run(['run', '--thread-url', threadUrl, '--', '--new-chat']), EXIT.ERROR);
+    assert.equal(await h.run(['run', flag, value, '--', '--new-chat']), EXIT.ERROR, `${flag} ${value}`);
     assert.equal(h.log.asks.length, 0, 'nothing was sent');
     assert.equal(readClaim(h.home, 1), null, 'no claim was left');
     const dir = path.join(h.home, 'slot-claims');
     assert.ok(!fs.existsSync(dir) || fs.readdirSync(dir).length === 0, 'nothing was written to disk');
-    assert.ok(!h.log.err.join('\n').includes(sentinel), 'stderr echoed the token');
-    assert.ok(!h.log.out.join('\n').includes(sentinel), 'stdout echoed the token');
+    const stderr = h.log.err.join('\n');
+    assert.match(stderr, new RegExp(flag), 'the message still names the flag');
+    assert.ok(!stderr.includes(sentinel), `stderr echoed the value for ${flag}`);
+    assert.ok(!h.log.out.join('\n').includes(sentinel), `stdout echoed the value for ${flag}`);
   }
 });
 

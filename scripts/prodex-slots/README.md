@@ -85,7 +85,7 @@ but the shell reads `<id>` as a redirection, and the flag then receives somethin
 |---|---|---|
 | `--task` | `71` or `#71` | `#71` |
 | `--session` | 1-64 chars of `A-Z a-z 0-9 . _ : -` | as given |
-| `--thread-url` | exactly `https://chatgpt.com/c/<thread-id>` or `https://chatgpt.com/g/<project>/c/<thread-id>`, at most 300 chars | as given |
+| `--thread-url` | exactly `https://chatgpt.com/c/<thread-id>` or `https://chatgpt.com/g/g-p-<project>/c/<thread-id>`, where `<thread-id>` is the UUID from the address bar; at most 300 chars | as given |
 
 `list` appends them to the claim line, and `--json` puts them in `busyWith`:
 
@@ -103,8 +103,13 @@ Five limits, and they are deliberate:
   (not even an empty `?` or `#`), and must point at a thread path. It also has to be written in
   its canonical form: `..` segments and percent-escaped segments are refused instead of being
   silently normalized, because the stored string is what other sessions read - normalizing after
-  the check would keep whatever sat in front of the path. A rejected URL is never echoed back,
-  since that is where a pasted token would be.
+  the check would keep whatever sat in front of the path.
+- The thread id must be UUID-shaped (`8-4-4-4-12` hex), which is what ChatGPT puts in the address
+  bar. That is a format constraint on command-line input, not a claim that the id exists: it is
+  what stops an arbitrary string, such as a pasted token, from passing as a thread id.
+- No refusal message repeats the rejected value, for any of the three fields. A rejected value is
+  by definition text this tool did not expect, so it may be a token pasted in the wrong place,
+  and stderr ends up in logs. The message names the flag and the rule instead.
 - Values are re-validated when they are read back, not just the key names. A hand-edited claim
   with an over-long or malformed field has those fields dropped from `list` instead of printed,
   and cannot add keys that are not part of this set.
