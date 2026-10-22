@@ -228,7 +228,9 @@ reply text or credentials, and its fields are re-validated on read.
   with an error naming the file, and the file is deleted by hand. It is never removed
   automatically: without OS file locks two processes cannot both judge it stale and remove it
   safely. Needs a file system with hard links (NTFS).
-- On Windows only, `EPERM` from exclusive mutex creation is retried in at most 25 ms intervals and never past `timeoutMs`; persistent `EPERM` remains an error. `EACCES` and non-Windows `EPERM` retain their immediate-error behavior.
+- On Windows only, `EPERM` from exclusive mutex creation is retried in at most 25 ms
+  intervals and never past `timeoutMs`; persistent `EPERM` remains an error. `EACCES`
+  and non-Windows `EPERM` retain their immediate-error behavior.
 - Covered by tests that start real processes which rendezvous before every round (six
   processes, 20 rounds of claiming; four processes adding at once) plus deterministic tests for
   the release and stale-mutex paths. The two collision tests fail on the first version of this

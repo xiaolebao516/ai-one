@@ -172,7 +172,7 @@ export function withMutex(file, fn, { timeoutMs = 5000, staleMs = 10_000 } = {})
     }
     attempted = true;
     try {
-      fs.writeFileSync(file, `${process.pid}\\n`, { flag: 'wx' });
+      fs.writeFileSync(file, `${process.pid}\n`, { flag: 'wx' });
       break;
     } catch (error) {
       lastOpenError = error;
