@@ -41,6 +41,14 @@
 - **状态看板**：GitHub Projects 可按父 Spec 与 Task 展示 Todo / In Progress / Review / Blocked / Done，但它只汇总 GitHub 事实，不另建进度数据源；当前工具不能创建原生子 Issue 关系或自动维护 Project 字段时，必须明确报告能力缺口。
 - **标签约定**：仅使用已有 `needs-review`、`blocked`、`needs-user`；ROUTINE/DEEP 和 Spec Revision 写入 Issue 正文，不额外制造标签和状态文件。
 
+## GitHub 写操作：本地连接器与远程派工
+
+- Issue / PR 的创建、评论、关闭、合并，agent 自己就能做：本地有 `gh` 与 GitHub 连接器；远程侧可以把同样的操作派给带 GitHub 连接器的 GPT。**不要把“请你手动合并 / 请你去关 Issue”当默认答复**，那是能力问题，不是权限问题。
+- 但“能做”不等于“可以随便做”：合并 PR、关闭 Issue、删除分支仍须用户明确批准（在会话里说一句或在 Issue 评论里同意即可）。批准前只做只读或草稿级操作。
+- 远程派工做写操作时，指令写清仓库、编号、动作、目标完整 HEAD；执行后必须**回读远端**确认结果（状态、merge SHA、关闭原因），并在 Issue 留一条记录。同一写操作不要本地与远程重复执行。
+- 结果不确定时先回读远端：确认未执行再重发，禁止盲目重试（见 #26 协议）。
+- 合并方式遵循仓库约定：PR 正文 `Closes #Task`，合并后 Issue 自动关闭；需保留未交付成果时以 Not Planned 关闭并写明原因。
+
 ## 执行与验收
 
 - 先读取项目指引、根配置、相关 Issue 及 Git 状态。非平凡实现先确定范围与验收；采用最小正确变更。
