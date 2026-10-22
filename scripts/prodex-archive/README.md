@@ -74,5 +74,5 @@ intentionally hold the claim; a failed Handoff check never takes a claim.
 - Real account/browser validation is still REQUIRED by #94 and cannot be performed
   through GitHub MCP. Until then the actual UI workflow is UNVERIFIED.
 
-Unit test command: node --test scripts/prodex-archive/tests/*.test.mjs
-Slot regression: node --test scripts/prodex-slots/tests/*.test.mjs
+Archive unit tests: `pnpm archive:verify` (also included in `pnpm verify`).
+Slot regression: `pnpm slots:verify`.
