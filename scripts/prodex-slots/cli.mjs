@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeNote, normalizeOwnership, parseCheck, processAlive, readClaim, readClosure, releaseClaim, slotEnv, slotsHome, sweepSlots, writeClosure } from './slots.mjs';
+import { diagnoseBrowserUnreachable } from './browser-diagnostics.mjs';
 
 // Argument mistakes (bad flags, missing values, unknown commands) are usage errors: the reason
 // plus the full usage block. Anything that fails at runtime carries its own next step and is
@@ -128,9 +129,9 @@ Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.Co
 if ($restored) { 'restored' }`;
 }
 
-export function realDeps(home = slotsHome()) {
+export function realDeps(home = slotsHome(), { platform = process.platform, env = process.env, spawnSyncFn = spawnSync, fetchFn = globalThis.fetch } = {}) {
   let entry;
-  const prodex = (args) => ({ entry: (entry ??= resolveProdexEntry()), args });
+  const prodex = (args) => ({ entry: (entry ??= resolveProdexEntry(env)), args });
   return {
     home,
     now: Date.now,
@@ -138,11 +139,13 @@ export function realDeps(home = slotsHome()) {
     profileExists: (slot) => !slot.profileDir || fs.existsSync(slot.profileDir),
     checkSlot(slot) {
       const { entry: file, args } = prodex(['pro', 'browser', 'check', '--port', String(slot.port)]);
-      const result = spawnSync(process.execPath, [file, ...args], { encoding: 'utf8', timeout: 30_000, windowsHide: true });
+      const result = spawnSyncFn(process.execPath, [file, ...args], { encoding: 'utf8', timeout: 30_000, windowsHide: true });
       // `check` exits 1 for harmless reasons (for example a missing optional config), so only
       // a failure to run it at all is an error; the browser state comes from its output.
       if (result.error || result.signal) return { state: 'error', detail: `check did not run: ${result.error?.code ?? result.signal}` };
-      return parseCheck(`${result.stdout ?? ''}`);
+      const parsed = parseCheck(`${result.stdout ?? ''}`);
+      if (parsed.state !== 'down') return parsed;
+      return diagnoseBrowserUnreachable(slot, { platform, spawnSyncFn, fetchFn });
     },
     launchHeaded(slot) {
       const { entry: file, args } = prodex([
@@ -150,15 +153,15 @@ export function realDeps(home = slotsHome()) {
         ...(slot.profileDir ? ['--profile-dir', slot.profileDir] : []),
         '--cwd', process.cwd(), '--headed', '--no-wait',
       ]);
-      const result = spawnSync(process.execPath, [file, ...args], { encoding: 'utf8', timeout: 60_000, windowsHide: true });
+      const result = spawnSyncFn(process.execPath, [file, ...args], { encoding: 'utf8', timeout: 60_000, windowsHide: true });
       if (result.error || result.signal || result.status !== 0) {
         return { ok: false, detail: `login exited ${result.error?.code ?? result.signal ?? result.status}` };
       }
       return { ok: true };
     },
     restoreWindow(slot) {
-      if (process.platform !== 'win32') return false;
-      const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', restoreScript(slot.port)], { encoding: 'utf8', timeout: 30_000, windowsHide: true });
+      if (platform !== 'win32') return false;
+      const result = spawnSyncFn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', restoreScript(slot.port)], { encoding: 'utf8', timeout: 30_000, windowsHide: true });
       return result.status === 0 && /restored/.test(result.stdout ?? '');
     },
     runAsk(slot, askArgs) {
@@ -361,7 +364,10 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
         return EXIT.ERROR;
       }
       const pending = rows.filter((r) => !NO_USER_ACTION.has(r.state));
-      if (pending.length) err(`prodex-slots: the user must act on slot ${pending.map((r) => `${r.id} (${r.state})`).join(', ')}: sign in to ChatGPT or complete any verification in its window; then run \`list\`.`);
+      const uncertain = pending.filter((r) => r.state === 'unknown');
+      const needsUser = pending.filter((r) => r.state !== 'unknown');
+      if (uncertain.length) err(`prodex-slots: browser state is uncertain for slot ${uncertain.map((r) => `${r.id} (port ${r.port})`).join(', ')}; no automatic restart was attempted. Inspect the browser window and run \`node scripts/prodex-slots/cli.mjs list\` again. Sign in only if the page asks.`);
+      if (needsUser.length) err(`prodex-slots: the user must act on slot ${needsUser.map((r) => `${r.id} (${r.state})`).join(', ')}: sign in to ChatGPT or complete any verification in its window; then run \`list\`.`);
       return pending.length ? EXIT.NEEDS_USER : EXIT.OK;
     }
     if (command === 'release') {
