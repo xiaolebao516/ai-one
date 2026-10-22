@@ -50,8 +50,8 @@ describe('Task HUD overview', () => {
 
   it('localises to Traditional Chinese', () => {
     const text = visibleText(hud(undefined, 'zh-TW'));
-    expect(text).toContain('示範資料 · 尚未連接 GitHub');
-    expect(text).toContain('4 個任務在推進，3 件事等你');
+    expect(text).toContain('演示数据 · 尚未连接 GitHub');
+    expect(text).toContain('4 个任务在推进，3 件事等你');
     expect(text).toContain('返回聊天');
   });
 

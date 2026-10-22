@@ -10,12 +10,15 @@ import type { V2StatusTone } from './v2';
  * `dataSource: 'github'`; no component has to change what it claims.
  */
 
-export type HudLocale = 'en' | 'zh-TW';
+export type HudLocale = 'en' | 'zh';
 export type LText = Readonly<Record<HudLocale, string>>;
 
-/** The HUD ships en + zh-TW copy; the other app locales (ja, de) read the English copy. */
+/**
+ * The HUD ships English and Simplified Chinese copy (#46: Simplified is the default Chinese). Every
+ * Chinese app locale reads the Chinese copy; ja / de read English.
+ */
 export function hudLocale(locale: Locale): HudLocale {
-  return locale === 'zh-TW' ? 'zh-TW' : 'en';
+  return String(locale).startsWith('zh') ? 'zh' : 'en';
 }
 
 export function pickText(text: LText, locale: Locale): string {
@@ -281,11 +284,11 @@ export function shortSha(sha: string): string {
 }
 
 export function formatAge(minutes: number | undefined, locale: Locale): string {
-  const zh = hudLocale(locale) === 'zh-TW';
-  if (minutes === undefined) return zh ? '時間未知' : 'time unknown';
-  if (minutes < 1) return zh ? '剛剛' : 'just now';
-  if (minutes < 60) return zh ? `${minutes} 分鐘前` : `${minutes} min ago`;
+  const zh = hudLocale(locale) === 'zh';
+  if (minutes === undefined) return zh ? '时间未知' : 'time unknown';
+  if (minutes < 1) return zh ? '刚刚' : 'just now';
+  if (minutes < 60) return zh ? `${minutes} 分钟前` : `${minutes} min ago`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 48) return zh ? `${hours} 小時前` : `${hours} h ago`;
+  if (hours < 48) return zh ? `${hours} 小时前` : `${hours} h ago`;
   return zh ? `${Math.floor(hours / 24)} 天前` : `${Math.floor(hours / 24)} d ago`;
 }

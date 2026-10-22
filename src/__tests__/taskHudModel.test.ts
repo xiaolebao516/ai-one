@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Locale } from '../i18n/resolve';
 import {
   ALL,
   STATUS_TONE,
@@ -6,6 +7,7 @@ import {
   effectiveCi,
   escapeAction,
   filterTasks,
+  hudLocale,
   hudReducer,
   initialHudState,
   needsAttention,
@@ -27,10 +29,10 @@ function task(overrides: Partial<HudTask>): HudTask {
     id: 'x',
     dataSource: 'mock',
     repo: 'demo/x',
-    title: { en: 'x', 'zh-TW': 'x' },
+    title: { en: 'x', zh: 'x' },
     status: 'running',
     stages: [],
-    summary: { en: 's', 'zh-TW': 's' },
+    summary: { en: 's', zh: 's' },
     evidence: [],
     ...overrides,
   };
@@ -97,8 +99,8 @@ describe('demo data cannot pass for real GitHub data', () => {
     for (const item of TASK_HUD_MOCK_TASKS) {
       expect(item.dataSource).toBe('mock');
       expect(item.repo.startsWith('demo/')).toBe(true);
-      expect(item.title.en && item.title['zh-TW']).toBeTruthy();
-      expect(item.summary.en && item.summary['zh-TW']).toBeTruthy();
+      expect(item.title.en && item.title.zh).toBeTruthy();
+      expect(item.summary.en && item.summary.zh).toBeTruthy();
       if (item.pr?.headSha) expect(item.pr.headSha).toMatch(/^[0-9a-f]{40}$/);
     }
     expect(JSON.stringify(TASK_HUD_MOCK_TASKS)).not.toMatch(/https?:|github\.com|xiaolebao516/);
@@ -107,11 +109,15 @@ describe('demo data cannot pass for real GitHub data', () => {
   it('labels mock read-backs and local runs as examples', () => {
     const zh = taskHudText('zh-TW');
     const en = taskHudText('en');
-    expect(zh.evidence('readback', 'mock')).toBe('模擬已回讀（示例）');
+    expect(zh.evidence('readback', 'mock')).toBe('模拟已回读（示例）');
     expect(en.evidence('readback', 'mock')).toBe('Simulated read-back (example)');
     expect(en.evidence('local', 'mock')).toContain('example');
     expect(en.evidence('readback', 'github')).toBe('Read back');
     expect(en.evidence('self', 'github')).toContain('not evidence');
+    // #46: every Chinese locale (zh-TW today, zh-CN once #46 lands) reads the Simplified copy.
+    expect(hudLocale('zh-TW')).toBe('zh');
+    expect(hudLocale('zh-CN' as Locale)).toBe('zh');
+    expect(taskHudText('zh-CN' as Locale).t('back')).toBe('返回聊天');
     // Locales without HUD copy read English rather than an empty string.
     expect(taskHudText('ja').t('back')).toBe('Back to chat');
   });
