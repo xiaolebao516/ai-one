@@ -51,6 +51,7 @@ const OWNERSHIP_FIELDS = {
     if (value.length > OWNERSHIP_LIMITS.threadUrl) {
       return { error: `--thread-url must be at most ${OWNERSHIP_LIMITS.threadUrl} characters` };
     }
+    // eslint-disable-next-line no-control-regex -- Reject control characters in stored metadata.
     if (/[\u0000-\u001f\u007f]/.test(value)) return { error: '--thread-url must not contain control characters' };
     // Checked on the raw text, because an empty "?" or "#" disappears from url.search/url.hash
     // while staying in the string that would be stored.

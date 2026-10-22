@@ -30,6 +30,7 @@ fn main() {
             "session_checkpoint_clear",
             "github_readonly_get",
             "github_readonly_associations",
+            "dispatch_readonly_snapshot",
         ]),
     ))
     .expect("failed to run tauri build script");
