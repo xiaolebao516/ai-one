@@ -330,7 +330,7 @@ function GallerySections({ skin, mode, compact }: { skin: V2SkinId; mode: V2Mode
         />
         <SettingsUpdateRow state={{ status: 'idle' }} onCheck={() => {}} labels={UPDATE_LABELS} />
         <SettingsUpdateRow state={{ status: 'up-to-date', version: 'v1.9.7' }} onCheck={() => {}} labels={UPDATE_LABELS} />
-        <SettingsUpdateRow state={{ status: 'error', message: '網路不可用（示例）' }} onCheck={() => {}} labels={UPDATE_LABELS} />
+        <SettingsUpdateRow state={{ status: 'error', message: '网络不可用（示例）' }} onCheck={() => {}} labels={UPDATE_LABELS} />
       </Section>
 
       <Divider />
@@ -347,12 +347,12 @@ function GallerySections({ skin, mode, compact }: { skin: V2SkinId; mode: V2Mode
 }
 
 const UPDATE_LABELS: SettingsUpdateRowLabels = {
-  checkForUpdates: '檢查更新',
-  checking: '檢查中…',
+  checkForUpdates: '检查更新',
+  checking: '检查中…',
   upToDate: '已是最新版本 {version}',
   newVersionAvailable: '有新版本 {version}',
-  releasesUnavailable: '無法取得版本資訊',
-  updateCheckFailed: '檢查更新失敗：',
+  releasesUnavailable: '无法获取版本信息',
+  updateCheckFailed: '检查更新失败：',
 };
 
 function TaskHudEntryPreview() {
