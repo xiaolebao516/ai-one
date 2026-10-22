@@ -11,10 +11,11 @@ import {
   normalizeResponseLanguageSetting,
   resolveLocale,
 } from '../i18n/resolve';
+import { zhCN } from '../i18n/zh-CN';
 import { zhTW } from '../i18n/zh-TW';
 
 describe('i18n dictionaries', () => {
-  const dictionaries = { en, 'zh-TW': zhTW, ja, de } as const;
+  const dictionaries = { en, 'zh-CN': zhCN, 'zh-TW': zhTW, ja, de } as const;
 
   it('defines every key in every language with non-empty values', () => {
     for (const [locale, dictionary] of Object.entries(dictionaries)) {
@@ -51,7 +52,7 @@ describe('i18n dictionaries', () => {
   });
 
   it('normalizes supported language settings', () => {
-    expect(LANGUAGE_SETTINGS).toEqual(['system', 'en', 'zh-TW', 'ja', 'de']);
+    expect(LANGUAGE_SETTINGS).toEqual(['system', 'en', 'zh-CN', 'zh-TW', 'ja', 'de']);
     expect(normalizeLanguageSetting('ja')).toBe('ja');
     expect(normalizeLanguageSetting('de')).toBe('de');
     expect(normalizeLanguageSetting('ja-JP')).toBe('system');
@@ -59,7 +60,7 @@ describe('i18n dictionaries', () => {
   });
 
   it('normalizes response language settings independently from the interface language', () => {
-    expect(RESPONSE_LANGUAGE_SETTINGS).toEqual(['auto', 'en', 'zh-TW', 'ja', 'de']);
+    expect(RESPONSE_LANGUAGE_SETTINGS).toEqual(['auto', 'en', 'zh-CN', 'zh-TW', 'ja', 'de']);
     expect(normalizeResponseLanguageSetting('auto')).toBe('auto');
     expect(normalizeResponseLanguageSetting('en')).toBe('en');
     expect(normalizeResponseLanguageSetting('zh-TW')).toBe('zh-TW');
@@ -68,8 +69,11 @@ describe('i18n dictionaries', () => {
   });
 
   it('resolves system locales in navigator preference order', () => {
-    expect(resolveLocale('system', ['zh'])).toBe('zh-TW');
-    expect(resolveLocale('system', ['zh-CN'])).toBe('zh-TW');
+    expect(resolveLocale('system', ['zh'])).toBe('zh-CN');
+    expect(resolveLocale('system', ['zh-CN'])).toBe('zh-CN');
+    expect(resolveLocale('system', ['zh-Hans-CN'])).toBe('zh-CN');
+    expect(resolveLocale('system', ['zh-HK'])).toBe('zh-TW');
+    expect(resolveLocale('system', ['zh-Hant-TW'])).toBe('zh-TW');
     expect(resolveLocale('system', ['zh-TW'])).toBe('zh-TW');
     expect(resolveLocale('system', ['ja'])).toBe('ja');
     expect(resolveLocale('system', ['ja-JP'])).toBe('ja');
