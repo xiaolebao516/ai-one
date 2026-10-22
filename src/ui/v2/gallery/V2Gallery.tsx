@@ -24,6 +24,7 @@ import {
   type V2SkinId,
   type V2StatusTone,
 } from '..';
+import { DispatchGallery } from './DispatchGallery';
 import { SessionCheckpointNotice } from '../../SessionCheckpointNotice';
 import { SettingsUpdateRow, type SettingsUpdateRowLabels } from '../../SettingsUpdateRow';
 import { TaskHudEntry } from '../../TaskHudEntry';
@@ -66,7 +67,7 @@ export function V2Gallery() {
         <div className="flex flex-wrap items-center gap-v2-md">
           <div className="mr-auto">
             <h1 className="m-0 text-v2-heading text-v2-ink">ai-one v2 UI Foundation</h1>
-            <p className="m-0 text-v2-meta text-v2-ink-2">组件陈列（开发态预览，#41）。不是 HUD，不读取任何真实数据。</p>
+            <p className="m-0 text-v2-meta text-v2-ink-2">组件陈列（开发态预览）。派工回执支持在桌面端手动读取本机元数据。</p>
           </div>
           <SegmentedControl
             label="视觉方案"
@@ -130,6 +131,12 @@ function GallerySections({ skin, mode, compact }: { skin: V2SkinId; mode: V2Mode
         <div className="text-v2-title text-v2-ink">{definition.label}</div>
         <p className="m-0 mt-1 text-v2-body text-v2-ink-2">{definition.description}</p>
       </div>
+
+      <Section id={ids('dispatch')} title="派工通道 / 派工回执" note="演示与本机元数据；仅展示，不提供派工或恢复操作">
+        <DispatchGallery />
+      </Section>
+
+      <Divider />
 
       <Section id={ids('tokens')} title="令牌" note="色块直接读取 --v2-* 变量；数字为 WCAG 对比度">
         <TokenSwatches skin={skin} mode={mode} compact={compact} />

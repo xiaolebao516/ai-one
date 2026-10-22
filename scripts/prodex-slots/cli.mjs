@@ -3,7 +3,12 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeOwnership, parseCheck, processAlive, readClaim, releaseClaim, slotEnv, slotsHome } from './slots.mjs';
+import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeNote, normalizeOwnership, parseCheck, processAlive, readClaim, readClosure, releaseClaim, slotEnv, slotsHome, sweepSlots, writeClosure } from './slots.mjs';
+
+// Argument mistakes (bad flags, missing values, unknown commands) are usage errors: the reason
+// plus the full usage block. Anything that fails at runtime carries its own next step and is
+// printed without the usage block - see the catch in main().
+export class UsageError extends Error {}
 
 export const usage = [
   'Usage: node scripts/prodex-slots/cli.mjs <command> [options]',
@@ -12,15 +17,16 @@ export const usage = [
   '  ensure [--json]                       reopen slot browsers that are not running',
   '  run [--slot N|auto] [--wait-ms MS] [--task N] [--session KEY] [--thread-url URL]',
   '                                        -- <args of `prodex pro browser ask`>',
-  '  release --slot N                      drop a stale claim',
-  'Ownership (run only): --task 71, --session s1, --thread-url https://chatgpt.com/c/<id>.',
+  '  release --slot N [--task N] [--session KEY] [--thread-url URL] [--note "…"]',
+  '                                        write the "thread closed, slot reusable" record',
+  'Ownership (run and release): --task 71, --session s1, --thread-url https://chatgpt.com/c/<id>.',
   'They are shown by `list` so another session can see who a slot serves; never reply text.',
   'Use the ask\'s own --session-key after `--`: that one is prodex\'s, this one is ownership.',
   'Exit: 0 ok, 1 error (also any failure of the prodex ask itself), 3 needs the user, 4 all ready slots busy past --wait-ms.',
   '`run` passes the ask output (the reply) through to stdout: redirect it to a file, do not log it.',
 ].join('\n');
 
-const VALUE_OPTIONS = { '--slot': 'slot', '--count': 'count', '--wait-ms': 'waitMs', '--task': 'task', '--session': 'sessionKey', '--thread-url': 'threadUrl' };
+const VALUE_OPTIONS = { '--slot': 'slot', '--count': 'count', '--wait-ms': 'waitMs', '--task': 'task', '--session': 'sessionKey', '--thread-url': 'threadUrl', '--note': 'note' };
 const OWNERSHIP_FLAGS = { task: '--task', sessionKey: '--session', threadUrl: '--thread-url' };
 const NUMERIC_OPTIONS = new Set(['--slot', '--count', '--wait-ms']);
 // States that are not a problem for the user: the slot works or will work by itself.
@@ -66,11 +72,12 @@ export function parseArgs(args) {
   if (command === 'release' && options.slot === 'auto') throw new Error('release needs --slot N');
   const provided = Object.keys(OWNERSHIP_FLAGS).filter((key) => options[key] !== undefined);
   if (provided.length) {
-    // Ownership is recorded in the claim, so only a command that takes a claim can carry it.
-    // The command is not validated (it may be a token pasted in the wrong place), so the message
-    // names the flags and the rule, not the command.
-    if (command !== 'run') {
-      throw new Error(`${provided.map((key) => OWNERSHIP_FLAGS[key]).join(' / ')} only apply to run`);
+    // Ownership lands in the claim (run) or the closure record (release); the other commands
+    // keep no per-slot record of their own, so they refuse the flags outright. The command is
+    // not validated (it may be a token pasted in the wrong place), so the message names the
+    // flags and the rule, not the command.
+    if (command !== 'run' && command !== 'release') {
+      throw new UsageError(`${provided.map((key) => OWNERSHIP_FLAGS[key]).join(' / ')} only apply to run and release`);
     }
     options.ownership = normalizeOwnership({
       task: options.task,
@@ -80,16 +87,32 @@ export function parseArgs(args) {
   } else {
     options.ownership = {};
   }
+  if (options.note !== undefined && command !== 'release') {
+    throw new UsageError('--note only applies to release');
+  }
+  // Validate the note here, before release touches any state: a rejected note must not take the
+  // claim down with it.
+  if (command === 'release') options.note = options.note === undefined ? undefined : normalizeNote(options.note);
   return { command, options, passthrough };
 }
 
-export function resolveProdexEntry(env = process.env) {
+// `npmRoot` is injectable so tests can force the not-found path without stubbing node:child_process.
+export function resolveProdexEntry(env = process.env, { npmRoot = null } = {}) {
   const candidates = [];
   if (env.PRODEX_ENTRY) candidates.push(env.PRODEX_ENTRY);
-  const npm = spawnSync('npm root -g', { encoding: 'utf8', shell: true, windowsHide: true });
-  if (npm.status === 0) candidates.push(path.join(String(npm.stdout).trim(), '@youdie006', 'prodex', 'prodex.mjs'));
+  let npmRootValue = npmRoot ?? '';
+  if (npmRoot === null) {
+    const npm = spawnSync('npm root -g', { encoding: 'utf8', shell: true, windowsHide: true });
+    if (npm.status === 0) npmRootValue = String(npm.stdout).trim();
+  }
+  if (npmRootValue) candidates.push(path.join(npmRootValue, '@youdie006', 'prodex', 'prodex.mjs'));
   const found = candidates.find((file) => fs.existsSync(file));
-  if (!found) throw new Error('Cannot find prodex.mjs; set PRODEX_ENTRY to its absolute path');
+  if (!found) {
+    const how = npmRootValue
+      ? `PowerShell: $env:PRODEX_ENTRY = "${npmRootValue}\\@youdie006\\prodex\\prodex.mjs"`
+      : 'PowerShell: $env:PRODEX_ENTRY = "<path to>\\prodex.mjs" (npm root -g produced nothing)';
+    throw new Error(`Cannot find prodex.mjs. Set PRODEX_ENTRY to its absolute path - ${how}. Looked at: ${candidates.join(', ') || 'nothing'}`);
+  }
   return found;
 }
 
@@ -149,11 +172,33 @@ export function realDeps(home = slotsHome()) {
   };
 }
 
-async function describeSlots(config, deps) {
+// Self-heal pass before any command that reads or takes state: dead claims and `.tmp`
+// leftovers go away, blocked slots are reported with a hand-deletion command. The report is
+// attached to the matching `list` rows and summarized on stderr for the other commands.
+function sweepAndReport(config, deps, err) {
+  const report = sweepSlots(deps.home, config.slots.map((slot) => slot.id), { alive: deps.alive ?? processAlive });
+  for (const item of report) {
+    if (item.blocked) err(`prodex-slots: self-heal blocked on slot ${item.slot}: ${item.blocked}`);
+    else err(`prodex-slots: self-heal removed the ${item.removed} of slot ${item.slot} (${item.reason})`);
+  }
+  return report;
+}
+
+async function describeSlots(config, deps, sweepReport = []) {
   return Promise.all(config.slots.map(async (slot) => {
     const claim = readClaim(deps.home, slot.id);
     const busy = claim && (deps.alive ?? processAlive)(claim.pid);
-    return { id: slot.id, port: slot.port, state: (await deps.checkSlot(slot)).state, busyWith: busy ? { pid: claim.pid, ...claimOwnership(claim) } : null };
+    const reaped = sweepReport.filter((item) => item.slot === slot.id && item.removed)
+      .map(({ removed, reason }) => ({ removed, reason }));
+    const closure = readClosure(deps.home, slot.id);
+    return {
+      id: slot.id,
+      port: slot.port,
+      state: (await deps.checkSlot(slot)).state,
+      ...(reaped.length ? { reaped } : {}),
+      ...(closure ? { lastClosed: closure } : {}),
+      busyWith: busy ? { pid: claim.pid, ...claimOwnership(claim) } : null,
+    };
   }));
 }
 
@@ -199,22 +244,49 @@ function ownershipLabel(ownership = {}) {
 function renderSlots(rows) {
   return rows.map((r) => {
     const owned = r.busyWith ? [r.busyWith.task, r.busyWith.sessionKey, r.busyWith.threadUrl].filter(Boolean).join(' ') : '';
-    return `slot ${r.id}  port ${r.port}  ${r.state}${r.detail ? ` (${r.detail})` : ''}${r.busyWith ? `  busy (pid ${r.busyWith.pid})${owned ? ` ${owned}` : ''}` : ''}`;
+    const swept = r.reaped ? `  [self-healed: ${r.reaped.map((x) => x.removed).join(' + ')}]` : '';
+    const closed = r.lastClosed
+      ? `  closed ${r.lastClosed.closedAt.slice(0, 16).replace('T', ' ')} ${[r.lastClosed.task, r.lastClosed.note].filter(Boolean).join(' ')}`.slice(0, 120)
+      : '';
+    return `slot ${r.id}  port ${r.port}  ${r.state}${r.detail ? ` (${r.detail})` : ''}${swept}${r.busyWith ? `  busy (pid ${r.busyWith.pid})${owned ? ` ${owned}` : ''}` : ''}${closed}`;
   }).join('\n');
 }
 
-async function runCommand(options, passthrough, deps, err) {
+async function runCommand(options, passthrough, deps, err, sweepReport = []) {
   const config = loadConfig(deps.home);
   const wanted = options.slot === 'auto' ? config.slots : config.slots.filter((s) => s.id === options.slot);
-  if (!wanted.length) throw new Error(`No such slot: ${options.slot}`);
+  if (!wanted.length) {
+    throw new Error(`No such slot: ${options.slot}. Registered slots: ${config.slots.map((s) => s.id).join(', ')} (ports ${config.slots.map((s) => s.port).join(', ')})`);
+  }
   const deadline = deps.now() + options.waitMs;
   const notReady = new Map();
+  const blocked = new Map();
+  // Slots the sweep already found unclaimable (stale mutex, blocked deletion) are not retried
+  // here: claiming them would either fail again or - worse - succeed and then fail to release.
+  const wantedIds = new Set(wanted.map((slot) => slot.id));
+  for (const item of sweepReport) {
+    if (item.blocked && wantedIds.has(item.slot)) blocked.set(item.slot, item.blocked);
+  }
   for (;;) {
     let anyReadyButBusy = false;
     for (const slot of wanted) {
-      if (notReady.has(slot.id)) continue;
-      const claim = claimSlot(deps.home, slot.id, { alive: deps.alive, now: deps.now, meta: options.ownership });
-      if (!claim.ok) { anyReadyButBusy = true; continue; }
+      if (notReady.has(slot.id) || blocked.has(slot.id)) continue;
+      let claim;
+      try {
+        claim = claimSlot(deps.home, slot.id, { alive: deps.alive, now: deps.now, meta: options.ownership });
+      } catch (error) {
+        // A stale .reap mutex (or a policy-blocked deletion) makes this slot unclaimable; say so
+        // immediately and let the other slots work - never skip in silence.
+        blocked.set(slot.id, error.message);
+        err(`prodex-slots: slot ${slot.id} could not be claimed: ${error.message}`);
+        continue;
+      }
+      if (!claim.ok) {
+        if (claim.warning) err(`prodex-slots: slot ${slot.id}: ${claim.warning}`);
+        anyReadyButBusy = true;
+        continue;
+      }
+      if (claim.warning) err(`prodex-slots: slot ${slot.id}: ${claim.warning} (the claim itself is fine; the sweep collects the leftover)`);
       try {
         const { state } = await checkWithRestore(slot, deps);
         if (state === 'busy') { anyReadyButBusy = true; continue; }
@@ -223,23 +295,35 @@ async function runCommand(options, passthrough, deps, err) {
         err(`prodex-slots: using slot ${slot.id} (port ${slot.port})${label ? ` for ${label}` : ''}`);
         // The ask's own exit code is not part of this tool's 0/1/3/4 contract: any failure is 1.
         const code = await deps.runAsk(slot, passthrough);
-        if (code !== 0) err(`prodex-slots: prodex ask exited with code ${code}`);
+        if (code !== 0) err(`prodex-slots: prodex ask exited with code ${code}; its own output above shows the reason. On a request_mismatch, take the answer back with \`prodex pro browser recover --port <port> --target-url <thread-url> --request-id <id>\` and do not resend blindly`);
         return code === 0 ? EXIT.OK : EXIT.ERROR;
       } finally {
-        claim.release();
+        // This also runs when the browser was busy or the ask failed, so do not assume success.
+        // A blocked .reap mutex prevents sweeping even after the heartbeat expires.
+        if (claim.release() !== true) {
+          err(`prodex-slots: slot ${slot.id}: the claim could not be released; this is separate from the ask result; treat the slot as occupied until \`list\` shows it free. Run \`list\` for the self-heal report; a blocked .reap mutex requires its printed manual fix after other prodex-slots commands have stopped.`);
+        }
       }
     }
-    if (notReady.size === wanted.length) {
-      const detail = [...notReady].map(([id, state]) => `slot ${id}: ${state}`).join('; ');
-      if ([...notReady.values()].includes('error')) {
-        err(`prodex-slots: could not probe a slot (${detail}); check that prodex is installed and runs.`);
+    if (notReady.size + blocked.size === wanted.length) {
+      const detail = [
+        [...notReady].map(([id, state]) => `slot ${id}: ${state}`),
+        [...blocked].map(([id, message]) => `slot ${id}: blocked (${message})`),
+      ].flat().join('; ');
+      const fix = blocked.size
+        ? ' Fix the blocked slots (the self-heal report above names each file and its hand-deletion command).'
+        : ' Check that prodex is installed and runs.';
+      // Probe errors and unclaimable slots are tool/browser failures, not something a login
+      // fixes - never hand them to the user as a sign-in request.
+      if (notReady.size === 0 || [...notReady.values()].includes('error')) {
+        err(`prodex-slots: could not use any slot. ${detail}.${fix}`);
         return EXIT.ERROR;
       }
       err(`prodex-slots: no usable slot. ${detail}. Ask the user to sign in or complete any ChatGPT verification (run \`ensure\`), or to add slots (\`add --count N\`).`);
       return EXIT.NEEDS_USER;
     }
     if (!anyReadyButBusy || deps.now() >= deadline) {
-      err('prodex-slots: all usable slots stayed busy within --wait-ms');
+      err('prodex-slots: all usable slots stayed busy within --wait-ms. Wait longer (--wait-ms), free a slot (release --slot N with a closure note), or ask the user for more slots (add --count N).');
       return EXIT.BUSY;
     }
     await deps.sleep(2000);
@@ -249,10 +333,21 @@ async function runCommand(options, passthrough, deps, err) {
 export async function main(args, { deps = realDeps(), out = (s) => process.stdout.write(`${s}\n`), err = (s) => process.stderr.write(`${s}\n`) } = {}) {
   try {
     if (!args.length || args[0] === '--help') { out(usage); return EXIT.OK; }
-    const { command, options, passthrough } = parseArgs(args);
+    let parsed;
+    try {
+      parsed = parseArgs(args);
+    } catch (error) {
+      throw new UsageError(error.message);
+    }
+    const { command, options, passthrough } = parsed;
     const show = (rows) => out(options.json ? JSON.stringify(rows, null, 2) : renderSlots(rows));
+    // list/run/ensure/release all read or take claim state, so they sweep first; `add` only
+    // registers, and a sweep there would report slots that are about to be created.
+    const sweepReport = ['list', 'run', 'ensure', 'release'].includes(command)
+      ? sweepAndReport(loadConfig(deps.home), deps, err)
+      : [];
     if (command === 'list') {
-      show(await describeSlots(loadConfig(deps.home), deps));
+      show(await describeSlots(loadConfig(deps.home), deps, sweepReport));
       return EXIT.OK;
     }
     if (command === 'add' || command === 'ensure') {
@@ -270,14 +365,23 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
       return pending.length ? EXIT.NEEDS_USER : EXIT.OK;
     }
     if (command === 'release') {
+      // Ownership and note were validated in parseArgs, so nothing below can reject after the
+      // claim is already gone.
+      const had = readClaim(deps.home, options.slot);
       releaseClaim(deps.home, options.slot);
+      const record = writeClosure(deps.home, options.slot, { ownership: options.ownership, note: options.note });
+      err(`prodex-slots: released slot ${options.slot}${had ? ' (claim removed)' : ' (no claim was present)'}; closed record written (${record.task ?? 'no task'}${record.note ? `, "${record.note}"` : ''}). The slot is reusable.`);
       return EXIT.OK;
     }
-    if (command === 'run') return await runCommand(options, passthrough, deps, err);
+    if (command === 'run') return await runCommand(options, passthrough, deps, err, sweepReport);
     // The command is an argv token this tool did not recognise, so it is not repeated either.
-    throw new Error('Unknown command. The first argument must be one of: list, add, ensure, run, release (or --help)');
+    throw new UsageError('Unknown command. The first argument must be one of: list, add, ensure, run, release (or --help)');
   } catch (error) {
-    err(`${error.message}\n${usage}`);
+    if (error instanceof UsageError) {
+      err(`${error.message}\n${usage}`);
+    } else {
+      err(`prodex-slots: ${error.message}`);
+    }
     return EXIT.ERROR;
   }
 }
