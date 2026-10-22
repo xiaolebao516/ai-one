@@ -48,7 +48,7 @@ describe('Task HUD overview', () => {
     expect(visibleText(html)).not.toMatch(/Merge PR|Merged successfully|Resume dispatch/);
   });
 
-  it('localises to Traditional Chinese', () => {
+  it('uses Simplified Chinese for every zh locale', () => {
     const text = visibleText(hud(undefined, 'zh-TW'));
     expect(text).toContain('演示数据 · 尚未连接 GitHub');
     expect(text).toContain('4 个任务在推进，3 件事等你');

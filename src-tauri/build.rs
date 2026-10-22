@@ -28,6 +28,8 @@ fn main() {
             "session_checkpoint_save",
             "session_checkpoint_load",
             "session_checkpoint_clear",
+            "github_readonly_get",
+            "github_readonly_associations",
         ]),
     ))
     .expect("failed to run tauri build script");

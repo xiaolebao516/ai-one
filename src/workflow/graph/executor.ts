@@ -4,11 +4,12 @@ import type { Locale } from '../../i18n/resolve';
 import { formatI18n, t } from '../../i18n/t';
 import { abortWorkflow, checkAborted, getInFlightProviders } from '../cancel';
 import { awaitCheckpoint } from '../checkpoint';
-import { sendRoleAssignment, sendWorkflowStatus } from '../events';
+import { emitSystemNotice, sendRoleAssignment, sendWorkflowStatus } from '../events';
+import { deliberationAuditReport } from './deliberationAudit';
 import { fillAndAwaitNativeSend } from '../nativeEdit';
 import { providerResponseError, ProviderResponseError } from '../providerResponse';
 import { reserveProviderTurn, sendAndWait } from '../sendAndWait';
-import { prependResponseLanguagePolicy, type ResponseLanguagePolicy } from '../responseLanguage';
+import { prependResponseLanguagePolicy, resolveResponseLanguage, type ResponseLanguagePolicy } from '../responseLanguage';
 import { runStep } from '../stepRunner';
 import { clearActiveTurn, SKIP_RESPONSE } from '../state';
 import { cancelPendingStepTimeoutAction } from '../stepTimeout';
@@ -125,6 +126,9 @@ export async function executeGraph(graph: WorkflowGraph, params: ExecuteGraphPar
       evaluateEdges(context);
     }
 
+    if (graph.onComplete?.report?.kind === 'deliberation') {
+      emitSystemNotice(deliberationAuditReport(graph.onComplete.report.rounds, (nodeId) => context.outputs.get(nodeId)?.text, context.locale));
+    }
     if (graph.onComplete?.status !== undefined) sendWorkflowStatus(graph.onComplete.status);
     else sendWorkflowStatus('');
     completedCleanly = true;
@@ -275,6 +279,9 @@ function prepareStepNode(
           updateSessionCheckpoint({ pendingCheckpointNodeId: null });
           checkAborted();
           if (decision.action === 'skip') {
+            if (context.graph.id === 'deliberation') {
+              throw new Error('Deliberation checkpoint skipped; independent audit is incomplete.');
+            }
             clearActiveTurn(provider, turn);
             recordStep({
               nodeId,
@@ -314,7 +321,7 @@ function prepareStepNode(
         const result =
           checkpointAction === 'native-edit'
             ? await fillAndAwaitNativeSend(provider, input, turn)
-            : await runStep(provider, input, turn, { recoverProviderErrors: context.graph.id === 'brainstorm' });
+            : await runStep(provider, input, turn, { recoverProviderErrors: context.graph.id === 'brainstorm' || context.graph.id === 'deliberation', allowSkip: context.graph.id !== 'deliberation' });
         const responseError = providerResponseError(provider, result.response);
         if (responseError) throw responseError;
         recordStep({
@@ -476,8 +483,9 @@ function renderPromptSpec(prompt: PromptSpec, context: ExecutionContext, nodeId:
     provider,
     targets: context.targets,
     locale: context.locale,
+    responseLanguage: resolveResponseLanguage(context.responseLanguagePolicy, context.question),
   });
-  return prependResponseLanguagePolicy(rendered, context.responseLanguagePolicy);
+  return prependResponseLanguagePolicy(rendered, context.responseLanguagePolicy, context.question);
 }
 
 function renderTextTemplate(template: TextTemplate, context: ExecutionContext, nodeId: NodeId, provider?: AIProvider): string {

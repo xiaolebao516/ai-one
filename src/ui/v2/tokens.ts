@@ -36,7 +36,7 @@ export type V2ColorKey =
   | 'lineStrong' // control borders
   | 'ink' // primary text
   | 'ink2' // secondary text
-  | 'ink3' // metadata only; never the sole carrier of essential information
+  | 'ink3' // tertiary small text; meets WCAG AA on bg / panel / surface
   | 'primary' // primary action fill
   | 'primaryHover'
   | 'onPrimary'
@@ -100,7 +100,7 @@ const PAPER: V2Skin = {
       lineStrong: 'rgba(24, 22, 18, 0.14)',
       ink: '#1C1B18',
       ink2: '#5A5851',
-      ink3: '#85827A',
+      ink3: '#706D65',
       primary: '#1C1B18',
       primaryHover: '#33312C',
       onPrimary: '#FFFFFF',
@@ -207,7 +207,7 @@ const MIST: V2Skin = {
       lineStrong: 'rgba(30, 41, 59, 0.18)',
       ink: '#121826',
       ink2: '#4A5466',
-      ink3: '#6F7889',
+      ink3: '#636C7C',
       primary: '#4338CA',
       primaryHover: '#3730A3',
       onPrimary: '#FFFFFF',

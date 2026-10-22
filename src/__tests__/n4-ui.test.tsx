@@ -13,7 +13,7 @@ import { t } from '../i18n/t';
 import { PresetCatalog } from '../ui/PresetCatalog';
 import { ProcessTrace } from '../ui/ProcessTrace';
 import { createProcessTrace, reduceProcessTraceEvent } from '../ui/processTraceModel';
-import { defaultRolesForPreset, PRESET_CATALOG } from '../ui/presetCatalogData';
+import { defaultRolesForPreset, PRESET_CATALOG, requiredProvidersForPreset } from '../ui/presetCatalogData';
 
 interface ElementProps {
   children?: ReactNode;
@@ -61,7 +61,7 @@ function response(provider: AIProvider, action: 'RESPONSE_CHUNK' | 'RESPONSE_DON
 }
 
 describe('N4 preset catalog', () => {
-  it.each(['en', 'zh-TW', 'ja', 'de'] as const)('renders the six built-in cards with %s time meta only', (locale) => {
+  it.each(['en', 'zh-TW', 'ja', 'de'] as const)('renders the seven built-in cards with %s time meta only', (locale) => {
     const tree = PresetCatalog({
       mode: 'free',
       onSelectPreset: vi.fn(),
@@ -72,8 +72,8 @@ describe('N4 preset catalog', () => {
       (element) => element.type === 'button' && PRESET_CATALOG.some((preset) => textOf(element).includes(t(preset.displayNameKey, locale))),
     );
 
-    expect(PRESET_CATALOG).toHaveLength(6);
-    expect(cardButtons).toHaveLength(6);
+    expect(PRESET_CATALOG).toHaveLength(7);
+    expect(cardButtons).toHaveLength(7);
     for (const preset of PRESET_CATALOG) {
       const card = cardButtons.find((button) => textOf(button).includes(t(preset.displayNameKey, locale)));
       expect(card).toBeTruthy();
@@ -83,9 +83,22 @@ describe('N4 preset catalog', () => {
       expect(textOf(card)).not.toContain(t(preset.costLabelKey, locale));
       expect(textOf(card)).not.toContain('RAM');
     }
-    expect(PRESET_CATALOG.filter((preset) => preset.graphId !== 'free').map((preset) => preset.requiredProviders)).toEqual(
+    expect(PRESET_CATALOG.filter((preset) => preset.graphId !== 'free' && preset.id !== 'deliberation').map((preset) => preset.requiredProviders)).toEqual(
       Array.from({ length: 4 }, () => [...DEFAULT_FREE_TARGET_PROVIDERS]),
     );
+    expect(PRESET_CATALOG.find((preset) => preset.id === 'deliberation')?.requiredProviders).toEqual(['chatgpt', 'gemini', 'claude']);
+  });
+
+  it.each(['en', 'zh-TW', 'ja', 'de'] as const)('explains independent third-party audit when deliberation is selected in %s', (locale) => {
+    const html = renderToStaticMarkup(<PresetCatalog
+      mode="consult"
+      selectedPresetId="deliberation"
+      locale={locale}
+      onSelectPreset={vi.fn()}
+    />);
+    expect(html).toContain(t('preset.deliberation.description', locale).replace(/'/g, '&#x27;'));
+    expect(html).toContain(t('preset.deliberation.costLabel', locale));
+    expect(t('preset.deliberation.description', locale).toLowerCase()).not.toContain('same proposal');
   });
 
   it('selects the clicked mode and exposes default roles for preset selection', () => {
@@ -106,6 +119,9 @@ describe('N4 preset catalog', () => {
     expect(defaultRolesForPreset('roundtable')).toEqual(DEFAULT_ROUNDTABLE_ROLES);
     expect(defaultRolesForPreset('free')).toBeUndefined();
     expect(defaultRolesForPreset('free', 'brainstorm')).toEqual(DEFAULT_ROUNDTABLE_ROLES);
+    expect(defaultRolesForPreset('consult', 'deliberation')).toMatchObject({ first: 'chatgpt', second: 'gemini' });
+    expect(requiredProvidersForPreset('consult', 'deliberation')).toEqual(['chatgpt', 'gemini', 'claude']);
+    expect(requiredProvidersForPreset('consult', 'consult')).toHaveLength(4);
   });
 
   it('keeps brainstorm visually distinct while routing it through the free graph', () => {
@@ -128,6 +144,30 @@ describe('N4 preset catalog', () => {
       graphId: 'free',
       requiredProviders: [...DEFAULT_FREE_TARGET_PROVIDERS],
     });
+  });
+
+  it('shows missing independent auditor until a third provider is ready', () => {
+    const allProviders: AIProvider[] = ['chatgpt', 'claude', 'gemini', 'grok', 'meta'];
+    const states = Object.fromEntries(allProviders.map((provider) => [
+      provider,
+      {
+        provider,
+        webview: provider === 'chatgpt' || provider === 'gemini' ? 'loaded' : 'none',
+        dom: provider === 'chatgpt' || provider === 'gemini' ? 'ready' : 'unknown',
+        login: provider === 'chatgpt' || provider === 'gemini' ? 'logged_in' : 'unknown',
+        thinking: false,
+        lastStatusAt: 1,
+      } satisfies ProviderState,
+    ])) as Record<AIProvider, ProviderState>;
+    const html = renderToStaticMarkup(<PresetCatalog
+      mode="consult"
+      selectedPresetId="deliberation"
+      states={states}
+      locale="en"
+      onSelectPreset={vi.fn()}
+    />);
+    expect(html).toContain('2/3 ready');
+    expect(requiredProvidersForPreset('consult', 'deliberation')).toEqual(['chatgpt', 'gemini', 'claude']);
   });
 
   it('renders the catalog as cards only without an advanced raw-controls drawer', () => {

@@ -3,7 +3,7 @@ import { DEFAULT_FREE_TARGET_PROVIDERS } from '../../shared/constants';
 import { formatI18n, t } from '../i18n/t';
 import type { Locale } from '../i18n/resolve';
 import { isSendable } from '../workflow/sendability';
-import { PRESET_CATALOG, defaultRolesForPreset, type PresetCatalogEntry } from './presetCatalogData';
+import { PRESET_CATALOG, requiredProvidersForPreset, type PresetCatalogEntry } from './presetCatalogData';
 import type { ModeRoleAssignments } from './modeRoleAssignment';
 
 export function PresetCatalog({
@@ -34,7 +34,9 @@ export function PresetCatalog({
   const visiblePresets = PRESET_CATALOG.slice(0, visiblePresetCount);
   const quickMode = visiblePresetCount < PRESET_CATALOG.length;
   const activePresetId = selectedPresetId ?? mode;
-  const detailPreset = PRESET_CATALOG.find((preset) => preset.id === detailsPresetId);
+  // The active deliberation preset always explains the independent audit and final report.
+  const resolvedDetailsId = activePresetId === 'deliberation' ? activePresetId : detailsPresetId;
+  const detailPreset = PRESET_CATALOG.find((preset) => preset.id === resolvedDetailsId);
   return (
     <section aria-label={t('preset.catalog.aria', locale)} className="space-y-2">
       {renderPresetGrid({
@@ -140,8 +142,7 @@ function presetReadiness(
   modeRoles?: ModeRoleAssignments,
   activeProviders?: readonly AIProvider[],
 ): { label: string; ready: boolean } {
-  const roles = defaultRolesForPreset(preset.graphId, preset.id, modeRoles);
-  const required = roles ? ([...new Set(Object.values(roles))] as AIProvider[]) : preset.requiredProviders;
+  const required = requiredProvidersForPreset(preset.graphId, preset.id, modeRoles);
   if (required.length === 0) {
     const providers = activeProviders ?? DEFAULT_FREE_TARGET_PROVIDERS;
     const readyCount = providers.filter((provider) => isSendable(states[provider])).length;

@@ -90,7 +90,7 @@ import {
   waitForPresentationTargetBounds,
 } from './ui/presentationCommands';
 import { preflightGraph, workflowGraphs } from './workflow/graph';
-import { defaultRolesForPreset, presetForId } from './ui/presetCatalogData';
+import { defaultRolesForPreset, presetForId, requiredProvidersForPreset } from './ui/presetCatalogData';
 import { buildPreflightDialogModel } from './ui/preflightModel';
 import { preflightFromResult, type PreflightSubject } from './ui/preflightFromResult';
 import { processingAfterSend, processingAfterSettle, processingAfterWorkflowStatus } from './ui/processing';
@@ -403,12 +403,10 @@ export default function App() {
   }, [centerSurface, modalHiddenProviders, presentation, states]);
   const hasFreeModeTargets = useMemo(() => hasEffectiveFreeModeTargets(targets, states), [states, targets]);
   const anySendableTargets = useMemo(() => defaultTargets(states, activeProviders), [activeProviders, states]);
-  const requiredModeProviders = useMemo(() => {
-    const roles = defaultRolesForPreset(mode, presetId, appSettings.modeRoles);
-    return roles
-      ? ([...new Set(Object.values(roles))] as AIProvider[])
-      : presetForId(presetId).requiredProviders;
-  }, [mode, presetId, appSettings.modeRoles]);
+  const requiredModeProviders = useMemo(
+    () => requiredProvidersForPreset(mode, presetId, appSettings.modeRoles),
+    [mode, presetId, appSettings.modeRoles],
+  );
   const readyModeProviders = useMemo(
     () => requiredModeProviders.filter((provider) => isSendable(states[provider])),
     [requiredModeProviders, states],
@@ -436,7 +434,7 @@ export default function App() {
   const centerTextFinal = latestCenterBubble?.final === true;
 
   const overlayGuardOpen =
-    (Boolean(preflight) && !preflightLoginPending) || Boolean(stepTimeout?.timedOut) || settingsOpen || Boolean(reportPreview) || processTraceDetailOpen || messagesMaximized;
+    (Boolean(preflight) && !preflightLoginPending) || settingsOpen || Boolean(reportPreview) || processTraceDetailOpen || messagesMaximized;
   const manualFocusIdlePaused = Boolean(checkpoint) || Boolean(stepTimeout);
   overlayGuardOpenRef.current = overlayGuardOpen;
   // The task HUD (#40) covers the whole window: guard it like the modal overlays so native provider
@@ -1521,16 +1519,19 @@ export default function App() {
   const send = async (trimmed: string): Promise<boolean> => {
     if (!trimmed) return false;
     const brainstorm = presetId === 'brainstorm';
+    const deliberation = presetId === 'deliberation';
     const serialMode = isSerialMode(mode) ? mode as Exclude<ChatMode, 'free'> : undefined;
     const modeRoles = settingsRef.current.modeRoles;
-    const workflowRoles = brainstorm
+    const workflowRoles = brainstorm || deliberation
       ? defaultRolesForPreset(mode, presetId, modeRoles)
       : serialMode
         ? defaultRolesForPreset(serialMode, undefined, modeRoles)
         : undefined;
-    const participants = workflowRoles
-      ? [...new Set(Object.values(workflowRoles))]
-      : freeModeTargets(targets, statesRef.current);
+    const participants = deliberation
+      ? requiredProvidersForPreset(mode, presetId, modeRoles)
+      : workflowRoles
+        ? [...new Set(Object.values(workflowRoles))]
+        : freeModeTargets(targets, statesRef.current);
 
     const providersToFreshen = pendingProviderSessionResets(
       pendingProviderResetRef.current,
@@ -1579,7 +1580,13 @@ export default function App() {
       }
     }
 
-    const serialGraph = brainstorm ? workflowGraphs.brainstorm : serialMode ? workflowGraphs[serialMode] : undefined;
+    const serialGraph = deliberation
+      ? workflowGraphs.deliberation
+      : brainstorm
+        ? workflowGraphs.brainstorm
+        : serialMode
+          ? workflowGraphs[serialMode]
+          : undefined;
     if (serialGraph) {
       try {
         const result = await preflightGraph(
@@ -1722,11 +1729,11 @@ export default function App() {
       const appVersion = await getRuntimeAppVersion();
       const snapshot = matchingSnapshotForConversation(messages, getLastSnapshot());
       const exportPreset =
-        presetId === 'brainstorm'
+        presetId === 'brainstorm' || presetId === 'deliberation'
           ? {
               id: presetId,
-              icon: '✨',
-              name: translateKey('preset.brainstorm.displayName', localeRef.current),
+              icon: presetId === 'brainstorm' ? '✨' : '🔁',
+              name: translateKey(presetId === 'brainstorm' ? 'preset.brainstorm.displayName' : 'preset.deliberation.displayName', localeRef.current),
             }
           : undefined;
       const { content } = buildMarkdown(messages, mode, now, { appVersion, snapshot, preset: exportPreset });
@@ -2062,8 +2069,8 @@ export default function App() {
               <div className="min-w-[11rem] flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="ai-sister-mode-badge shrink-0 border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950 px-2 py-1 text-xs font-medium text-sky-700 dark:text-sky-100">
-                    <span className="mr-1">{presetId === 'brainstorm' ? '✨' : CHAT_MODES[mode].icon}</span>
-                    {presetId === 'brainstorm' ? translate(presetForId(presetId).displayNameKey) : translate(MODE_NAME_KEYS[mode])}
+                    <span className="mr-1">{presetId === 'brainstorm' ? '✨' : presetId === 'deliberation' ? '🔁' : CHAT_MODES[mode].icon}</span>
+                    {presetId === 'brainstorm' || presetId === 'deliberation' ? translate(presetForId(presetId).displayNameKey) : translate(MODE_NAME_KEYS[mode])}
                   </span>
                   <span className="min-w-0 truncate text-xs text-zinc-600 dark:text-zinc-400">{workflowStatus || translate('processTrace.settled')}</span>
                 </div>
@@ -2184,6 +2191,7 @@ export default function App() {
             {import.meta.env.DEV ? <EchoPanel /> : null}
           </div>
           <div className="ai-sister-conversation-composer shrink-0 border-t border-zinc-200 pt-2 dark:border-zinc-800">
+            {stepTimeout?.timedOut ? <StepTimeoutDialog event={stepTimeout} onClose={() => setStepTimeout(undefined)} locale={locale} /> : null}
             <InputBar
               onSend={send}
               onCancel={cancelWorkflow}
@@ -2216,7 +2224,6 @@ export default function App() {
           locale={locale}
         />
       ) : null}
-      {stepTimeout?.timedOut ? <StepTimeoutDialog event={stepTimeout} onClose={() => setStepTimeout(undefined)} locale={locale} /> : null}
       <SettingsModal
         open={settingsOpen}
         openProviders={openProviders}
@@ -2327,5 +2334,7 @@ function modeFromReplayPlan(plan: ReplayPlan): ChatMode | undefined {
 }
 
 function conversationPresetId(presetId: WorkflowPresetId, mode: ChatMode): WorkflowPresetId | undefined {
-  return presetId === 'brainstorm' && mode === 'free' ? presetId : undefined;
+  if (presetId === 'brainstorm' && mode === 'free') return presetId;
+  if (presetId === 'deliberation' && mode === 'consult') return presetId;
+  return undefined;
 }

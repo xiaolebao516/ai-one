@@ -12,11 +12,14 @@ import {
 import { onBridgeMessage, publishBridgeMessage, resetBusForTests } from '../bridge/bus';
 import { resetBridgePullForTests } from '../bridge/pull';
 import { host } from '../host';
+import { startDeliberationAuditTrace } from '../dev/deliberationPromptTrace';
+import { createResponseLanguagePolicy } from '../workflow/responseLanguage';
 import { resetCancelState } from '../workflow/cancel';
 import {
   brainstormGraph,
   codingGraph,
   consultGraph,
+  deliberationGraph,
   debateGraph,
   executeGraph,
   freeGraph,
@@ -29,7 +32,7 @@ import {
 import { isInactiveStandbyProvider } from '../workflow/graph/preflight';
 import { flushSessionCheckpointForTests, resetSessionCheckpointForTests } from '../workflow/sessionCheckpoint';
 import { resetWorkflowStateForTests } from '../workflow/state';
-import { resetStepTimeoutForTests } from '../workflow/stepTimeout';
+import { chooseStepTimeoutAction, onStepTimeoutEvent, resetStepTimeoutForTests } from '../workflow/stepTimeout';
 import { resetWaitForResponseForTests } from '../workflow/waitForResponse';
 
 vi.mock('../host', () => ({
@@ -38,6 +41,7 @@ vi.mock('../host', () => ({
       send: vi.fn(),
       eval: vi.fn(),
       evalWithCallback: vi.fn(),
+      stop: vi.fn(),
     },
     connections: {
       get: vi.fn(),
@@ -87,6 +91,7 @@ describe('workflow graph foundation', () => {
     resetStepTimeoutForTests();
     resetSessionCheckpointForTests();
     vi.mocked(host.provider.send).mockResolvedValue(undefined);
+    vi.mocked(host.provider.stop).mockResolvedValue({ outcome: 'clicked' });
     vi.mocked(host.provider.eval).mockResolvedValue(undefined);
     vi.mocked(host.provider.evalWithCallback).mockResolvedValue(JSON.stringify([]));
     vi.mocked(host.connections.get).mockResolvedValue(providers.map((provider) => state(provider)));
@@ -334,4 +339,188 @@ describe('workflow graph foundation', () => {
     const fanoutErrors = validateGraph(fanout);
     expect(fanoutErrors.some((error) => error.code === 'invalid-checkpoint' && error.path === 'nodes.fanout.template.checkpoint')).toBe(true);
   });
+  it('deliberation preserves independent openings and stops after a FINISH audit', async () => {
+    const prompts: { provider: AIProvider; text: string }[] = [];
+    const system: string[] = [];
+    const off = onBridgeMessage((event) => {
+      if (event.provider === ('system' as AIProvider) && event.action === 'RESPONSE_DONE') system.push(String(event.payload));
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider, text) => {
+      prompts.push({ provider, text });
+      const response = provider === 'claude'
+        ? 'Evidence-backed findings: Confirm original evidence.\nShared conclusions: Both agree on the main fact.\nDisagreements: NONE\nEvidence gaps: NONE\nNext steps: Verify the original documentation.\n[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:AGREED]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]'
+        : prompts.length <= 2 ? 'independent ' + provider : 'reasoned response from ' + provider;
+      publishBridgeMessage(done(provider, response));
+    });
+    await expect(executeGraph(deliberationGraph, { text: 'Assess design', roles: { first: 'chatgpt', second: 'gemini', auditor: 'claude' } })).resolves.toBeUndefined();
+    off();
+    expect(prompts.map((entry) => entry.provider)).toEqual(['chatgpt', 'gemini', 'chatgpt', 'gemini', 'claude']);
+    expect(prompts[1].text).not.toContain('independent chatgpt');
+    expect(prompts[2].text).toContain('independent gemini');
+    expect(prompts[3].text).toContain('independent chatgpt');
+    expect(prompts[4].text).toContain('independent chatgpt');
+    expect(prompts[4].text).toContain('reasoned response');
+    expect(prompts[4].text).toContain('严格使用以下五个小标题，依次为：有证据支持的发现、共同结论、分歧、证据缺口、下一步');
+    // Every turn is written in Chinese workflow text and restates the user's question; without a
+    // response-language policy it does not impose a language of its own.
+    for (const entry of prompts) {
+      expect(entry.text).toContain('用户的原问题（本消息中唯一由用户本人写的内容）：\nAssess design');
+      expect(entry.text).toContain('没有说明时，使用与原问题相同的语言和字体，不要因为本流程说明是中文而改用中文');
+      expect(entry.text).not.toContain('使用简体中文');
+      expect(entry.text).not.toMatch(/Discussion round|INDEPENDENT THIRD-PARTY|Give your independent answer/);
+    }
+    expect(system).toHaveLength(1);
+    expect(system[0]).toContain('COMPLETE_AGREED (round 1');
+  });
+
+  it.each([
+    { question: 'What are the risks of this design?', setting: 'auto' as const, expected: '都使用英文（English）', absent: '使用简体中文' },
+    { question: '請比較這兩個方案的風險。', setting: 'auto' as const, expected: '都使用繁體中文', absent: '使用简体中文' },
+    { question: 'この設計のリスクは何ですか？', setting: 'auto' as const, expected: '都使用日文（日本語）', absent: '使用简体中文' },
+    { question: '请比较这两个方案的风险。', setting: 'de' as const, expected: '都使用德文（Deutsch）', absent: '使用简体中文' },
+    { question: '请比较这两个方案的风险。', setting: 'auto' as const, expected: '都使用简体中文', absent: '使用英文' },
+  ])('deliberation states the resolved reply language ($setting: $question) on every turn', async ({ question, setting, expected, absent }) => {
+    const prompts: string[] = [];
+    vi.mocked(host.provider.send).mockImplementation(async (provider, text) => {
+      prompts.push(text);
+      publishBridgeMessage(done(provider, provider === 'claude'
+        ? '## Evidence-backed findings\nA\n## Shared conclusions\nB\n## Disagreements\nNONE\n## Evidence gaps\nNONE\n## Next steps\nE\n[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:AGREED]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]'
+        : 'reply from ' + provider));
+    });
+    await expect(executeGraph(deliberationGraph, {
+      text: question,
+      roles: { first: 'chatgpt', second: 'gemini', auditor: 'claude' },
+      responseLanguagePolicy: createResponseLanguagePolicy(setting, 'zh-TW'),
+    })).resolves.toBeUndefined();
+    expect(prompts).toHaveLength(5);
+    for (const text of prompts) {
+      expect(text).toContain(expected);
+      expect(text).not.toContain(absent);
+      // An explicit request in the question still wins over the resolved default.
+      expect(text).toMatch(/除非(?:用户在原问题|使用者在原問題)中明[确確]要求其他[语語]言/);
+    }
+    expect(prompts[4]).toContain('使用与审计正文相同的语言');
+  });
+
+  it('deliberation keeps the original Simplified Chinese language through every round and reports at the limit', async () => {
+    const prompts: { provider: AIProvider; text: string }[] = [];
+    const system: string[] = [];
+    const off = onBridgeMessage((event) => {
+      if (event.provider === ('system' as AIProvider) && event.action === 'RESPONSE_DONE') system.push(String(event.payload));
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider, text) => {
+      prompts.push({ provider, text });
+      const round = prompts.filter((entry) => entry.provider === 'claude').length;
+      const response = provider === 'claude'
+        ? 'Evidence-backed findings: Some facts are supported.\nShared conclusions: Agreement is partial.\nDisagreements: Several assumptions remain disputed.\nEvidence gaps: Citation still missing.\nNext steps: ' + (round < 3 ? 'Investigate specific source ' + round : 'Document the remaining gaps.') +
+          '\n[[AI_ONE_AUDIT_DECISION:' + (round < 3 ? 'CONTINUE' : 'FINISH') + ']]\n[[AI_ONE_AUDIT_RESULT:DISAGREEMENTS]]\n[[AI_ONE_AUDIT_QUESTION:' + (round < 3 ? 'Investigate source ' + round + ' now' : 'NONE') + ']]'
+        : prompts.length <= 2 ? 'independent ' + provider : '討論這些證據與局限 by ' + provider;
+      publishBridgeMessage(done(provider, response));
+    });
+    const trace = startDeliberationAuditTrace();
+    try {
+      await expect(executeGraph(deliberationGraph, {
+        text: '请比较证据和局限。PRIVATE_QUESTION',
+        roles: { first: 'chatgpt', second: 'gemini', auditor: 'claude' },
+        responseLanguagePolicy: createResponseLanguagePolicy('auto', 'zh-TW'),
+      })).resolves.toBeUndefined();
+      const evidence = trace.read();
+      expect(evidence.map((entry) => entry.round)).toEqual([1, 2, 3]);
+      for (const entry of evidence) {
+        expect(entry).toMatchObject({ templateMatched: true, languagePolicyPresent: true, questionBlockPresent: true, dispatch: 'dispatched' });
+        expect(entry.prompt).toContain('否则全部内容（包括提出的后续问题）都使用简体中文');
+        expect(entry.prompt).toContain('setting="auto" interface-locale="zh-TW"');
+        expect(entry.prompt).not.toContain('PRIVATE_QUESTION');
+        expect(entry.prompt).not.toContain('討論這些證據與局限');
+        expect(entry.prompt).not.toContain('Traditional Chinese');
+        expect(entry.prompt).toContain('全部自然语言内容和后续问题都使用简体中文');
+        expect(entry.prompt?.endsWith('</response-language-policy>')).toBe(true);
+      }
+    } finally {
+      trace.stop();
+    }
+    off();
+    expect(prompts.map((entry) => entry.provider)).toEqual([
+      'chatgpt', 'gemini', 'chatgpt', 'gemini', 'claude',
+      'chatgpt', 'gemini', 'claude', 'chatgpt', 'gemini', 'claude',
+    ]);
+    for (const { text } of prompts) {
+      const footer = text.slice(text.lastIndexOf('<response-language-policy'));
+      expect(footer).toContain('全部自然语言内容和后续问题都使用简体中文');
+      expect(text).not.toContain('Traditional Chinese');
+      expect(footer).not.toContain('English (en)');
+      expect(footer.endsWith('</response-language-policy>')).toBe(true);
+    }
+    expect(prompts[5].text).toContain('Investigate source 1 now');
+    expect(prompts[8].text).toContain('Investigate source 2 now');
+    expect(prompts[5].text).not.toContain('independent gemini');
+    expect(prompts[6].text).not.toContain('independent chatgpt');
+    expect(system).toHaveLength(1);
+    expect(system[0]).toContain('COMPLETE_WITH_DISAGREEMENTS');
+    expect(system[0]).toContain('round budget exhausted');
+  });
+
+  it('deliberation retries a provider error at the failed step without restarting completed rounds', async () => {
+    const sends: AIProvider[] = [];
+    const failures: string[] = [];
+    const reports: string[] = [];
+    let geminiRoundAttempts = 0;
+    const offTimeout = onStepTimeoutEvent((event) => {
+      if (!event.timedOut) return;
+      failures.push(event.failureKind ?? 'unknown');
+      expect(event.provider).toBe('gemini');
+      expect(event.skipAllowed).toBe(false);
+      expect(chooseStepTimeoutAction('skip', event.requestId)).toBe(false);
+      expect(chooseStepTimeoutAction('retry', event.requestId)).toBe(true);
+    });
+    const offBridge = onBridgeMessage((event) => {
+      if (event.provider === ('system' as AIProvider) && event.action === 'RESPONSE_DONE') reports.push(String(event.payload));
+    });
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      sends.push(provider);
+      let response = 'independent or discussion response from ' + provider;
+      if (provider === 'gemini') {
+        geminiRoundAttempts += 1;
+        if (geminiRoundAttempts === 2) response = '[Error: temporary model failure]';
+      }
+      if (provider === 'claude') {
+        response = [
+          'Evidence-backed findings: Evidence reviewed. Shared conclusions: Both agree. Disagreements: NONE. Evidence gaps: NONE. Next steps: Verify source.',
+          '[[AI_ONE_AUDIT_DECISION:FINISH]]',
+          '[[AI_ONE_AUDIT_RESULT:AGREED]]',
+          '[[AI_ONE_AUDIT_QUESTION:NONE]]',
+        ].join('\n');
+      }
+      publishBridgeMessage(done(provider, response));
+    });
+    await expect(executeGraph(deliberationGraph, {
+      text: 'Resume on a temporary error',
+      roles: { first: 'chatgpt', second: 'gemini', auditor: 'claude' },
+    })).resolves.toBeUndefined();
+    offTimeout();
+    offBridge();
+    expect(failures).toEqual(['provider-error']);
+    expect(sends).toEqual(['chatgpt', 'gemini', 'chatgpt', 'gemini', 'gemini', 'claude']);
+    expect(vi.mocked(host.provider.stop)).toHaveBeenCalledWith('gemini');
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toContain('COMPLETE_AGREED');
+  });
+
+  it('deliberation requires an available distinct auditor and validates the graph', async () => {
+    vi.mocked(host.connections.get).mockResolvedValue([state('chatgpt'), state('gemini'), state('grok', false), state('claude', false)]);
+    await expect(preflightGraph(deliberationGraph, { first: 'chatgpt', second: 'gemini', auditor: 'claude' })).resolves.toMatchObject({
+      ok: false,
+      unavailable: ['claude'],
+    });
+    vi.mocked(host.connections.get).mockResolvedValue([state('chatgpt'), state('gemini'), state('claude')]);
+    await expect(preflightGraph(deliberationGraph, { first: 'chatgpt', second: 'gemini', auditor: 'gemini' })).resolves.toMatchObject({
+      ok: false,
+      aliased: ['gemini'],
+    });
+    await expect(preflightGraph(deliberationGraph, { first: 'chatgpt', second: 'gemini', auditor: 'claude' })).resolves.toMatchObject({
+      ok: true, unavailable: [], aliased: [],
+    });
+    expect(validateGraph(deliberationGraph)).toEqual([]);
+  });
+
 });
