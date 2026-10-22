@@ -548,8 +548,21 @@ test('a probe detail never carries a token in a URL', () => {
   const { detail } = parseCheck(`chatgpt: blocked logged_in=false url=https://chatgpt.com/c/x?token=SENTINEL-9f`);
   assert.ok(!detail.includes('SENTINEL-9f'), detail);
   assert.match(detail, /url=<redacted>/);
+  // A "#" fragment is as good a place to hide a token as a query string.
+  const fragment = parseCheck('chatgpt: busy url=https://chatgpt.com/c/x#access_token=SECRET-9f');
+  assert.ok(!fragment.detail.includes('SECRET-9f'), fragment.detail);
+  assert.match(fragment.detail, /url=<redacted>/);
   const plain = parseCheck('chatgpt: something_new url=https://chatgpt.com/');
   assert.match(plain.detail, /https:\/\/chatgpt\.com\//, 'a plain URL stays readable');
+});
+
+test('a slots.json that parses but is not an object falls back to one slot', () => {
+  const home = tempHome();
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(home, 'slots.json'), 'null');
+  assert.equal(loadConfig(home).count, 1);
+  fs.writeFileSync(path.join(home, 'slots.json'), '"quoted"');
+  assert.equal(loadConfig(home).count, 1);
 });
 
 test('a broken slots.json is reported without its contents', () => {

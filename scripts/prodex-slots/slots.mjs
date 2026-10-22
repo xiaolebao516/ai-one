@@ -191,7 +191,7 @@ export function loadConfig(home) {
   } catch {
     throw new Error(`${configPath(home)} is not valid JSON; fix or delete that file by hand`);
   }
-  if (Number.isInteger(parsed.count) && parsed.count >= 1 && parsed.count <= MAX_SLOTS) count = parsed.count;
+  if (parsed && Number.isInteger(parsed.count) && parsed.count >= 1 && parsed.count <= MAX_SLOTS) count = parsed.count;
   return { count, slots: Array.from({ length: count }, (_, index) => slotDefinition(index + 1, home)) };
 }
 
@@ -228,7 +228,7 @@ export function slotEnv(slot, base = process.env) {
 // it that could carry a token, so any URL with a query or credentials is redacted; a plain URL
 // stays. The tail is capped so a chatty probe cannot flood a line.
 export function redactDetail(text) {
-  const redacted = String(text).replace(/https?:\/\/\S+/g, (url) => (/[?@]/.test(url) ? 'url=<redacted>' : url));
+  const redacted = String(text).replace(/https?:\/\/\S+/g, (url) => (/[?@#]/.test(url) ? 'url=<redacted>' : url));
   return redacted.length > 200 ? `${redacted.slice(0, 200)}...` : redacted;
 }
 
