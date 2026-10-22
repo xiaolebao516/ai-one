@@ -42,24 +42,35 @@ const OWNERSHIP_FIELDS = {
   },
   threadUrl(raw) {
     const value = String(raw);
+    // Nothing below echoes the value back: a rejected URL may be exactly where a token was
+    // pasted, and stderr ends up in logs.
     if (value.length > OWNERSHIP_LIMITS.threadUrl) {
       return { error: `--thread-url must be at most ${OWNERSHIP_LIMITS.threadUrl} characters, got ${value.length}` };
     }
+    if (/[\u0000-\u001f\u007f]/.test(value)) return { error: '--thread-url must not contain control characters' };
+    // Checked on the raw text, because an empty "?" or "#" disappears from url.search/url.hash
+    // while staying in the string that would be stored.
+    if (value.includes('?') || value.includes('#')) return { error: '--thread-url must not carry a query or fragment' };
     let url;
     try {
       url = new URL(value);
     } catch {
-      return { error: `--thread-url must be a full URL such as https://${THREAD_HOST}/c/<thread-id>, got ${JSON.stringify(raw)}` };
+      return { error: `--thread-url must be a full URL such as https://${THREAD_HOST}/c/<thread-id>` };
     }
-    if (url.protocol !== 'https:') return { error: `--thread-url must use https, got ${url.protocol}` };
-    if (url.hostname !== THREAD_HOST) return { error: `--thread-url must be on ${THREAD_HOST}, got ${url.hostname}` };
+    if (url.protocol !== 'https:') return { error: '--thread-url must use https' };
+    if (url.hostname !== THREAD_HOST) return { error: `--thread-url must be on ${THREAD_HOST}` };
     if (url.username || url.password) return { error: '--thread-url must not carry credentials (user:pass@)' };
-    if (url.search) return { error: `--thread-url must not carry a query string, got ${url.search}` };
-    if (url.hash) return { error: `--thread-url must not carry a fragment, got ${url.hash}` };
+    if (url.port) return { error: `--thread-url must not use a port, got :${url.port}` };
     if (!THREAD_PATH_PATTERN.test(url.pathname)) {
       return { error: `--thread-url must point at a thread (/c/<thread-id> or /g/<project>/c/<thread-id>), got ${url.pathname}` };
     }
-    return { value };
+    // The URL parser silently normalizes "/SECRET/../c/x", "%2e%2e", ":443" and similar. Storing
+    // the text it would normalize would put whatever sat in front of the path into the claim, so
+    // only the exact, already-canonical form is accepted.
+    if (url.href !== value) {
+      return { error: `--thread-url must be written exactly as the thread URL, without "..", percent-escaped segments, a default port or a trailing separator` };
+    }
+    return { value: url.href };
   },
 };
 

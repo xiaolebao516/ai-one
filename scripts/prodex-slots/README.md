@@ -85,7 +85,7 @@ but the shell reads `<id>` as a redirection, and the flag then receives somethin
 |---|---|---|
 | `--task` | `71` or `#71` | `#71` |
 | `--session` | 1-64 chars of `A-Z a-z 0-9 . _ : -` | as given |
-| `--thread-url` | `https://chatgpt.com/c/<thread-id>` or `https://chatgpt.com/g/<project>/c/<thread-id>`, at most 300 chars | as given |
+| `--thread-url` | exactly `https://chatgpt.com/c/<thread-id>` or `https://chatgpt.com/g/<project>/c/<thread-id>`, at most 300 chars | as given |
 
 `list` appends them to the claim line, and `--json` puts them in `busyWith`:
 
@@ -99,9 +99,12 @@ Five limits, and they are deliberate:
   the page, so a typo cannot silently become "who this slot belongs to".
 - Only these three fields are stored. Reply text, ask stdin/stdout, cookies and tokens are not
   written to a claim.
-- A thread URL may not carry credentials (`user:pass@`), a query string or a fragment, and must
-  point at a thread path. The URL goes into a file other sessions read, so it is not a place to
-  park a token; a `?token=...` is refused rather than stored.
+- A thread URL may not carry credentials (`user:pass@`), a port, or any query string or fragment
+  (not even an empty `?` or `#`), and must point at a thread path. It also has to be written in
+  its canonical form: `..` segments and percent-escaped segments are refused instead of being
+  silently normalized, because the stored string is what other sessions read - normalizing after
+  the check would keep whatever sat in front of the path. A rejected URL is never echoed back,
+  since that is where a pasted token would be.
 - Values are re-validated when they are read back, not just the key names. A hand-edited claim
   with an over-long or malformed field has those fields dropped from `list` instead of printed,
   and cannot add keys that are not part of this set.

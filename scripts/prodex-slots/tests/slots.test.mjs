@@ -182,21 +182,40 @@ test('ownership is normalized and validated before anything is written', () => {
   assert.throws(() => normalizeOwnership({ threadUrl: `https://chatgpt.com/c/${'a'.repeat(300)}` }), /at most 300/);
 });
 
-test('a thread URL cannot carry credentials, a query or a fragment', () => {
-  // The URL is written to a file other sessions read, so it must not be a place to hide a token.
-  assert.throws(() => normalizeOwnership({ threadUrl: 'https://user:secret@chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013' }), /must not carry credentials/);
-  assert.throws(() => normalizeOwnership({ threadUrl: 'https://user@chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013' }), /must not carry credentials/);
-  assert.throws(() => normalizeOwnership({ threadUrl: `${THREAD_A}?token=SENTINEL` }), /must not carry a query string/);
-  assert.throws(() => normalizeOwnership({ threadUrl: `${THREAD_A}#Bearer-SENTINEL` }), /must not carry a fragment/);
-  assert.throws(() => normalizeOwnership({ threadUrl: 'https://chatgpt.com/' }), /must point at a thread/);
-  assert.throws(() => normalizeOwnership({ threadUrl: 'https://chatgpt.com/c/' }), /must point at a thread/);
-  assert.throws(() => normalizeOwnership({ threadUrl: 'https://chatgpt.com/c/abc' }), /must point at a thread/);
-  // The two shapes a real thread has.
+test('a thread URL is accepted only in one exact, canonical form', () => {
+  const id = '6ad9e501-da24-83e9-81f9-8b5aae1f7013';
+  const rejected = [
+    [`https://user:secret@chatgpt.com/c/${id}`, /credentials/],
+    [`https://chatgpt.com/SECRET/../c/${id}`, /written exactly/],
+    [`https://chatgpt.com/%2e%2e/c/${id}`, /written exactly/],
+    [`https://chatgpt.com:9443/c/${id}`, /must not use a port/],
+    [`https://chatgpt.com:443/c/${id}`, /written exactly/],
+    [`https://chatgpt.com/c/${id}?`, /query or fragment/],
+    [`https://chatgpt.com/c/${id}#`, /query or fragment/],
+    [`https://chatgpt.com/c/${id}?token=SENTINEL`, /query or fragment/],
+    [`https://chatgpt.com/c/${id}#Bearer-SENTINEL`, /query or fragment/],
+    [`https://chatgpt.com/c/${id}\n`, /control characters/],
+    ['https://chatgpt.com/c/1234\n5678', /control characters/],
+    [`https://chatgpt.com//c/${id}`, /must point at a thread/],
+    [`https://chatgpt.com/c/${id}/`, /must point at a thread/],
+    [`http://chatgpt.com/c/${id}`, /must use https/],
+    [`https://evil.example/c/${id}`, /must be on chatgpt\.com/],
+    ['https://chatgpt.com/c/abc', /must point at a thread/],
+    ['https://chatgpt.com/', /must point at a thread/],
+  ];
+  for (const [input, pattern] of rejected) {
+    const label = JSON.stringify(input);
+    assert.throws(() => normalizeOwnership({ threadUrl: input }), pattern, label);
+    try {
+      normalizeOwnership({ threadUrl: input });
+    } catch (error) {
+      assert.ok(!/SENTINEL|\bsecret\b/.test(error.message), `the error message echoed the value: ${error.message}`);
+    }
+  }
+  // The two shapes a real thread has, stored exactly as given.
   assert.equal(normalizeOwnership({ threadUrl: THREAD_A }).threadUrl, THREAD_A);
-  assert.equal(
-    normalizeOwnership({ threadUrl: 'https://chatgpt.com/g/g-p-68f0a1b2c3d4/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013' }).threadUrl,
-    'https://chatgpt.com/g/g-p-68f0a1b2c3d4/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013',
-  );
+  const inProject = 'https://chatgpt.com/g/g-p-68f0a1b2c3d4/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013';
+  assert.equal(normalizeOwnership({ threadUrl: inProject }).threadUrl, inProject);
 });
 
 test('a claim refuses invalid ownership and leaves nothing behind', () => {
@@ -487,12 +506,31 @@ test('a hand-edited claim cannot smuggle text or a credential into the listing',
     startedAt: Date.now(),
     task: '66\nslot 9 ready',
     sessionKey: 'Bearer SECRET',
-    threadUrl: `${THREAD_A}?token=SENTINEL`,
+    threadUrl: 'https://chatgpt.com/SECRET/../c/6ad9e501-da24-83e9-81f9-8b5aae1f7013',
   })}\n`);
   assert.equal(await h.run(['list', '--json']), EXIT.OK);
   const text = h.log.out.join('\n');
   assert.ok(!/SECRET|SENTINEL|slot 9 ready/.test(text), `the listing leaked an edited value: ${text}`);
   assert.deepEqual(JSON.parse(h.log.out[0])[0].busyWith, { pid: 4242 }, 'invalid fields are dropped, not shown');
+});
+
+test('a rejected thread URL writes no claim and leaves no token in the output', async () => {
+  const sentinel = 'SENTINEL-token-9f';
+  const cases = [
+    `https://chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013?token=${sentinel}`,
+    `https://chatgpt.com/${sentinel}/../c/6ad9e501-da24-83e9-81f9-8b5aae1f7013`,
+    `https://user:${sentinel}@chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013`,
+  ];
+  for (const threadUrl of cases) {
+    const h = harness();
+    assert.equal(await h.run(['run', '--thread-url', threadUrl, '--', '--new-chat']), EXIT.ERROR);
+    assert.equal(h.log.asks.length, 0, 'nothing was sent');
+    assert.equal(readClaim(h.home, 1), null, 'no claim was left');
+    const dir = path.join(h.home, 'slot-claims');
+    assert.ok(!fs.existsSync(dir) || fs.readdirSync(dir).length === 0, 'nothing was written to disk');
+    assert.ok(!h.log.err.join('\n').includes(sentinel), 'stderr echoed the token');
+    assert.ok(!h.log.out.join('\n').includes(sentinel), 'stdout echoed the token');
+  }
 });
 
 test('nothing from the ask arguments reaches the claim that is on disk during the run', async () => {
