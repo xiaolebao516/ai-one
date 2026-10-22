@@ -46,6 +46,8 @@ export function TasksView({ locale, tasks, health, onOpenTask }: TasksViewProps)
           <EmptyState tone="unknown" title={text.t(health === 'loading' ? 'headlineLoading' : 'headlineFailed')} description={health === 'failed' ? text.t('headlineSubFailed') : undefined} />
         ) : health === 'partial' ? (
           <EmptyState tone="unknown" title={text.t('partialNone')} />
+        ) : filter !== 'all' && categoryHealth(health, tasks) === 'partial' ? (
+          <EmptyState tone="unknown" title={text.t('categoryNone')} />
         ) : (
           <EmptyState title={text.t('emptyFilter')} description={health === 'complete' && tasks.length === 0 ? text.t('emptyGithub') : undefined} />
         )

@@ -279,7 +279,15 @@ function Sidebar({ text, locale, tasks, health, active, activeTaskId, theme, onN
         <h2 className="px-v2-sm text-v2-micro font-semibold text-v2-ink-3">{text.t('activeTasks')}</h2>
         {groups.length === 0 ? (
           <p className="px-v2-sm text-v2-micro text-v2-ink-3">
-            {text.t(isExact(health) ? 'noActiveTasks' : health === 'partial' ? 'partialNone' : 'islandUnknown')}
+            {text.t(
+              !isExact(health)
+                ? health === 'partial'
+                  ? 'partialNone'
+                  : 'islandUnknown'
+                : categoryHealth(health, tasks) === 'partial'
+                  ? 'categoryNone'
+                  : 'noActiveTasks',
+            )}
           </p>
         ) : null}
         {groups.map((group) => (

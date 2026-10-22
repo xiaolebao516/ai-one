@@ -52,13 +52,16 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
         : health === 'partial'
           ? 'headlineSubPartial'
           : 'headlineSubGithub';
+  // "In progress" is a group by state: its empty state follows the by-state precision.
   const emptyTitle = !countable
     ? text.t(health === 'loading' ? 'headlineLoading' : 'headlineFailed')
     : health === 'partial'
       ? text.t('partialNone')
-      : tasks.length
-        ? text.t('noActiveTasks')
-        : text.t('headlineEmpty');
+      : byState === 'partial'
+        ? text.t('categoryNone')
+        : tasks.length
+          ? text.t('noActiveTasks')
+          : text.t('headlineEmpty');
 
   return (
     <div className="mx-auto grid max-w-[1180px] gap-v2-lg p-v2-page">
@@ -106,7 +109,7 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
             ) : (
               <EmptyState
                 className="mt-v2-sm"
-                tone={isExact(health) ? 'neutral' : 'unknown'}
+                tone={isExact(byState) ? 'neutral' : 'unknown'}
                 title={emptyTitle}
               />
             )}

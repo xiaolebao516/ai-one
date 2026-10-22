@@ -228,6 +228,25 @@ describe('GitHub reads', () => {
     expect(filters).toContain('In progress \u22651');
   });
 
+  it('with an unreadable task state, empty groups by state never say "none" outright', async () => {
+    const done: HudTask = { ...githubTask('t1', 'Done task'), status: 'done' };
+    const unreadable: HudTask = { ...githubTask('t2', 'Unreadable task'), status: 'unknown' };
+    const loader: GitHubLoader = async () => [repoResult('xiaolebao516/ai-one', [done, unreadable])];
+    const container = await mount(loader);
+    await click(buttonByText(container, 'GitHub'));
+    const known = 'None among tasks with a known state';
+    expect(container.querySelector('#home-in-progress')?.closest('section')?.textContent).toContain(known);
+    expect(container.querySelector('nav')?.textContent).toContain(known);
+    expect(container.textContent).not.toContain('Nothing in progress');
+    await key(window, { key: '2', ctrlKey: true });
+    const inProgress = [...container.querySelectorAll('[aria-label="Filter tasks"] [role="radio"]')].find((radio) =>
+      radio.textContent?.startsWith('In progress'),
+    );
+    await click(inProgress);
+    expect(container.querySelector('main')?.textContent).toContain(known);
+    expect(container.querySelector('main')?.textContent).not.toContain('No tasks in this view');
+  });
+
   it('a stale snapshot shows "?" in the sidebar while refreshing', async () => {
     const calls: ReturnType<typeof deferred<GitHubRepoTasks[]>>[] = [];
     const loader: GitHubLoader = () => {
