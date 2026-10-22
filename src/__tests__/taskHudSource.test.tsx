@@ -9,6 +9,7 @@ import {
   DEFAULT_HUD_REPOS,
   errorMessages,
   getGitHubData,
+  githubEntryState,
   githubOverall,
   githubTasks,
   isValidRepoName,
@@ -30,7 +31,7 @@ function task(id: string, status: HudTask['status']): HudTask {
   return { id, dataSource: 'github', repo: 'o/r', title: { en: id, zh: id }, status, stages: [], summary: { en: 's', zh: 's' }, evidence: [] };
 }
 
-function repoResult(repo: string, status: GitHubRepoTasks['status'], tasks: HudTask[] = [], more = false): GitHubRepoTasks {
+function repoResult(repo: string, status: GitHubRepoTasks['status'], tasks: HudTask[] = [], more = false, observedAt = NOW.toISOString()): GitHubRepoTasks {
   const entry = { page: 1, limit: 10, returned: tasks.length, more: more ? ('possible' as const) : ('no' as const), earlierPagesOmitted: false, source: { url: 'u', observedAt: NOW.toISOString() } };
   return {
     repo,
@@ -38,7 +39,7 @@ function repoResult(repo: string, status: GitHubRepoTasks['status'], tasks: HudT
     status,
     errors: status === 'error' ? [{ url: 'u', observedAt: NOW.toISOString(), message: 'gh is not installed; install GitHub CLI and run gh auth login.' }] : [],
     pagination: status === 'error' ? {} : { issues: entry, pullRequests: entry },
-    observedAt: NOW.toISOString(),
+    observedAt,
   };
 }
 
@@ -147,8 +148,8 @@ describe('GitHub source UI', () => {
     const view = visibleText(html);
     expect(view).toContain('GitHub read-back · read-only');
     expect(view).toContain('read 3 min ago');
-    expect(view).toContain('xiaolebao516/ai-one Partial 1 tasks Only the first page was read');
-    expect(view).toContain('o/broken Failed 0 tasks gh is not installed');
+    expect(view).toMatch(/xiaolebao516\/ai-one Partial 1 tasks read (?:just now|\d+ (?:min|h) ago) Only the first page was read/);
+    expect(view).toMatch(/o\/broken Failed 0 tasks read (?:just now|\d+ (?:min|h) ago) gh is not installed/);
     expect(html).toContain('aria-label="Remove o/broken"');
     expect(html).toContain('placeholder="owner/repo or GitHub URL"');
     expect(html).not.toContain('href=');
@@ -170,7 +171,74 @@ describe('chat toolbar entry by source', () => {
     const idle = renderToStaticMarkup(view({ locale: 'en', onOpen: () => {}, source: 'github' }));
     expect(idle).toContain('aria-label="Open the task HUD (GitHub, not read yet)"');
     expect(visibleText(idle)).toContain('not read');
-    const loaded = renderToStaticMarkup(view({ locale: 'zh-TW', onOpen: () => {}, source: 'github', tasks: [task('a', 'review'), task('b', 'blocked')] }));
+    const loaded = renderToStaticMarkup(view({ locale: 'zh-TW', onOpen: () => {}, source: 'github', githubState: 'complete', tasks: [task('a', 'review'), task('b', 'blocked')] }));
     expect(loaded).toContain('aria-label="打开任务 HUD（GitHub 回读）：1 个进行中，1 件需要你，0 个失败或未知"');
+  });
+});
+
+describe('review fixes on PR #56 (d8176aa)', () => {
+  it("drops a removed repository's results as soon as a new read starts, but keeps same-repository results while refreshing", async () => {
+    await refreshGitHubData(['o/a'], async () => [repoResult('o/a', 'complete', [task('a1', 'running')])]);
+    let release: (value: GitHubRepoTasks[]) => void = () => {};
+    const slow = () => new Promise<GitHubRepoTasks[]>((resolve) => (release = resolve));
+
+    const switching = refreshGitHubData(['o/b'], slow);
+    expect(getGitHubData().phase).toBe('loading');
+    expect(githubTasks(getGitHubData())).toEqual([]);
+    release([repoResult('o/b', 'complete', [task('b1', 'review')])]);
+    await switching;
+    expect(githubTasks(getGitHubData()).map((item) => item.id)).toEqual(['b1']);
+
+    const refreshing = refreshGitHubData(['o/b'], slow);
+    expect(githubTasks(getGitHubData()).map((item) => item.id)).toEqual(['b1']);
+    const panel = visibleText(renderToStaticMarkup(<GitHubPanel prefs={{ source: 'github', repos: ['o/b'] }} gh={getGitHubData()} locale="en" text={text} onRefresh={() => {}} />));
+    expect(panel).toContain('last read, refreshing');
+    release([repoResult('o/b', 'complete')]);
+    await refreshing;
+  });
+
+  it('shows each repository with its own observation time', () => {
+    const now = Date.now();
+    const gh: GitHubDataState = {
+      phase: 'done',
+      repos: ['o/a', 'o/b'],
+      finishedAt: new Date(now).toISOString(),
+      results: [repoResult('o/a', 'complete', [], false, new Date(now - 125 * 60000).toISOString()), repoResult('o/b', 'complete', [], false, new Date(now - 5 * 60000).toISOString())],
+    };
+    const view = visibleText(renderToStaticMarkup(<GitHubPanel prefs={{ source: 'github', repos: ['o/a', 'o/b'] }} gh={gh} locale="en" text={text} onRefresh={() => {}} />));
+    expect(view).toContain('o/a Complete 0 tasks read 2 h ago');
+    expect(view).toContain('o/b Complete 0 tasks read 5 min ago');
+  });
+
+  it('only says "first page only" for a partial empty view when pagination says so', () => {
+    const prefs = { source: 'github' as const, repos: ['o/a', 'o/b'] };
+    const mixed: GitHubDataState = { phase: 'done', repos: prefs.repos, results: [repoResult('o/a', 'complete'), repoResult('o/b', 'error')] };
+    const view = visibleText(renderToStaticMarkup(<GitHubEmpty prefs={prefs} gh={mixed} text={text} onRefresh={() => {}} />));
+    expect(view).toContain('Some repositories could not be read');
+    expect(view).not.toContain('Only the first page was read');
+    const paged: GitHubDataState = { ...mixed, results: [repoResult('o/a', 'partial', [], true), repoResult('o/b', 'error')] };
+    expect(visibleText(renderToStaticMarkup(<GitHubEmpty prefs={prefs} gh={paged} text={text} onRefresh={() => {}} />))).toContain('Only the first page was read');
+  });
+
+  it('never lets the chat entry show trusted zeros when GitHub could not be read', () => {
+    const entry = (props: TaskHudEntryViewProps) =>
+      (TaskHudEntryView as unknown as { render: (p: TaskHudEntryViewProps, ref: null) => ReactElement }).render(props, null);
+    const failed = renderToStaticMarkup(entry({ locale: 'en', onOpen: () => {}, source: 'github', githubState: 'error', tasks: [] }));
+    expect(failed).toContain('aria-label="Open the task HUD (GitHub read failed; counts unknown)"');
+    expect(visibleText(failed)).toContain('read failed');
+    expect(failed).not.toContain('data-tone="run"');
+
+    const partial = renderToStaticMarkup(entry({ locale: 'en', onOpen: () => {}, source: 'github', githubState: 'partial', tasks: [task('a', 'review')] }));
+    expect(partial).toContain('aria-label="Open the task HUD (GitHub read incomplete): 1 in progress, 0 need you, 0 failed or unknown"');
+    expect(visibleText(partial)).toContain('partial');
+
+    expect(visibleText(renderToStaticMarkup(entry({ locale: 'en', onOpen: () => {}, source: 'github', githubState: 'loading', tasks: [] })))).toContain('reading');
+
+    const done = (results: GitHubRepoTasks[]): GitHubDataState => ({ phase: 'done', results, repos: results.map((result) => result.repo) });
+    expect(githubEntryState({ phase: 'idle', results: [], repos: [] })).toBe('idle');
+    expect(githubEntryState({ phase: 'loading', results: [], repos: ['o/a'] })).toBe('loading');
+    expect(githubEntryState(done([repoResult('o/a', 'error'), repoResult('o/b', 'error')]))).toBe('error');
+    expect(githubEntryState(done([repoResult('o/a', 'complete'), repoResult('o/b', 'error')]))).toBe('partial');
+    expect(githubEntryState(done([repoResult('o/a', 'complete')]))).toBe('complete');
   });
 });

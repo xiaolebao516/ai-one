@@ -2,7 +2,7 @@ import { forwardRef } from 'react';
 import type { Locale } from '../i18n/resolve';
 import { summarize, type HudTask } from './taskHudModel';
 import { TASK_HUD_MOCK_TASKS } from './taskHudMockData';
-import { githubTasks, useGitHubData, useHudPrefs } from './taskHudSource';
+import { githubEntryState, githubTasks, useGitHubData, useHudPrefs, type GitHubEntryState } from './taskHudSource';
 import { taskHudText } from './taskHudText';
 import { Badge, Button, Icon, StatusIndicator, V2Scope } from './v2';
 
@@ -28,7 +28,8 @@ export const TaskHudEntry = forwardRef<HTMLButtonElement, TaskHudEntryProps>(fun
       locale={locale}
       onOpen={onOpen}
       source={github ? 'github' : 'demo'}
-      tasks={github ? (gh.phase === 'done' ? githubTasks(gh) : undefined) : (tasks ?? TASK_HUD_MOCK_TASKS)}
+      githubState={github ? githubEntryState(gh) : undefined}
+      tasks={github ? githubTasks(gh) : (tasks ?? TASK_HUD_MOCK_TASKS)}
     />
   );
 });
@@ -37,20 +38,31 @@ export interface TaskHudEntryViewProps {
   locale: Locale;
   onOpen: () => void;
   source: 'demo' | 'github';
-  /** Undefined while GitHub has not been read: no counts are shown rather than zeros. */
+  /** GitHub read state; counts are only shown for complete or partial reads. */
+  githubState?: GitHubEntryState;
   tasks?: readonly HudTask[];
 }
 
-export const TaskHudEntryView = forwardRef<HTMLButtonElement, TaskHudEntryViewProps>(function TaskHudEntryView({ locale, onOpen, source, tasks }, ref) {
+export const TaskHudEntryView = forwardRef<HTMLButtonElement, TaskHudEntryViewProps>(function TaskHudEntryView({ locale, onOpen, source, githubState = 'idle', tasks }, ref) {
   const text = taskHudText(locale);
-  const summary = tasks ? summarize(tasks) : undefined;
+  // A failed, unread or in-flight GitHub read has no trustworthy counts: show the state instead of 0/0/0.
+  const countable = source === 'demo' || githubState === 'complete' || githubState === 'partial';
+  const summary = countable && tasks ? summarize(tasks) : undefined;
   const counts = summary ? { inProgress: summary.inProgress, needsYou: summary.needsYou, attention: summary.attention } : undefined;
   const label =
     source === 'demo'
       ? text.t('entryAria', counts ?? { inProgress: 0, needsYou: 0, attention: 0 })
-      : counts
+      : githubState === 'complete' && counts
         ? text.t('entryAriaGithub', counts)
-        : text.t('entryAriaGithubIdle');
+        : githubState === 'partial' && counts
+          ? text.t('entryAriaGithubPartial', counts)
+          : githubState === 'error'
+            ? text.t('entryAriaGithubFailed')
+            : githubState === 'loading'
+              ? text.t('entryAriaGithubLoading')
+              : text.t('entryAriaGithubIdle');
+  const stateText =
+    githubState === 'error' ? text.t('entryFailed') : githubState === 'loading' ? text.t('entryLoading') : text.t('entryNotLoaded');
   return (
     <V2Scope className="inline-flex">
       <Button ref={ref} size="sm" onClick={onOpen} aria-label={label} title={label} icon={<Icon name="layers" size={14} />} data-testid="task-hud-entry">
@@ -62,9 +74,12 @@ export const TaskHudEntryView = forwardRef<HTMLButtonElement, TaskHudEntryViewPr
               <StatusIndicator tone="run" label={String(summary.inProgress)} />
               <StatusIndicator tone="you" label={String(summary.needsYou)} />
               <StatusIndicator tone="unknown" label={String(summary.attention)} />
+              {source === 'github' && githubState === 'partial' ? <Badge tone="you">{text.t('entryPartial')}</Badge> : null}
             </>
+          ) : githubState === 'error' ? (
+            <Badge tone="block">{stateText}</Badge>
           ) : (
-            <span className="text-v2-meta text-v2-ink-3">{text.t('entryNotLoaded')}</span>
+            <span className="text-v2-meta text-v2-ink-3">{stateText}</span>
           )}
         </span>
       </Button>

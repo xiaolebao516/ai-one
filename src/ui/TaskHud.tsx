@@ -721,6 +721,7 @@ function minutesSince(iso: string | undefined): number | undefined {
 }
 
 function githubSubline(gh: GitHubDataState, locale: Locale, text: TaskHudText): string {
+  if (gh.phase === 'loading' && gh.results.length > 0) return text.t('githubRefreshingStale');
   return gh.finishedAt ? text.t('githubSubline', { age: formatAge(minutesSince(gh.finishedAt), locale) }) : text.t('githubNotLoaded');
 }
 
@@ -737,7 +738,11 @@ export function GitHubEmpty({ prefs, gh, text, onRefresh }: { prefs: HudPrefs; g
   const overall = githubOverall(gh);
   if (overall === 'error') return <EmptyState tone="unknown" title={text.t('githubErrorTitle')} description={text.t('githubErrorBody')} action={retry} />;
   // A partial read with no tasks is not "nothing open": keep the unknown tone.
-  if (overall === 'partial') return <EmptyState tone="unknown" title={text.t('githubErrorTitle')} description={text.t('repoMore')} action={retry} />;
+  if (overall === 'partial') {
+    // Only claim "first page only" when pagination actually says so; otherwise a repository failed.
+    const description = gh.results.some(mayHaveMore) ? text.t('repoMore') : text.t('githubPartialBody');
+    return <EmptyState tone="unknown" title={text.t('githubErrorTitle')} description={description} action={retry} />;
+  }
   return <EmptyState title={text.t('githubEmptyTitle')} description={text.t('githubEmptyBody')} />;
 }
 
@@ -789,12 +794,16 @@ export function GitHubPanel({
           return (
             <li key={repo} className="flex flex-wrap items-center gap-x-v2-sm gap-y-1 rounded-v2-md bg-v2-sunken px-v2-sm py-1">
               <span className="font-v2-mono text-v2-meta text-v2-ink">{repo}</span>
-              {result && gh.phase === 'done' ? (
+              {result ? (
                 <>
                   <Badge tone={REPO_STATUS_TONE[result.status]}>
                     {text.t(result.status === 'complete' ? 'repoComplete' : result.status === 'partial' ? 'repoPartial' : 'repoError')}
                   </Badge>
                   <span className="text-v2-micro text-v2-ink-3">{text.t('repoTasks', { n: result.tasks.length })}</span>
+                  <span className="text-v2-micro text-v2-ink-3" title={result.observedAt}>
+                    {text.t('readAt', { age: formatAge(minutesSince(result.observedAt), locale) })}
+                  </span>
+                  {gh.phase === 'loading' ? <span className="text-v2-micro text-v2-ink-2">{text.t('repoRefreshing')}</span> : null}
                   {mayHaveMore(result) ? <span className="text-v2-micro text-v2-ink-2">{text.t('repoMore')}</span> : null}
                   {errorMessages(result).map((message) => (
                     <span key={message} className="w-full text-v2-micro text-v2-ink-2">

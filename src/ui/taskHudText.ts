@@ -110,8 +110,17 @@ const EN = {
   githubEmptyBody: 'The listed repositories were read from GitHub and have no open items on the first page.',
   entryGithub: 'GitHub',
   entryNotLoaded: 'not read',
+  entryLoading: 'reading',
+  entryFailed: 'read failed',
+  entryPartial: 'partial',
   entryAriaGithub: 'Open the task HUD (GitHub read-back): {inProgress} in progress, {needsYou} need you, {attention} failed or unknown',
   entryAriaGithubIdle: 'Open the task HUD (GitHub, not read yet)',
+  entryAriaGithubLoading: 'Open the task HUD (reading GitHub)',
+  entryAriaGithubFailed: 'Open the task HUD (GitHub read failed; counts unknown)',
+  entryAriaGithubPartial: 'Open the task HUD (GitHub read incomplete): {inProgress} in progress, {needsYou} need you, {attention} failed or unknown',
+  githubRefreshingStale: 'Refreshing GitHub… showing the last read until it finishes.',
+  repoRefreshing: 'last read, refreshing',
+  githubPartialBody: 'Some repositories could not be read, so this list is incomplete. This is not an empty task list.',
 } as const;
 
 type HudTextKey = keyof typeof EN;
@@ -221,8 +230,17 @@ const ZH: Record<HudTextKey, string> = {
   githubEmptyBody: '已从 GitHub 读取所列仓库，第一页没有开放的条目。',
   entryGithub: 'GitHub',
   entryNotLoaded: '未读取',
+  entryLoading: '读取中',
+  entryFailed: '读取失败',
+  entryPartial: '不完整',
   entryAriaGithub: '打开任务 HUD（GitHub 回读）：{inProgress} 个进行中，{needsYou} 件需要你，{attention} 个失败或未知',
   entryAriaGithubIdle: '打开任务 HUD（GitHub，尚未读取）',
+  entryAriaGithubLoading: '打开任务 HUD（正在读取 GitHub）',
+  entryAriaGithubFailed: '打开任务 HUD（GitHub 读取失败，数量未知）',
+  entryAriaGithubPartial: '打开任务 HUD（GitHub 读取不完整）：{inProgress} 个进行中，{needsYou} 件需要你，{attention} 个失败或未知',
+  githubRefreshingStale: '正在刷新 GitHub… 完成前显示上次读取的结果。',
+  repoRefreshing: '上次读取，正在刷新',
+  githubPartialBody: '部分仓库读取失败，列表不完整。这不代表没有任务。',
 };
 
 const STATUS_EN: Record<TaskStatus, string> = {
