@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { main, parseArgs } from '../cli.mjs';
-import { EXIT, addSlots, claimSlot, loadConfig, normalizeOwnership, parseCheck, readClaim, releaseClaim, slotEnv } from '../slots.mjs';
+import { EXIT, addSlots, claimSlot, loadConfig, normalizeOwnership, parseCheck, readClaim, releaseClaim, slotEnv, sweepSlots } from '../slots.mjs';
 
 const childScript = path.join(path.dirname(fileURLToPath(import.meta.url)), 'race-child.mjs');
 // Real thread URLs, so the path check is exercised the way a caller would hit it.
@@ -677,4 +677,93 @@ test('two runs holding two slots at once are both visible, each with its own own
   assert.deepEqual(await Promise.all(running), [EXIT.OK, EXIT.OK]);
   assert.equal(readClaim(home, 1), null, 'both claims are released');
   assert.equal(readClaim(home, 2), null);
+});
+
+test('sweep removes a dead claim and a stale heartbeat, and never a live claim', () => {
+  const home = tempHome();
+  const dead = deadPid();
+  fs.mkdirSync(path.dirname(claimPath(home, 1)), { recursive: true });
+  fs.writeFileSync(claimPath(home, 1), `${JSON.stringify({ owner: 'a', pid: dead, startedAt: 1 })}\n`);
+  claimSlot(home, 2, { pid: 111, alive: () => true });
+  const stale = claimPath(home, 3);
+  claimSlot(home, 3, { pid: 222, alive: () => true });
+  const old = new Date(Date.now() - 10 * 60_000);
+  fs.utimesSync(stale, old, old);
+  const report = sweepSlots(home, [1, 2, 3], { alive: (pid) => pid === 111 || pid === 222 });
+  assert.deepEqual(report.filter((r) => r.slot === 1).map((r) => r.removed), ['claim']);
+  assert.match(report.find((r) => r.slot === 1).reason, /pid \d+ has exited/);
+  assert.deepEqual(report.filter((r) => r.slot === 2), [], 'a live claim is never touched');
+  assert.deepEqual(report.filter((r) => r.slot === 3).map((r) => r.removed), ['claim']);
+  assert.match(report.find((r) => r.slot === 3).reason, /no heartbeat/);
+  assert.equal(readClaim(home, 2).pid, 111);
+  assert.equal(readClaim(home, 1), null);
+  assert.equal(readClaim(home, 3), null);
+});
+
+test('sweep deletes a .tmp that is a hard link of the claim and an old orphan, keeps a fresh orphan', () => {
+  const home = tempHome();
+  addSlots(home, 1);
+  claimSlot(home, 2, { pid: 111, alive: () => true });
+  fs.linkSync(claimPath(home, 2), `${claimPath(home, 2)}.linked.tmp`);
+  fs.writeFileSync(`${claimPath(home, 2)}.fresh.tmp`, 'x\n');
+  const old = new Date(Date.now() - 10 * 60_000);
+  fs.writeFileSync(`${claimPath(home, 2)}.orphan.tmp`, 'x\n');
+  fs.utimesSync(`${claimPath(home, 2)}.orphan.tmp`, old, old);
+  const dir = path.dirname(claimPath(home, 2));
+  const report = sweepSlots(home, [2], { alive: () => true });
+  assert.deepEqual(report.map((r) => r.removed).sort(), ['claim', 'temp', 'temp'].sort().filter((x) => x === 'temp'));
+  assert.ok(report.every((r) => r.removed === 'temp'), 'the live claim itself stays');
+  assert.equal(readClaim(home, 2).pid, 111, 'the claim survives its extra link being removed');
+  assert.ok(!fs.existsSync(`${claimPath(home, 2)}.linked.tmp`), 'same-inode link is gone');
+  assert.ok(!fs.existsSync(`${claimPath(home, 2)}.orphan.tmp`), 'stale orphan is gone');
+  assert.ok(fs.existsSync(`${claimPath(home, 2)}.fresh.tmp`), 'a fresh orphan is left alone');
+  fs.rmSync(`${claimPath(home, 2)}.fresh.tmp`, { force: true });
+});
+
+test('sweep reports a stale .reap mutex with a copy-paste command and deletes nothing there', () => {
+  const home = tempHome();
+  addSlots(home, 1);
+  claimSlot(home, 2, { pid: 111, alive: () => true });
+  const reap = `${claimPath(home, 2)}.reap`;
+  fs.writeFileSync(reap, '999\n');
+  fs.utimesSync(reap, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+  const report = sweepSlots(home, [2]);
+  assert.equal(report.length, 1);
+  assert.match(report[0].blocked, /was left behind by a process/);
+  assert.match(report[0].blocked, new RegExp(reap.replace(/[\\/]/g, '\\$&').replace(/'/g, "'")));
+  assert.ok(report[0].blocked.includes('Remove-Item'), 'the command is copy-pasteable');
+  assert.equal(fs.existsSync(reap), true, 'the mutex is never deleted automatically');
+  assert.equal(readClaim(home, 2).pid, 111, 'the claim was left alone');
+});
+
+test('list sweeps first: a dead claim shows up as reaped in json and text, plus a stderr line', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  const dead = deadPid();
+  fs.mkdirSync(path.dirname(claimPath(h.home, 1)), { recursive: true });
+  fs.writeFileSync(claimPath(h.home, 1), `${JSON.stringify({ owner: 'a', pid: dead, startedAt: 1 })}\n`);
+  h.deps.alive = (pid) => pid !== dead;
+  assert.equal(await h.run(['list']), EXIT.OK);
+  assert.match(h.log.out.at(-1), /\[self-healed: claim\]/);
+  assert.match(h.log.err.join('\n'), /self-heal removed the claim of slot 1/);
+  assert.equal(await h.run(['list', '--json']), EXIT.OK);
+  const rows = JSON.parse(h.log.out.at(-1));
+  assert.equal(rows[0].busyWith, null, 'the claim is gone from the listing');
+  assert.equal(rows[0].reaped, undefined, 'the second sweep has nothing left to remove');
+  assert.equal(readClaim(h.home, 1), null);
+});
+
+test('a stale .reap no longer blocks list: the slot is reported as blocked with the fix command', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  claimSlot(h.home, 1, { pid: 111, alive: () => true });
+  const reap = `${claimPath(h.home, 1)}.reap`;
+  fs.writeFileSync(reap, '999\n');
+  fs.utimesSync(reap, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+  assert.equal(await h.run(['list', '--json']), EXIT.OK, 'list must survive a stale mutex');
+  const stderr = h.log.err.join('\n');
+  assert.match(stderr, /self-heal blocked on slot 1/);
+  assert.match(stderr, /Remove-Item/);
+  assert.equal(fs.existsSync(reap), true);
+  assert.equal(readClaim(h.home, 1).pid, 111);
 });

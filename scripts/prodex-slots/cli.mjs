@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeOwnership, parseCheck, processAlive, readClaim, releaseClaim, slotEnv, slotsHome } from './slots.mjs';
+import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeOwnership, parseCheck, processAlive, readClaim, releaseClaim, slotEnv, slotsHome, sweepSlots } from './slots.mjs';
 
 export const usage = [
   'Usage: node scripts/prodex-slots/cli.mjs <command> [options]',
@@ -149,11 +149,31 @@ export function realDeps(home = slotsHome()) {
   };
 }
 
-async function describeSlots(config, deps) {
+// Self-heal pass before any command that reads or takes state: dead claims and `.tmp`
+// leftovers go away, blocked slots are reported with a hand-deletion command. The report is
+// attached to the matching `list` rows and summarized on stderr for the other commands.
+function sweepAndReport(config, deps, err) {
+  const report = sweepSlots(deps.home, config.slots.map((slot) => slot.id), { alive: deps.alive ?? processAlive });
+  for (const item of report) {
+    if (item.blocked) err(`prodex-slots: self-heal blocked on slot ${item.slot}: ${item.blocked}`);
+    else err(`prodex-slots: self-heal removed the ${item.removed} of slot ${item.slot} (${item.reason})`);
+  }
+  return report;
+}
+
+async function describeSlots(config, deps, sweepReport = []) {
   return Promise.all(config.slots.map(async (slot) => {
     const claim = readClaim(deps.home, slot.id);
     const busy = claim && (deps.alive ?? processAlive)(claim.pid);
-    return { id: slot.id, port: slot.port, state: (await deps.checkSlot(slot)).state, busyWith: busy ? { pid: claim.pid, ...claimOwnership(claim) } : null };
+    const reaped = sweepReport.filter((item) => item.slot === slot.id && item.removed)
+      .map(({ removed, reason }) => ({ removed, reason }));
+    return {
+      id: slot.id,
+      port: slot.port,
+      state: (await deps.checkSlot(slot)).state,
+      ...(reaped.length ? { reaped } : {}),
+      busyWith: busy ? { pid: claim.pid, ...claimOwnership(claim) } : null,
+    };
   }));
 }
 
@@ -199,7 +219,8 @@ function ownershipLabel(ownership = {}) {
 function renderSlots(rows) {
   return rows.map((r) => {
     const owned = r.busyWith ? [r.busyWith.task, r.busyWith.sessionKey, r.busyWith.threadUrl].filter(Boolean).join(' ') : '';
-    return `slot ${r.id}  port ${r.port}  ${r.state}${r.detail ? ` (${r.detail})` : ''}${r.busyWith ? `  busy (pid ${r.busyWith.pid})${owned ? ` ${owned}` : ''}` : ''}`;
+    const swept = r.reaped ? `  [self-healed: ${r.reaped.map((x) => x.removed).join(' + ')}]` : '';
+    return `slot ${r.id}  port ${r.port}  ${r.state}${r.detail ? ` (${r.detail})` : ''}${swept}${r.busyWith ? `  busy (pid ${r.busyWith.pid})${owned ? ` ${owned}` : ''}` : ''}`;
   }).join('\n');
 }
 
@@ -251,8 +272,13 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
     if (!args.length || args[0] === '--help') { out(usage); return EXIT.OK; }
     const { command, options, passthrough } = parseArgs(args);
     const show = (rows) => out(options.json ? JSON.stringify(rows, null, 2) : renderSlots(rows));
+    // list/run/ensure/release all read or take claim state, so they sweep first; `add` only
+    // registers, and a sweep there would report slots that are about to be created.
+    const sweepReport = ['list', 'run', 'ensure', 'release'].includes(command)
+      ? sweepAndReport(loadConfig(deps.home), deps, err)
+      : [];
     if (command === 'list') {
-      show(await describeSlots(loadConfig(deps.home), deps));
+      show(await describeSlots(loadConfig(deps.home), deps, sweepReport));
       return EXIT.OK;
     }
     if (command === 'add' || command === 'ensure') {

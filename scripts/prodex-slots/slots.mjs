@@ -162,7 +162,7 @@ export function withMutex(file, fn, { timeoutMs = 5000, staleMs = 10_000 } = {})
       continue;
     }
     if (age > staleMs) {
-      throw new Error(`${file} was left behind by a process that stopped inside a short critical section. Delete it by hand if no other prodex-slots command is running.`);
+      throw new Error(`${file} was left behind by a process that stopped inside a short critical section. Delete it by hand if no other prodex-slots command is running: powershell -NoProfile -Command "Remove-Item -LiteralPath '${file}'"`);
     }
     if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${file}`);
     sleepSync(25);
@@ -172,6 +172,72 @@ export function withMutex(file, fn, { timeoutMs = 5000, staleMs = 10_000 } = {})
   } finally {
     fs.rmSync(file, { force: true });
   }
+}
+
+// Deleting a claim-related file can be blocked by an external policy (on this machine a
+// safe-delete hook confirms bulk deletions mid-session). Deleting less than it should is always
+// recoverable by hand, so the error names the file and the exact command instead of retrying -
+// a blocked rmSync used to surface as an unrelated usage error.
+export function removeClaimFile(file) {
+  try {
+    fs.rmSync(file, { force: true });
+  } catch (error) {
+    throw new Error(`could not delete ${file} (${error.code ?? 'unknown'}). Deletion is blocked by an external policy; remove it by hand: powershell -NoProfile -Command "Remove-Item -LiteralPath '${file}'"`);
+  }
+}
+
+// One pass of self-healing over the given slots: removes a claim whose owner is gone or whose
+// heartbeat expired, and `.tmp` leftovers - a same-inode hard link of the claim (deleting it
+// leaves the claim itself intact) or an orphan written by a process that died before linking.
+// A live claim is never touched, and a stale `.reap` mutex is reported with a hand-deletion
+// command instead of being removed: without OS file locks two processes cannot both safely
+// judge it stale. Each slot is independent, so one blocked slot never blocks the others.
+export function sweepSlots(home, ids, { alive = processAlive, staleMs = CLAIM_STALE_MS } = {}) {
+  const report = [];
+  for (const id of ids) {
+    const file = claimFile(home, id);
+    let removed;
+    try {
+      removed = withMutex(`${file}.reap`, () => {
+        const items = [];
+        const claim = readClaim(home, id);
+        if (claim) {
+          const age = claimAgeMs(file);
+          if (!alive(claim.pid)) {
+            removeClaimFile(file);
+            items.push({ slot: id, removed: 'claim', reason: `owner pid ${claim.pid} has exited` });
+          } else if (age !== null && age >= staleMs) {
+            removeClaimFile(file);
+            items.push({ slot: id, removed: 'claim', reason: `no heartbeat for ${Math.round(age / 1000)}s` });
+          }
+        }
+        const dir = path.dirname(file);
+        if (fs.existsSync(dir)) {
+          let claimStats = null;
+          try { claimStats = fs.statSync(file); } catch { claimStats = null; }
+          for (const entry of fs.readdirSync(dir)) {
+            if (!entry.startsWith(`slot-${id}.json.`) || !entry.endsWith('.tmp')) continue;
+            const temp = path.join(dir, entry);
+            let stats;
+            try { stats = fs.statSync(temp); } catch { continue; }
+            const sameInode = claimStats !== null && claimStats.ino === stats.ino && claimStats.dev === stats.dev;
+            // A fresh different-inode temp may belong to a claim attempt that is running right
+            // now, so only age makes it removable.
+            const staleTemp = Date.now() - stats.mtimeMs >= staleMs;
+            if (!sameInode && !staleTemp) continue;
+            removeClaimFile(temp);
+            items.push({ slot: id, removed: 'temp', reason: sameInode ? 'hard link of the claim' : `stale temp, ${Math.round((Date.now() - stats.mtimeMs) / 1000)}s old` });
+          }
+        }
+        return items;
+      });
+    } catch (error) {
+      report.push({ slot: id, blocked: error.message });
+      continue;
+    }
+    report.push(...removed);
+  }
+  return report;
 }
 
 export function loadConfig(home) {
@@ -328,14 +394,14 @@ export function claimSlot(home, id, { pid = process.pid, alive = processAlive, n
         const holder = readClaim(home, id);
         const dead = holder ? !alive(holder.pid) || age >= staleMs : age >= staleMs;
         if (!dead) return { holder };
-        fs.rmSync(file, { force: true });
+        removeClaimFile(file);
         return { retry: true };
       });
       if (!verdict.retry) return { ok: false, holder: verdict.holder };
     }
     return { ok: false, holder: readClaim(home, id) };
   } finally {
-    fs.rmSync(temp, { force: true });
+    removeClaimFile(temp);
   }
 }
 
@@ -346,7 +412,7 @@ export function releaseClaim(home, id, owner = null, mutexOptions = {}) {
   const file = claimFile(home, id);
   return withMutex(`${file}.reap`, () => {
     if (owner !== null && readClaim(home, id)?.owner !== owner) return false;
-    fs.rmSync(file, { force: true });
+    removeClaimFile(file);
     return true;
   }, mutexOptions);
 }
