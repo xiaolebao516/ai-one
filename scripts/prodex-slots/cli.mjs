@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeOwnership, parseCheck, processAlive, readClaim, readClosure, releaseClaim, slotEnv, slotsHome, sweepSlots, writeClosure } from './slots.mjs';
+import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeNote, normalizeOwnership, parseCheck, processAlive, readClaim, readClosure, releaseClaim, slotEnv, slotsHome, sweepSlots, writeClosure } from './slots.mjs';
 
 // Argument mistakes (bad flags, missing values, unknown commands) are usage errors: the reason
 // plus the full usage block. Anything that fails at runtime carries its own next step and is
@@ -90,16 +90,28 @@ export function parseArgs(args) {
   if (options.note !== undefined && command !== 'release') {
     throw new UsageError('--note only applies to release');
   }
+  // Validate the note here, before release touches any state: a rejected note must not take the
+  // claim down with it.
+  if (command === 'release') options.note = options.note === undefined ? undefined : normalizeNote(options.note);
   return { command, options, passthrough };
 }
 
 export function resolveProdexEntry(env = process.env) {
   const candidates = [];
+  let npmRoot = '';
   if (env.PRODEX_ENTRY) candidates.push(env.PRODEX_ENTRY);
   const npm = spawnSync('npm root -g', { encoding: 'utf8', shell: true, windowsHide: true });
-  if (npm.status === 0) candidates.push(path.join(String(npm.stdout).trim(), '@youdie006', 'prodex', 'prodex.mjs'));
+  if (npm.status === 0) {
+    npmRoot = String(npm.stdout).trim();
+    candidates.push(path.join(npmRoot, '@youdie006', 'prodex', 'prodex.mjs'));
+  }
   const found = candidates.find((file) => fs.existsSync(file));
-  if (!found) throw new Error(`Cannot find prodex.mjs. Set PRODEX_ENTRY to its absolute path (PowerShell: $env:PRODEX_ENTRY = "<folder>\\prodex.mjs"). Looked at: ${candidates.join(', ') || 'PRODEX_ENTRY only (npm root -g produced nothing)'}`);
+  if (!found) {
+    const how = npmRoot
+      ? `PowerShell: $env:PRODEX_ENTRY = "${npmRoot}\\@youdie006\\prodex\\prodex.mjs"`
+      : 'PowerShell: $env:PRODEX_ENTRY = "<path to>\\prodex.mjs" (npm root -g produced nothing)';
+    throw new Error(`Cannot find prodex.mjs. Set PRODEX_ENTRY to its absolute path - ${how}. Looked at: ${candidates.join(', ') || 'nothing'}`);
+  }
   return found;
 }
 
@@ -247,11 +259,20 @@ async function runCommand(options, passthrough, deps, err) {
   }
   const deadline = deps.now() + options.waitMs;
   const notReady = new Map();
+  const blocked = new Map();
   for (;;) {
     let anyReadyButBusy = false;
     for (const slot of wanted) {
-      if (notReady.has(slot.id)) continue;
-      const claim = claimSlot(deps.home, slot.id, { alive: deps.alive, now: deps.now, meta: options.ownership });
+      if (notReady.has(slot.id) || blocked.has(slot.id)) continue;
+      let claim;
+      try {
+        claim = claimSlot(deps.home, slot.id, { alive: deps.alive, now: deps.now, meta: options.ownership });
+      } catch (error) {
+        // A stale .reap mutex (or a policy-blocked deletion) makes this slot unclaimable; the
+        // sweep report has already printed the fix. Skip it and let the other slots work.
+        blocked.set(slot.id, error.message);
+        continue;
+      }
       if (!claim.ok) { anyReadyButBusy = true; continue; }
       try {
         const { state } = await checkWithRestore(slot, deps);
@@ -267,17 +288,25 @@ async function runCommand(options, passthrough, deps, err) {
         claim.release();
       }
     }
-    if (notReady.size === wanted.length) {
-      const detail = [...notReady].map(([id, state]) => `slot ${id}: ${state}`).join('; ');
-      if ([...notReady.values()].includes('error')) {
-        err(`prodex-slots: could not probe a slot (${detail}); check that prodex is installed and runs.`);
+    if (notReady.size + blocked.size === wanted.length) {
+      const detail = [
+        [...notReady].map(([id, state]) => `slot ${id}: ${state}`),
+        [...blocked].map(([id, message]) => `slot ${id}: blocked (${message})`),
+      ].flat().join('; ');
+      const fix = blocked.size
+        ? ' Fix the blocked slots (the self-heal report above names each file and its hand-deletion command).'
+        : ' Check that prodex is installed and runs.';
+      // Probe errors and unclaimable slots are tool/browser failures, not something a login
+      // fixes - never hand them to the user as a sign-in request.
+      if (notReady.size === 0 || [...notReady.values()].includes('error')) {
+        err(`prodex-slots: could not use any slot. ${detail}.${fix}`);
         return EXIT.ERROR;
       }
       err(`prodex-slots: no usable slot. ${detail}. Ask the user to sign in or complete any ChatGPT verification (run \`ensure\`), or to add slots (\`add --count N\`).`);
       return EXIT.NEEDS_USER;
     }
     if (!anyReadyButBusy || deps.now() >= deadline) {
-      err('prodex-slots: all usable slots stayed busy within --wait-ms');
+      err('prodex-slots: all usable slots stayed busy within --wait-ms. Wait longer (--wait-ms), free a slot (release --slot N with a closure note), or ask the user for more slots (add --count N).');
       return EXIT.BUSY;
     }
     await deps.sleep(2000);
@@ -319,6 +348,8 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
       return pending.length ? EXIT.NEEDS_USER : EXIT.OK;
     }
     if (command === 'release') {
+      // Ownership and note were validated in parseArgs, so nothing below can reject after the
+      // claim is already gone.
       const had = readClaim(deps.home, options.slot);
       releaseClaim(deps.home, options.slot);
       const record = writeClosure(deps.home, options.slot, { ownership: options.ownership, note: options.note });

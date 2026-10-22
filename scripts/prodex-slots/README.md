@@ -33,11 +33,13 @@ excludes `run` jobs on slot 1. The number of slots (1..8) is stored in
 
 ## Commands and exit codes
 
-- `list`: state of each slot and any live claim (by pid). States: `ready`; `busy` (logged in,
+- `list`: sweeps the claim directory first (see *Self-healing* - this is the one read-only
+  command that also removes dead leftovers), then reports each slot's state, any live claim (by
+  pid) and the last closure. States: `ready`; `busy` (logged in,
   still generating a reply, so `run` waits for it); `down` (browser not running);
   `needs-login`; `hidden` (window minimized or the tab not visible, Prodex cannot send);
   `error` (the probe or the browser start itself failed); `unknown`. Only `ready` slots take
-  new work. `list` only reads; it never restores a window.
+  new work. `list` never restores a window.
 - `add --count N`: registers N more slots, opens their windows and reports which need the user.
 - `ensure`: reopens slots whose browser is not running; a profile that is still logged in
   becomes `ready` with no user action. On Windows a minimized slot window is restored without

@@ -835,9 +835,10 @@ test('release writes a closure record that list shows as reusable', async () => 
   assert.equal(await h.run(['list']), EXIT.OK);
   assert.match(h.log.out.at(-1), /closed \d{4}-\d{2}-\d{2} \d{2}:\d{2} #71 本轮线程已闭合/);
 
-  // The slot is reusable right after the closure: a run takes it normally.
-  const next = harness();
+  // The slot is reusable right after the closure: a run takes it normally, in the SAME home.
+  const next = harness({ home: h.home });
   assert.equal(await next.run(['run', '--slot', '1', '--task', '72', '--', '--new-chat']), EXIT.OK);
+  assert.equal(next.log.asks[0].slot, 1, 'the closed slot took new work in the same home');
   assert.equal(readClaim(h.home, 1), null, 'the run released its own claim');
 });
 
@@ -876,4 +877,53 @@ test('closure notes are flattened and bounded; a hand-edited record cannot leak 
   assert.ok(!text.includes('SECRET') && !text.includes('slot 9'), 'invalid fields are dropped');
   const rows = JSON.parse(edited.log.out[0]);
   assert.deepEqual(rows[0].lastClosed, { closedAt: '2026-10-22T12:00:00.000Z', note: 'ok note' });
+});
+
+test('a rejected note never takes the claim down (validation runs before deletion)', async () => {
+  const h = harness();
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71' } });
+  assert.equal(await h.run(['release', '--slot', '1', '--note', 'x'.repeat(201)]), EXIT.ERROR);
+  const stderr = h.log.err.join('\n');
+  assert.match(stderr, /--note must be at most 200 characters/);
+  assert.match(stderr, /Usage: node scripts\/prodex-slots\/cli\.mjs/, 'a rejected note is a usage error');
+  assert.equal(readClaim(h.home, 1).pid, 111, 'the claim survived the rejected release');
+  assert.ok(!fs.existsSync(path.join(h.home, 'slot-claims', 'slot-1.closed.json')));
+});
+
+test('run auto skips a slot whose reap mutex is stale and uses the next one', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  claimSlot(h.home, 1, { pid: 111, alive: () => true });
+  const reap = `${claimPath(h.home, 1)}.reap`;
+  fs.writeFileSync(reap, '999\n');
+  fs.utimesSync(reap, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+  assert.equal(await h.run(['run', '--slot', 'auto', '--', '--new-chat']), EXIT.OK);
+  assert.equal(h.log.asks[0].slot, 2, 'the blocked slot was skipped');
+  const stderr = h.log.err.join('\n');
+  assert.match(stderr, /self-heal blocked on slot 1/);
+  assert.ok(!stderr.includes('Usage: node scripts/prodex-slots/cli.mjs'), 'a blocked slot is a runtime report, not a usage error');
+  assert.equal(readClaim(h.home, 2), null, 'the used slot released normally');
+});
+
+test('sweep does not echo a hand-edited pid', () => {
+  const home = tempHome();
+  fs.mkdirSync(path.dirname(claimPath(home, 1)), { recursive: true });
+  fs.writeFileSync(claimPath(home, 1), `${JSON.stringify({ owner: 'x', pid: 'Bearer SECRET-9f', startedAt: 1 })}\n`);
+  const report = sweepSlots(home, [1]);
+  assert.equal(readClaim(home, 1), null, 'an invalid pid makes the claim dead and removable');
+  assert.ok(!JSON.stringify(report).includes('SECRET-9f'), `the report echoed the pid: ${JSON.stringify(report)}`);
+  assert.match(report[0].reason, /owner pid is invalid/);
+});
+
+test('a closure record with a malformed timestamp is not shown at all', async () => {
+  const edited = harness();
+  fs.mkdirSync(path.join(edited.home, 'slot-claims'), { recursive: true });
+  fs.writeFileSync(path.join(edited.home, 'slot-claims', 'slot-1.closed.json'), `${JSON.stringify({
+    closedAt: 'SECRET-9f',
+    task: '#71',
+  })}\n`);
+  assert.equal(await edited.run(['list', '--json']), EXIT.OK);
+  const rows = JSON.parse(edited.log.out[0]);
+  assert.equal(rows[0].lastClosed, undefined, 'a record with a broken timestamp is dropped entirely');
+  assert.ok(!edited.log.out.join('\n').includes('SECRET-9f'));
 });

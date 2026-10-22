@@ -205,7 +205,9 @@ export function sweepSlots(home, ids, { alive = processAlive, staleMs = CLAIM_ST
           const age = claimAgeMs(file);
           if (!alive(claim.pid)) {
             removeClaimFile(file);
-            items.push({ slot: id, removed: 'claim', reason: `owner pid ${claim.pid} has exited` });
+            // The pid comes from a file anyone can edit; only a real integer is ever echoed.
+            const reason = Number.isInteger(claim.pid) ? `owner pid ${claim.pid} has exited` : 'owner pid is invalid';
+            items.push({ slot: id, removed: 'claim', reason });
           } else if (age !== null && age >= staleMs) {
             removeClaimFile(file);
             items.push({ slot: id, removed: 'claim', reason: `no heartbeat for ${Math.round(age / 1000)}s` });
@@ -363,11 +365,16 @@ export function readClosure(home, id) {
   } catch {
     return null;
   }
-  if (!raw || typeof raw !== 'object' || typeof raw.closedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(raw.closedAt)) {
+  // A strict timestamp: anything else means the record was hand-edited and is not shown.
+  if (!raw || typeof raw !== 'object' || typeof raw.closedAt !== 'string'
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/.test(raw.closedAt)) {
     return null;
   }
   const record = { closedAt: raw.closedAt, ...claimOwnership(raw) };
-  if (typeof raw.note === 'string' && raw.note) record.note = raw.note.slice(0, CLOSURE_NOTE_LIMIT);
+  if (typeof raw.note === 'string' && raw.note) {
+    const note = raw.note.replace(/\r?\n/g, ' ').trim().slice(0, CLOSURE_NOTE_LIMIT);
+    if (note) record.note = note;
+  }
   return record;
 }
 
