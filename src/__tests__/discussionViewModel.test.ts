@@ -25,6 +25,16 @@ function state(overrides: Partial<DiscussionRunState> = {}): DiscussionRunState 
 }
 
 describe('discussion view model', () => {
+  it('summarizes a free-form D0 reply by its first line, stripped of Markdown and truncated', () => {
+    const long = 'x'.repeat(200);
+    const model = buildDiscussionViewModel({
+      outputs: { first: '\n## **Short answer**\nbody', second: long },
+      statusByNode: { first: 'done', second: 'done' },
+    });
+    expect(model.matrix.rows[0].cells.first.summary).toBe('独立回答：Short answer');
+    expect(model.matrix.rows[0].cells.second.summary).toBe('独立回答：' + 'x'.repeat(120) + '…');
+  });
+
   it('maps D0, all three rounds, and the audit summary without changing the graph', () => {
     const outputs: Record<string, string> = {
       first: 'Independent initial thought from first.',
@@ -42,7 +52,7 @@ describe('discussion view model', () => {
     const model = buildDiscussionViewModel(state({ outputs, statusByNode: statuses }));
     expect(model.matrix.rows.map((row) => row.id)).toEqual(['initial', 'round-1', 'round-2', 'round-3', 'audit-summary']);
     expect(model.matrix.rows[0].cells.first.independent).toBe(true);
-    expect(model.matrix.rows[0].cells.first.summary).toContain('未能解析');
+    expect(model.matrix.rows[0].cells.first.summary).toBe('独立回答：Independent initial thought from first.');
     expect(model.matrix.rows[1].cells.first.summary).toContain('Use an explicit typed discussion state model');
     expect(model.matrix.rows[1].cells.auditor.summary).toContain('建议继续讨论');
     expect(model.matrix.rows[4].cells.auditor.summary).toContain('第3轮结束（AGREED）');

@@ -160,6 +160,21 @@ function baseCell(state: DiscussionRunState, nodeId: string, independent = false
   return { tone, summary, independent };
 }
 
+const INITIAL_SUMMARY_MAX = 120;
+
+// D0 replies are free-form (the initial prompt asks for no decision block), so the cell shows the
+// reply's own first line instead of reporting a missing block.
+function initialCell(state: DiscussionRunState, nodeId: string): DiscussionCell {
+  const cell = baseCell(state, nodeId, true);
+  if (cell.tone !== 'done') return cell;
+  const firstLine = readOutput(state.outputs, nodeId)?.split(/\r?\n/)
+    .map((line) => line.trim().replace(/^#{1,6}\s*/, '').replace(/^(?:[-*+]|\d+[.)])\s+/, '').replace(/\*\*|__/g, ''))
+    .find((line) => line.length > 0);
+  if (!firstLine) return cell;
+  const text = firstLine.length > INITIAL_SUMMARY_MAX ? firstLine.slice(0, INITIAL_SUMMARY_MAX) + '…' : firstLine;
+  return { ...cell, summary: '独立回答：' + text };
+}
+
 function decisionCell(state: DiscussionRunState, nodeId: string, independent = false): DiscussionCell {
   const cell = baseCell(state, nodeId, independent);
   if (cell.tone !== 'done') return cell;
@@ -389,8 +404,8 @@ export function buildDiscussionViewModel(state: DiscussionRunState): DiscussionV
       label: '独立初评（D0）',
       kind: 'initial',
       cells: {
-        first: decisionCell(state, 'first', true),
-        second: decisionCell(state, 'second', true),
+        first: initialCell(state, 'first'),
+        second: initialCell(state, 'second'),
         auditor: {
           tone: 'unknown',
           summary: 'D0 不包含审计环节；独立审计在每轮交换后执行。',
