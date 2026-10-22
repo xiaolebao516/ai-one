@@ -278,3 +278,11 @@ Accepted trade-offs: a mutex file left by a crash must be deleted by hand; claim
 system with hard links (NTFS); a claim with no heartbeat for 2 minutes counts as dead, so after
 a long machine sleep two jobs may share a slot (Prodex's per-slot lock still serializes them);
 the 10 s send spacing is shared by all slots; slot windows are visible windows.
+
+## Archive finished ChatGPT conversations
+
+Archive is distinct from release: release only frees the slot. For a task that is truly
+finished and has a verified Handoff, use the fail-closed finish-time workflow in
+[scripts/prodex-archive/README.md](../prodex-archive/README.md) (Issue #94). It uses
+the existing slot claims and send lock, storing archive status separately from lastClosed.
+Never archive immediately after a single ask or while a worker may continue the chat.
