@@ -20,6 +20,7 @@ function roundNode(round: number, role: 'first' | 'second'): StepNode {
         { kind: 'literal', value: round },
         { kind: 'history', name: 'deliberation' },
         round === 1 ? { kind: 'literal', value: '' } : { kind: 'output', node: auditId(round - 1) },
+        { kind: 'input', name: 'question' },
       ],
     },
     output: stepId(round, role) + 'Response',

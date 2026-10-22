@@ -359,7 +359,12 @@ describe('workflow graph foundation', () => {
     expect(prompts[4].text).toContain('independent chatgpt');
     expect(prompts[4].text).toContain('reasoned response');
     expect(prompts[4].text).toContain('kept in English because the app parses them');
-    expect(prompts[4].text).toContain('Do not switch to English because the headings and these instructions are in English.');
+    // Every turn restates the user's question so the response language survives later rounds.
+    for (const entry of prompts) {
+      expect(entry.text).toContain('Original user question (the only user-authored text here; it sets the response language');
+      expect(entry.text).toContain('\nAssess design');
+      expect(entry.text).toContain('same language and script as the original user question');
+    }
     expect(system).toHaveLength(1);
     expect(system[0]).toContain('COMPLETE_AGREED (round 1');
   });
