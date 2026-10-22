@@ -9,6 +9,7 @@ import {
   DEFAULT_HUD_REPOS,
   errorMessages,
   getGitHubData,
+  githubEmptyHeadline,
   githubEntryState,
   githubOverall,
   githubTasks,
@@ -208,6 +209,14 @@ describe('review fixes on PR #56 (d8176aa)', () => {
     const view = visibleText(renderToStaticMarkup(<GitHubPanel prefs={{ source: 'github', repos: ['o/a', 'o/b'] }} gh={gh} locale="en" text={text} onRefresh={() => {}} />));
     expect(view).toContain('o/a Complete 0 tasks read 2 h ago');
     expect(view).toContain('o/b Complete 0 tasks read 5 min ago');
+  });
+
+  it('does not headline a failed read as an empty view', async () => {
+    await refreshGitHubData(['o/a'], async () => [repoResult('o/a', 'error')]);
+    expect(githubEmptyHeadline('github', getGitHubData(), text)).toBe('Could not read GitHub');
+    expect(githubEmptyHeadline('demo', getGitHubData(), text)).toBe(text.t('headlineEmpty'));
+    await refreshGitHubData(['o/a'], async () => [repoResult('o/a', 'complete')]);
+    expect(githubEmptyHeadline('github', getGitHubData(), text)).toBe(text.t('headlineEmpty'));
   });
 
   it('only says "first page only" for a partial empty view when pagination says so', () => {

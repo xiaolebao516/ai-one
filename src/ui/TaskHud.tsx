@@ -33,6 +33,7 @@ import { loadGitHubTasksFromHost } from './taskHudGithubLoader';
 import {
   MAX_HUD_REPOS,
   errorMessages,
+  githubEmptyHeadline,
   githubOverall,
   githubTasks,
   mayHaveMore,
@@ -226,7 +227,7 @@ export function TaskHud({ locale, onClose, tasks, initialState, githubLoader = l
               headingRef={headingRef}
               source={source === 'github' ? <GitHubPanel prefs={prefs} gh={gh} locale={locale} text={text} onRefresh={refresh} /> : <DemoNotice text={text} />}
               subline={source === 'github' ? githubSubline(gh, locale, text) : text.t('subline')}
-              emptyHeadline={source === 'github' && gh.phase === 'loading' ? text.t('refreshing') : text.t('headlineEmpty')}
+              emptyHeadline={githubEmptyHeadline(source, gh, text)}
               empty={source === 'github' ? <GitHubEmpty prefs={prefs} gh={gh} text={text} onRefresh={refresh} /> : <DemoEmpty text={text} />}
             />
           ) : state.view === 'list' ? (

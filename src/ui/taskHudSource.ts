@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type { GitHubRepoTasks } from './taskHudGithub';
 import type { HudTask } from './taskHudModel';
+import type { TaskHudText } from './taskHudText';
 
 /**
  * Task HUD data source (#53, Spec #50 v1): demo data or a read-only GitHub snapshot per repository.
@@ -183,6 +184,14 @@ export function githubEntryState(state: GitHubDataState): GitHubEntryState {
   if (state.phase === 'loading') return 'loading';
   const overall = githubOverall(state);
   return overall === 'none' ? 'idle' : overall;
+}
+
+/** Headline when there are no tasks: a failed or partial GitHub read must not read as "nothing here". */
+export function githubEmptyHeadline(source: HudSource, state: GitHubDataState, text: TaskHudText): string {
+  if (source !== 'github') return text.t('headlineEmpty');
+  if (state.phase === 'loading') return text.t('refreshing');
+  const overall = githubOverall(state);
+  return overall === 'error' || overall === 'partial' ? text.t('githubErrorTitle') : text.t('headlineEmpty');
 }
 
 /**
