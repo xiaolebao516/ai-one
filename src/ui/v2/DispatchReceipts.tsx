@@ -64,9 +64,9 @@ export function DispatchReceipts({ snapshot, source, locale = 'zh-CN' }: { snaps
         <span className="text-v2-meta text-v2-ink-2">{labels.readOnly} · {chinese ? snapshot.events.length + ' 条记录' : snapshot.events.length + ' record' + (snapshot.events.length === 1 ? '' : 's')} · {chinese ? '不包含回复正文' : 'no reply text'}</span>
       </div>
       {snapshot.warnings.map((warning) => <Notice key={warning} tone="block" title={warningText(warning, chinese)} />)}
-      <div className="flex flex-wrap gap-v2-sm" aria-label={labels.slotsAria}>
+      <ul className="m-0 flex list-none flex-wrap gap-v2-sm p-0" aria-label={labels.slotsAria}>
         {snapshot.slots.map((slot) => (
-          <Card key={slot.id} className="min-w-40 flex-1 p-v2-md">
+          <Card as="li" key={slot.id} className="min-w-40 flex-1 p-v2-md">
             <div className="flex flex-wrap items-center gap-v2-sm"><strong className="text-v2-body">{labels.slot} {slot.id}</strong><Badge>{(chinese ? SLOT_LABEL : EN_SLOT_LABEL)[slot.state]}</Badge></div>
             <div className="mt-v2-sm break-all text-v2-meta text-v2-ink-2">{slot.task ?? labels.taskMissing} · {slot.sessionKey ?? labels.sessionMissing}</div>
             <div className="text-v2-meta text-v2-ink-2">{labels.port} {slot.port} · {labels.browserUnprobed}</div>
@@ -74,11 +74,11 @@ export function DispatchReceipts({ snapshot, source, locale = 'zh-CN' }: { snaps
             {slot.threadUrl ? <details className="text-v2-meta text-v2-ink-2"><summary>{labels.threadRecorded}</summary><span className="block break-all font-v2-mono">{slot.threadUrl}</span></details> : null}
           </Card>
         ))}
-      </div>
+      </ul>
       {snapshot.events.length === 0 ? <EmptyState title={labels.noRecords} description={labels.choosePath} /> : (
-        <div className="flex flex-col gap-v2-sm" aria-label={labels.receiptsAria}>
+        <ul className="m-0 flex list-none flex-col gap-v2-sm p-0" aria-label={labels.receiptsAria}>
           {snapshot.events.map((event) => (
-            <Card key={event.id} className="p-v2-md">
+            <Card as="li" key={event.id} className="p-v2-md">
               <div className="flex flex-wrap items-center gap-v2-sm">
                 <StatusIndicator tone={STATES[event.status].tone} label={chinese ? STATES[event.status].label : EN_STATES[event.status]} variant="pill" />
                 {event.issue ? <Badge>{event.issue}</Badge> : null}
@@ -93,7 +93,7 @@ export function DispatchReceipts({ snapshot, source, locale = 'zh-CN' }: { snaps
               {event.status === 'recovered' ? <p className="mb-0 text-v2-meta text-v2-ink-2">{labels.recoveredNote}</p> : null}
             </Card>
           ))}
-        </div>
+        </ul>
       )}
     </div>
   );

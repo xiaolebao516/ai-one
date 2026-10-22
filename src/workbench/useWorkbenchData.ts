@@ -180,6 +180,8 @@ export function useWorkbenchData(load: GitHubLoader = readGitHub): WorkbenchData
       if (repos.length) update({ repos });
     },
     setDispatchRepo: (input) => {
+      // Checked before the "empty means clear" rule: a lone line break must not wipe the saved folder.
+      if (/[\0\r\n]/.test(input)) return 'invalid';
       if (!input.trim()) {
         update({ dispatchRepo: '' });
         return 'cleared';

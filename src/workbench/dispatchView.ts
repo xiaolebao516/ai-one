@@ -5,17 +5,26 @@ import type { WorkbenchTextKey } from './workbenchText';
 
 /** What the channel card and the title bar say about Prodex, one word per read state. */
 export interface ChannelView {
-  tone: 'ok' | 'attention' | 'empty' | 'pending' | 'failed';
+  tone: 'ok' | 'attention' | 'incomplete' | 'empty' | 'pending' | 'failed';
   labelKey: WorkbenchTextKey;
   /** Only for data that was actually read (or the demo); never for a stale or failed read. */
   summary?: ChannelSummary;
 }
 
-export const CHANNEL_BADGE: Record<ChannelView['tone'], V2BadgeTone> = { ok: 'done', attention: 'you', empty: 'unknown', pending: 'unknown', failed: 'block' };
+export const CHANNEL_BADGE: Record<ChannelView['tone'], V2BadgeTone> = {
+  ok: 'done',
+  // A channel problem is not a decision for the user, so it is not the amber "needs you" tone.
+  attention: 'block',
+  incomplete: 'unknown',
+  empty: 'unknown',
+  pending: 'unknown',
+  failed: 'block',
+};
 
 const LABEL: Record<ChannelView['tone'], WorkbenchTextKey> = {
   ok: 'channelOk',
   attention: 'channelAttention',
+  incomplete: 'channelIncomplete',
   empty: 'channelEmpty',
   pending: 'channelNotRead',
   failed: 'channelFailed',

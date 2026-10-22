@@ -6,11 +6,14 @@ const STATUSES: DispatchStatus[] = ['running', 'completed', 'timeout', 'request_
 
 describe('dispatch summary', () => {
   it('counts every declared status and every slot state', () => {
-    const summary = summarizeDispatch(DEMO_DISPATCH, Date.parse('2026-10-23T12:00:00.000Z'));
+    const summary = summarizeDispatch(DEMO_DISPATCH, Date.parse('2026-10-22T12:00:00.000Z'));
     expect(summary.total).toBe(DEMO_DISPATCH.events.length);
     for (const status of STATUSES) expect(summary.counts[status]).toBe(1);
     expect(summary.slots).toEqual({ total: 4, claimed: 1, idle: 1, stale: 1, unknown: 1 });
-    expect(summary.lastAt).toBe('2026-10-23T10:02:00.000Z');
+    expect(summary.lastAt).toBe('2026-10-22T10:02:00.000Z');
+    // Only the timeout and the mismatch count as "timed out or mismatched"; the other block is apart.
+    expect(summary.recentProblems).toBe(2);
+    expect(summary.recentBlocked).toBe(1);
   });
 
   it('includes the exact 24-hour boundary but excludes older, future and missing timestamps', () => {
@@ -35,6 +38,18 @@ describe('dispatch summary', () => {
     expect(summarizeDispatch({ events: [{ id: 'ok', taskId: 'x', status: 'running', createdAt: '2026-10-23T11:00:00.000Z' }], slots: [], warnings: [] }, now)).toMatchObject({ lastAt: '2026-10-23T11:00:00.000Z', tone: 'ok' });
     expect(summarizeDispatch({ events: [{ id: 'bad', taskId: 'x', status: 'timeout', createdAt: '2026-10-23T11:00:00.000Z' }], slots: [], warnings: [] }, now).tone).toBe('attention');
     expect(summarizeDispatch({ events: [], slots: [{ id: 1, port: 9333, state: 'stale', browserState: 'unprobed' }], warnings: [] }, now).tone).toBe('attention');
+    expect(summarizeDispatch({ events: [{ id: 'other', taskId: 'x', status: 'blocked', createdAt: '2026-10-23T11:00:00.000Z' }], slots: [], warnings: [] }, now)).toMatchObject({ recentProblems: 0, recentBlocked: 1, tone: 'attention' });
+  });
+
+  it('never reports incomplete or unreadable records as ok', () => {
+    const now = Date.parse('2026-10-23T12:00:00.000Z');
+    const fine = { id: 'ok', taskId: 'x', status: 'completed' as const, createdAt: '2026-10-23T11:00:00.000Z' };
+    expect(summarizeDispatch({ events: [fine], slots: [], warnings: ['仅显示最近的部分记录'] }, now).tone).toBe('incomplete');
+    expect(summarizeDispatch({ events: [], slots: [], warnings: ['派工元数据格式无效'] }, now).tone).toBe('incomplete');
+    expect(summarizeDispatch({ events: [fine, { ...fine, id: 'u', status: 'unknown' }], slots: [], warnings: [] }, now).tone).toBe('incomplete');
+    expect(summarizeDispatch({ events: [fine], slots: [{ id: 1, port: 9333, state: 'unknown', browserState: 'unprobed' }], warnings: [] }, now).tone).toBe('incomplete');
+    // A real problem still wins over "incomplete".
+    expect(summarizeDispatch({ events: [{ ...fine, status: 'timeout' }], slots: [], warnings: ['x'] }, now).tone).toBe('attention');
   });
 
   it('ships one demo event for every dispatch status', () => {
@@ -50,6 +65,8 @@ describe('repository path normalization', () => {
     expect(normalizeRepoPath('C:\\work\\repo\\\\')).toBe('C:\\work\\repo');
     expect(normalizeRepoPath('C:\\')).toBe('C:\\');
     expect(normalizeRepoPath('/')).toBe('/');
+    // In a POSIX path a trailing backslash is part of the name, not a separator.
+    expect(normalizeRepoPath('/srv/repo\\')).toBe('/srv/repo\\');
   });
 
   it('rejects relative paths, UNC paths, parent segments, line breaks, NUL and overlong values', () => {
@@ -57,6 +74,8 @@ describe('repository path normalization', () => {
     expect(normalizeRepoPath('repo/path')).toBeUndefined();
     expect(normalizeRepoPath('\\\\server\\share')).toBeUndefined();
     expect(normalizeRepoPath('//server/share')).toBeUndefined();
+    expect(normalizeRepoPath('/\\server\\share')).toBeUndefined();
+    expect(normalizeRepoPath('\\/server/share')).toBeUndefined();
     expect(normalizeRepoPath('/repo/../other')).toBeUndefined();
     expect(normalizeRepoPath('C:\\repo\\..\\other')).toBeUndefined();
     expect(normalizeRepoPath('/repo\nname')).toBeUndefined();

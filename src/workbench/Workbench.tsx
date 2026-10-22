@@ -203,7 +203,14 @@ interface TitleBarProps {
   onShowResources: () => void;
 }
 
-const CHANNEL_DOT: Record<ChannelView['tone'], string> = { ok: 'bg-v2-done', attention: 'bg-v2-you', empty: 'bg-v2-unknown', pending: 'bg-v2-unknown', failed: 'bg-v2-block' };
+const CHANNEL_DOT: Record<ChannelView['tone'], string> = {
+  ok: 'bg-v2-done',
+  attention: 'bg-v2-block',
+  incomplete: 'bg-v2-unknown',
+  empty: 'bg-v2-unknown',
+  pending: 'bg-v2-unknown',
+  failed: 'bg-v2-block',
+};
 
 function TitleBar({ text, tasks, health, channel, onPalette, onShowTasks, onShowResources }: TitleBarProps) {
   const summary = summarize(tasks);

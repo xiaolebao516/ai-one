@@ -143,7 +143,7 @@ export function HomeView({ locale, tasks, health, channel, onOpenTask, onShowTas
               ) : null}
               {channel?.summary ? (
                 <p className="text-v2-meta text-v2-ink-2">
-                  {text.t('channelSlots', { claimed: channel.summary.slots.claimed, idle: channel.summary.slots.idle, stale: channel.summary.slots.stale })}
+                  {text.t('channelSlots', channel.summary.slots)}
                 </p>
               ) : null}
               <p className="text-v2-meta text-v2-ink-3">{text.t('resourcesPending')}</p>

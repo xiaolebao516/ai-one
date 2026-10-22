@@ -3,6 +3,7 @@ import { AI_PROVIDERS, ALL_AI_PROVIDERS } from '../../../shared/constants';
 import type { Locale } from '../../i18n/resolve';
 import { Badge, Button, Card, Icon, Notice, SectionHeader, cx } from '../../ui/v2';
 import { DispatchReceipts } from '../../ui/v2/DispatchReceipts';
+import type { ChannelSummary } from '../dispatchModel';
 import { CHANNEL_BADGE, channelView, type ChannelView } from '../dispatchView';
 import type { DispatchData } from '../useDispatchData';
 import { workbenchText, type WorkbenchText } from '../workbenchText';
@@ -153,6 +154,26 @@ function ResourceCard({ avatar, color, name, kind, note, text, action }: Resourc
   );
 }
 
+/**
+ * Totals that can be checked one by one against the receipt list. The rarer states only appear when
+ * present, so the line stays short without hiding anything.
+ */
+function countLine(text: WorkbenchText, summary: ChannelSummary): string {
+  const { counts } = summary;
+  const parts = [
+    text.t('channelTotal', { n: summary.total }),
+    text.t('channelRunning', { n: counts.running }),
+    text.t('channelCompleted', { n: counts.completed }),
+    text.t('channelTimeout', { n: counts.timeout }),
+    text.t('channelMismatch', { n: counts.request_mismatch }),
+    text.t('channelRecovered', { n: counts.recovered }),
+  ];
+  if (counts.blocked) parts.push(text.t('channelBlocked', { n: counts.blocked }));
+  if (counts.preview) parts.push(text.t('channelPreview', { n: counts.preview }));
+  if (counts.unknown) parts.push(text.t('channelUnverified', { n: counts.unknown }));
+  return parts.join(' · ');
+}
+
 interface ChannelCardProps {
   text: WorkbenchText;
   locale: Locale;
@@ -193,17 +214,10 @@ function ChannelCard({ text, locale, channel, dispatch, repoPath, onSetRepo }: C
           {dispatch.state === 'loading' ? <span>{text.t('channelLoading')}</span> : null}
           {summary ? (
             <>
-              <span className="text-v2-ink">
-                {text.t('channelCounts', {
-                  total: summary.total,
-                  running: summary.counts.running,
-                  completed: summary.counts.completed,
-                  problems: summary.recentProblems,
-                  recovered: summary.counts.recovered,
-                })}
-              </span>
+              <span className="text-v2-ink">{countLine(text, summary)}</span>
+              <span>{text.t('channelRecent', { problems: summary.recentProblems, blocked: summary.recentBlocked })}</span>
               {summary.lastAt ? <span>{text.t('channelLast', { time: time(summary.lastAt) })}</span> : null}
-              <span>{text.t('channelSlots', { claimed: summary.slots.claimed, idle: summary.slots.idle, stale: summary.slots.stale })}</span>
+              <span>{text.t('channelSlots', summary.slots)}</span>
               {dispatch.state === 'ready' && dispatch.observedAt ? <span className="text-v2-ink-3">{text.t('channelObserved', { time: time(dispatch.observedAt) })}</span> : null}
             </>
           ) : null}

@@ -8,7 +8,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: vi.fn() }));
 
 import type { DispatchLoader } from '../workbench/useDispatchData';
-import type { GitHubLoader } from '../workbench/useWorkbenchData';
+import { useWorkbenchData, type GitHubLoader, type WorkbenchData } from '../workbench/useWorkbenchData';
 import { Workbench } from '../workbench/Workbench';
 import { STORAGE_KEYS } from '../workbench/workbenchStorage';
 
@@ -95,9 +95,10 @@ describe('resources page', () => {
     await openResources(container);
     expect(loader).toHaveBeenCalledWith('D:/code/ai-one');
     const text = channel(container);
-    expect(text).toContain('2 dispatches');
-    expect(text).toContain('1 timed out or mismatched in the last 24 h');
-    expect(text).toContain('Slots: 1 claimed · 1 free · 0 stale heartbeat');
+    expect(text).toContain('2 dispatches · 0 running · 0 done · 1 timed out · 1 request mismatches · 0 recovered');
+    // The old mismatch is counted above but is outside the last-24-hours window.
+    expect(text).toContain('Last 24 h: 1 timed out or mismatched, 0 blocked for other reasons');
+    expect(text).toContain('Slots: 1 claimed · 1 free · 0 stale heartbeat · 0 unreadable');
     expect(container.querySelector('[data-testid="channel-button"]')?.getAttribute('aria-label')).toContain('Recent problems');
   });
 
@@ -130,6 +131,32 @@ describe('resources page', () => {
     await act(async () => input.form?.requestSubmit());
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('absolute folder path');
     expect(JSON.parse(window.localStorage.getItem(STORAGE_KEYS.prefs) ?? '{}').dispatchRepo ?? '').toBe('');
+  });
+
+  it('a lone line break is rejected, not taken as "clear the folder"', async () => {
+    realPrefs('D:/code/ai-one');
+    let data: WorkbenchData | undefined;
+    function Probe() {
+      data = useWorkbenchData(githubLoader);
+      return null;
+    }
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    live.push(root);
+    await act(async () => root.render(<Probe />));
+    for (const input of ['\n', '\r\n', 'D:/code\n']) {
+      let result: string | undefined;
+      await act(async () => {
+        result = data?.setDispatchRepo(input);
+      });
+      expect(result).toBe('invalid');
+    }
+    expect(data?.prefs.dispatchRepo).toBe('D:/code/ai-one');
+    await act(async () => {
+      data?.setDispatchRepo('   ');
+    });
+    expect(data?.prefs.dispatchRepo).toBe('');
   });
 
   it('shows Chinese copy in a Chinese locale', async () => {
