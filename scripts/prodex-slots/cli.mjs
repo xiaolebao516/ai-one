@@ -229,7 +229,7 @@ async function ensureSlots(slots, deps, { pollMs = 2000, timeoutMs = 20_000 } = 
         while (deps.now() < deadline) {
           await deps.sleep(pollMs);
           ({ state, detail } = await checkWithRestore(slot, deps));
-          if (state !== 'down') break;
+          if (state !== 'down' && state !== 'unknown') break;
         }
       }
     }

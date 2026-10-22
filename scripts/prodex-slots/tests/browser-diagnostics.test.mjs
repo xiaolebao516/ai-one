@@ -27,6 +27,7 @@ function browserProcess({ name = 'msedge.exe', port = 9334, profile = PROFILE2, 
 
 function mockRealDeps({
   home = tempHome(),
+  platform = 'win32',
   check = 'chatgpt: browser_unreachable - endpoint unavailable',
   processes = [browserProcess()],
   processProbeError = false,
@@ -44,7 +45,7 @@ function mockRealDeps({
     return { status: 1, stdout: check, stderr: 'PRIVATE-PRODEX-ERROR' };
   };
   const deps = realDeps(home, {
-    platform: 'win32',
+    platform,
     env: { PRODEX_ENTRY: process.execPath },
     spawnSyncFn,
     fetchFn: async (...args) => {
@@ -165,4 +166,45 @@ test('ensure never relaunches a browser when process/port evidence is uncertain'
   const rows = JSON.parse(out[0]);
   assert.equal(rows.find((row) => row.id === 2).state, 'unknown');
   assert.match(err.join('\n'), /no automatic restart was attempted/);
+});
+
+
+test('unsupported platforms report unknown rather than inferring the browser is closed', async () => {
+  const { deps } = mockRealDeps({ platform: 'linux', processes: [] });
+  const result = await deps.checkSlot(SLOT2);
+
+  assert.equal(result.state, 'unknown');
+  assert.match(result.detail, /cannot verify the browser process/);
+});
+
+test('ensure keeps polling a newly launched browser while its page state is unknown', async () => {
+  const home = tempHome();
+  addSlots(home, 0 + 0 + 1);
+  const states = ['down', 'unknown', 'ready'];
+  const launches = [];
+  let now = 0;
+  const deps = {
+    home,
+    now: () => now,
+    sleep: async (ms) => { now += ms; },
+    profileExists: () => true,
+    checkSlot: async () => {
+      const state = states.shift() ?? 'ready';
+      return { state, ...(state === 'unknown' ? { detail: 'browser starting' } : {}) };
+    },
+    launchHeaded: async (slot) => { launches.push(slot.id); return { ok: true }; },
+  };
+  const out = [];
+  const err = [];
+
+  const code = await main(['ensure', '--json'], {
+    deps,
+    out: (value) => out.push(value),
+    err: (value) => err.push(value),
+  });
+
+  assert.equal(code, EXIT.OK);
+  assert.deepEqual(launches, [1]);
+  assert.equal(JSON.parse(out[0])[0].state, 'ready');
+  assert.equal(now, 4000, 'polling continues through an intermediate unknown state');
 });
