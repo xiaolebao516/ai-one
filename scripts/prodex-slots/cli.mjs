@@ -273,7 +273,12 @@ async function runCommand(options, passthrough, deps, err) {
         blocked.set(slot.id, error.message);
         continue;
       }
-      if (!claim.ok) { anyReadyButBusy = true; continue; }
+      if (!claim.ok) {
+        if (claim.warning) err(`prodex-slots: slot ${slot.id}: ${claim.warning}`);
+        anyReadyButBusy = true;
+        continue;
+      }
+      if (claim.warning) err(`prodex-slots: slot ${slot.id}: ${claim.warning} (the claim itself is fine; the sweep collects the leftover)`);
       try {
         const { state } = await checkWithRestore(slot, deps);
         if (state === 'busy') { anyReadyButBusy = true; continue; }

@@ -365,9 +365,12 @@ export function readClosure(home, id) {
   } catch {
     return null;
   }
-  // A strict timestamp: anything else means the record was hand-edited and is not shown.
-  if (!raw || typeof raw !== 'object' || typeof raw.closedAt !== 'string'
-    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/.test(raw.closedAt)) {
+  // A strict canonical instant: the round-trip through Date rejects impossible calendar dates
+  // ("2026-99-99T...") that a regex alone would let through.
+  const validInstant = typeof raw?.closedAt === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/.test(raw.closedAt)
+    && (() => { try { return new Date(raw.closedAt).toISOString() === raw.closedAt; } catch { return false; } })();
+  if (!raw || typeof raw !== 'object' || !validInstant) {
     return null;
   }
   const record = { closedAt: raw.closedAt, ...claimOwnership(raw) };
@@ -417,6 +420,10 @@ export function claimSlot(home, id, { pid = process.pid, alive = processAlive, n
   const owner = crypto.randomUUID();
   const temp = `${file}.${owner}.tmp`;
   fs.writeFileSync(temp, `${JSON.stringify({ owner, pid, startedAt: now(), ...ownership })}\n`);
+  // The claim attempt and the temp cleanup are separated on purpose: once the claim exists (or a
+  // holder was identified), a blocked temp deletion must not discard that result - it would leave
+  // a live claim without an owner. The leftover temp is harmless and the sweep collects it.
+  let result = null;
   try {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
@@ -428,7 +435,7 @@ export function claimSlot(home, id, { pid = process.pid, alive = processAlive, n
           } catch { /* claim already gone */ }
         }, beatMs);
         beat.unref();
-        return {
+        result = {
           ok: true,
           owner,
           release: () => {
@@ -440,6 +447,7 @@ export function claimSlot(home, id, { pid = process.pid, alive = processAlive, n
             }
           },
         };
+        break;
       } catch (error) {
         if (error.code !== 'EEXIST') throw error;
       }
@@ -452,12 +460,23 @@ export function claimSlot(home, id, { pid = process.pid, alive = processAlive, n
         removeClaimFile(file);
         return { retry: true };
       });
-      if (!verdict.retry) return { ok: false, holder: verdict.holder };
+      if (!verdict.retry) { result = { ok: false, holder: verdict.holder }; break; }
     }
-    return { ok: false, holder: readClaim(home, id) };
-  } finally {
-    removeClaimFile(temp);
+    if (!result) result = { ok: false, holder: readClaim(home, id) };
+  } catch (error) {
+    // The claim state was not changed by this attempt; try to leave no temp behind, but never
+    // let a blocked cleanup mask the original error.
+    try {
+      fs.rmSync(temp, { force: true });
+    } catch { /* the sweep collects it once it is stale */ }
+    throw error;
   }
+  try {
+    removeClaimFile(temp);
+  } catch (error) {
+    result.warning = error.message;
+  }
+  return result;
 }
 
 // With `owner` set only that owner's claim is removed; without it the claim is dropped

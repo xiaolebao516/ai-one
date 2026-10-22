@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { main, parseArgs } from '../cli.mjs';
-import { EXIT, addSlots, claimSlot, loadConfig, normalizeOwnership, parseCheck, readClaim, releaseClaim, slotEnv, sweepSlots } from '../slots.mjs';
+import { EXIT, addSlots, claimSlot, loadConfig, normalizeOwnership, parseCheck, readClaim, releaseClaim, slotEnv, sweepSlots, removeClaimFile } from '../slots.mjs';
 
 const childScript = path.join(path.dirname(fileURLToPath(import.meta.url)), 'race-child.mjs');
 // Real thread URLs, so the path check is exercised the way a caller would hit it.
@@ -791,9 +791,22 @@ test('a failed ask points at recover instead of leaving a dead end', async () =>
   assert.ok(!stderr.includes('Usage: node scripts/prodex-slots/cli.mjs'));
 });
 
-test('a deletion blocked by an external policy names the file and the command', () => {
+test('removeClaimFile reports the file and the command when deletion is blocked', () => {
   const realRmSync = fs.rmSync;
-  const temp = path.join(tempHome(), 'slot-claims', 'slot-1.json.x.tmp');
+  fs.rmSync = () => { const e = new Error('operation not permitted'); e.code = 'EPERM'; throw e; };
+  try {
+    let message = '';
+    try { removeClaimFile('C:/x/slot-1.json'); } catch (error) { message = error.message; }
+    assert.match(message, /could not delete C:\/x\/slot-1\.json \(EPERM\)/);
+    assert.match(message, /blocked by an external policy/);
+    assert.match(message, /Remove-Item -LiteralPath 'C:\/x\/slot-1\.json'/);
+  } finally {
+    fs.rmSync = realRmSync;
+  }
+});
+
+test('a blocked temp cleanup after a successful claim warns but keeps the claim usable', async () => {
+  const realRmSync = fs.rmSync;
   fs.rmSync = (target, options) => {
     if (String(target).endsWith('.tmp')) {
       const error = new Error('operation not permitted');
@@ -803,18 +816,53 @@ test('a deletion blocked by an external policy names the file and the command', 
     return realRmSync(target, options);
   };
   try {
-    let message = '';
-    try {
-      claimSlot(tempHome(), 1, { pid: 5, alive: () => true });
-    } catch (error) {
-      message = error.message;
-    }
-    assert.match(message, /could not delete .+\.tmp \(EPERM\)/);
-    assert.match(message, /blocked by an external policy/);
-    assert.match(message, /Remove-Item -LiteralPath/);
+    const h = harness();
+    addSlots(h.home, 1);
+    assert.equal(await h.run(['run', '--slot', 'auto', '--', '--new-chat']), EXIT.OK, 'the dispatch itself succeeds');
+    const stderr = h.log.err.join('\n');
+    assert.match(stderr, /slot 1: could not delete .+\.tmp \(EPERM\)/);
+    assert.match(stderr, /the claim itself is fine; the sweep collects the leftover/);
+    assert.ok(!stderr.includes('Usage: node scripts/prodex-slots/cli.mjs'));
+    assert.equal(readClaim(h.home, 1), null, 'the claim was released normally at the end');
   } finally {
     fs.rmSync = realRmSync;
   }
+});
+
+test('a blocked claim-file deletion during release is a runtime error that keeps the claim', async () => {
+  const realRmSync = fs.rmSync;
+  fs.rmSync = (target, options) => {
+    if (String(target).endsWith('slot-1.json')) {
+      const error = new Error('operation not permitted');
+      error.code = 'EPERM';
+      throw error;
+    }
+    return realRmSync(target, options);
+  };
+  try {
+    const h = harness();
+    claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71' } });
+    assert.equal(await h.run(['release', '--slot', '1', '--note', 'closing']), EXIT.ERROR);
+    const stderr = h.log.err.join('\n');
+    assert.match(stderr, /could not delete .+slot-1\.json \(EPERM\)/);
+    assert.match(stderr, /Remove-Item -LiteralPath/);
+    assert.ok(!stderr.includes('Usage: node scripts/prodex-slots/cli.mjs'), 'a runtime deletion failure carries no usage block');
+    assert.equal(readClaim(h.home, 1).pid, 111, 'the claim was not lost');
+    assert.ok(!fs.existsSync(path.join(h.home, 'slot-claims', 'slot-1.closed.json')), 'no closure record without a successful release');
+  } finally {
+    fs.rmSync = realRmSync;
+  }
+});
+
+test('a closure timestamp that is a valid format but an impossible date is dropped', async () => {
+  const edited = harness();
+  fs.mkdirSync(path.join(edited.home, 'slot-claims'), { recursive: true });
+  fs.writeFileSync(path.join(edited.home, 'slot-claims', 'slot-1.closed.json'), `${JSON.stringify({
+    closedAt: '2026-99-99T99:99:99.000Z',
+    task: '#71',
+  })}\n`);
+  assert.equal(await edited.run(['list', '--json']), EXIT.OK);
+  assert.equal(JSON.parse(edited.log.out[0])[0].lastClosed, undefined);
 });
 
 test('release writes a closure record that list shows as reusable', async () => {
@@ -825,7 +873,6 @@ test('release writes a closure record that list shows as reusable', async () => 
   assert.equal(readClaim(h.home, 1), null, 'the claim is gone');
   const stderr = h.log.err.join('\n');
   assert.match(stderr, /released slot 1 \(claim removed\); closed record written \(#71, "本轮线程已闭合，槽位可复用"\)\. The slot is reusable\./);
-
   assert.equal(await h.run(['list', '--json']), EXIT.OK);
   const rows = JSON.parse(h.log.out[0]);
   assert.match(rows[0].lastClosed.closedAt, /^\d{4}-\d{2}-\d{2}T/);
@@ -834,8 +881,6 @@ test('release writes a closure record that list shows as reusable', async () => 
   assert.equal(rows[0].lastClosed.note, '本轮线程已闭合，槽位可复用');
   assert.equal(await h.run(['list']), EXIT.OK);
   assert.match(h.log.out.at(-1), /closed \d{4}-\d{2}-\d{2} \d{2}:\d{2} #71 本轮线程已闭合/);
-
-  // The slot is reusable right after the closure: a run takes it normally, in the SAME home.
   const next = harness({ home: h.home });
   assert.equal(await next.run(['run', '--slot', '1', '--task', '72', '--', '--new-chat']), EXIT.OK);
   assert.equal(next.log.asks[0].slot, 1, 'the closed slot took new work in the same home');
@@ -852,17 +897,14 @@ test('release keeps one closure record per slot and works without a claim', asyn
   const record = JSON.parse(fs.readFileSync(path.join(dir, 'slot-1.closed.json'), 'utf8'));
   assert.equal(record.task, '#72', 'only the newest closure stays');
   assert.equal(record.note, 'second');
-  const stderr = h.log.err.join('\n');
-  assert.match(stderr, /no claim was present/, 'closing a slot without a claim still records');
+  assert.match(h.log.err.join('\n'), /no claim was present/, 'closing a slot without a claim still records');
 });
 
 test('closure notes are flattened and bounded; a hand-edited record cannot leak into list', async () => {
-  // The note is flattened before the length check, so newlines do not dodge the limit.
   const failing = harness();
   assert.equal(await failing.run(['release', '--slot', '1', '--note', `${'a\n'.repeat(150)}`]), EXIT.ERROR);
   assert.match(failing.log.err.join('\n'), /--note must be at most 200 characters/);
   assert.ok(!fs.existsSync(path.join(failing.home, 'slot-claims', 'slot-1.closed.json')), 'a rejected note writes nothing');
-
   const edited = harness();
   fs.mkdirSync(path.join(edited.home, 'slot-claims'), { recursive: true });
   fs.writeFileSync(path.join(edited.home, 'slot-claims', 'slot-1.closed.json'), `${JSON.stringify({
@@ -913,17 +955,4 @@ test('sweep does not echo a hand-edited pid', () => {
   assert.equal(readClaim(home, 1), null, 'an invalid pid makes the claim dead and removable');
   assert.ok(!JSON.stringify(report).includes('SECRET-9f'), `the report echoed the pid: ${JSON.stringify(report)}`);
   assert.match(report[0].reason, /owner pid is invalid/);
-});
-
-test('a closure record with a malformed timestamp is not shown at all', async () => {
-  const edited = harness();
-  fs.mkdirSync(path.join(edited.home, 'slot-claims'), { recursive: true });
-  fs.writeFileSync(path.join(edited.home, 'slot-claims', 'slot-1.closed.json'), `${JSON.stringify({
-    closedAt: 'SECRET-9f',
-    task: '#71',
-  })}\n`);
-  assert.equal(await edited.run(['list', '--json']), EXIT.OK);
-  const rows = JSON.parse(edited.log.out[0]);
-  assert.equal(rows[0].lastClosed, undefined, 'a record with a broken timestamp is dropped entirely');
-  assert.ok(!edited.log.out.join('\n').includes('SECRET-9f'));
 });
