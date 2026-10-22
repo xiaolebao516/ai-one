@@ -33,27 +33,49 @@ excludes `run` jobs on slot 1. The number of slots (1..8) is stored in
 
 ## Commands and exit codes
 
-- `list`: state of each slot and any live claim. States: `ready`; `busy` (logged in, still
-  generating a reply, so `run` waits for it); `down` (browser not running); `needs-login`;
-  `hidden` (window minimized or behind another tab, Prodex cannot send until it is visible);
-  `unknown`. Only `ready` slots take new work.
-- `add --count N`: registers N more slots, opens their windows and reports which need a login.
+- `list`: state of each slot and any live claim (by pid). States: `ready`; `busy` (logged in,
+  still generating a reply, so `run` waits for it); `down` (browser not running);
+  `needs-login`; `hidden` (window minimized or the tab not visible, Prodex cannot send);
+  `error` (the probe or the browser start itself failed); `unknown`. Only `ready` slots take
+  new work. `list` only reads; it never restores a window.
+- `add --count N`: registers N more slots, opens their windows and reports which need the user.
 - `ensure`: reopens slots whose browser is not running; a profile that is still logged in
-  becomes `ready` with no user action.
+  becomes `ready` with no user action. On Windows a minimized slot window is restored without
+  stealing focus; `run` does the same once before it gives up on a `hidden` slot.
 - `run [--slot N|auto] [--wait-ms 600000] -- <ask args>`: claims a ready, idle slot, runs
   `prodex pro browser ask` with that slot's `PRODEX_CDP_PORT` / `PRODEX_SEND_LOCK_FILE`, then
   releases the claim. `--port` must not be passed. `--slot N` never falls back to another slot.
-- `release --slot N`: removes a claim (only needed if a recycled pid keeps a dead claim alive).
+- `release --slot N`: removes a claim by hand.
 
-Exit codes: `0` ok (or the ask's own code), `1` error, `3` the user must act (log in / add a
-slot), `4` every ready slot stayed busy past `--wait-ms`.
+Exit codes: `0` ok, `1` error, `3` the user must act (sign in or complete a ChatGPT
+verification / add a slot), `4` every ready slot stayed busy past `--wait-ms`. A failing
+`prodex ... ask` is always `1`, with its own code written to stderr, so its code can never
+pass for `3` or `4`. A browser that cannot be started or probed is `1`, not `3`.
+
+`run` forwards the ask's stdout (the model reply) unchanged. Redirect it to a file and keep it
+out of shared logs. Claims store only a random owner id, the pid and a start time, never a
+`--session-key` or any conversation text.
+
+## Concurrency model
+
+- Claims are created complete and atomically (hard link of a finished temp file). A claim is
+  dead if its owner pid is gone, or if it has had no heartbeat for 2 minutes (covers a recycled
+  pid). Deciding that and removing a dead claim happens under a short-lived mutex that re-reads
+  the file first, so a claim someone just took is never deleted. A claim file that cannot be
+  parsed counts as live until it is 2 minutes old.
+- `add` reads and rewrites the slot count under a mutex, so concurrent adds get different ids.
+- Both are covered by tests that start real processes at the same instant; they fail on the
+  earlier non-locking version of this code.
+- The mutex files are removed after 10 s if their holder crashed; that cleanup itself has a
+  tiny race that is only reachable after a crash. Needs a file system with hard links (NTFS).
 
 ## How an agent uses it
 
 1. Estimate how many Prodex jobs will run at once. If that exceeds the ready slots from
    `list`, **ask the user** to approve N more slots; do not add them on your own.
-2. After approval run `add --count N`. Exit `3` means the user has to sign in to ChatGPT in the
-   opened window(s); tell them which slot numbers, then run `list` until they are `ready`.
+2. After approval run `add --count N`. Exit `3` means the user has to sign in to ChatGPT (or
+   finish a verification) in the opened window(s); tell them which slot numbers, then run
+   `list` until they are `ready`. Exit `1` is a tool or Prodex failure, not a login problem.
 3. Dispatch with `run --slot auto`. Exit `3` again means ask the user; exit `4` means wait or
    ask for more slots.
 4. A claim only steers jobs onto idle slots. Prodex's own per-slot lock remains the guard
@@ -66,9 +88,12 @@ slot), `4` every ready slot stayed busy past `--wait-ms`.
   is not verified). Memory and CPU grow with the slot count.
 - Several simultaneous logged-in browsers on one ChatGPT account may meet rate limits or
   verification prompts; not observed so far, not guaranteed.
-- Slot windows must stay visible: a minimized window (or a tab behind another) reads as
-  `hidden` and cannot send. Do not minimize them; `--minimized` window modes of Prodex were not
-  tried here.
+- Slot windows must be visible to send: a minimized window reads as `hidden`. Observed twice on
+  2026-10-22 (the windows were minimized, as read from Windows); `ensure` and `run` now restore
+  such a window automatically on Windows (checked on a real slot). A window that is merely
+  covered by other windows was not found to block sending. Whether a tab that is not selected
+  or a fully covered window reads as `hidden` is not verified. Prodex's own `--minimized`
+  window modes were not tried here.
 - Prodex spaces visible-browser sends at least 10 s apart (`send_pacing`, an anti-bot
   measure, `PRODEX_MIN_SEND_INTERVAL_MS`). It applies across slots too, so parallel jobs start
   seconds apart. Do not override it.

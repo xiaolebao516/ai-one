@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -5,6 +6,10 @@ import path from 'node:path';
 export const EXIT = { OK: 0, ERROR: 1, NEEDS_USER: 3, BUSY: 4 };
 export const BASE_PORT = 9333;
 export const MAX_SLOTS = 8;
+// A claim is refreshed every CLAIM_BEAT_MS while its owner runs; one not refreshed for
+// CLAIM_STALE_MS is dead even if its pid was recycled by an unrelated process.
+export const CLAIM_BEAT_MS = 20_000;
+export const CLAIM_STALE_MS = 120_000;
 
 export function slotsHome(env = process.env) {
   return env.PRODEX_SLOTS_HOME || path.join(os.homedir(), '.local', 'share', 'prodex');
@@ -31,6 +36,35 @@ export function configPath(home) {
   return path.join(home, 'slots.json');
 }
 
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// Short critical sections only. The file is created exclusively; one older than staleMs belongs
+// to a holder that died and is replaced. fn must be synchronous.
+export function withMutex(file, fn, { timeoutMs = 5000, staleMs = 10_000 } = {}) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      fs.writeFileSync(file, `${process.pid}\n`, { flag: 'wx' });
+      break;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+    try {
+      if (Date.now() - fs.statSync(file).mtimeMs > staleMs) fs.rmSync(file, { force: true });
+    } catch {
+      continue;
+    }
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${file}`);
+    sleepSync(25);
+  }
+  try {
+    return fn();
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+}
+
 export function loadConfig(home) {
   let count = 1;
   try {
@@ -51,13 +85,16 @@ export function saveConfig(home, count) {
 }
 
 // Registers `add` more slots after the existing ones; ports/profiles/locks derive from the id,
-// so the registry only stores how many slots exist.
+// so the registry only stores how many slots exist. The read-modify-write is mutually exclusive
+// across processes, so concurrent adds receive different slot ids.
 export function addSlots(home, add) {
   if (!Number.isInteger(add) || add < 1) throw new Error('--count must be a positive integer');
-  const { count } = loadConfig(home);
-  if (count + add > MAX_SLOTS) throw new Error(`At most ${MAX_SLOTS} slots (have ${count}, asked for ${add} more)`);
-  saveConfig(home, count + add);
-  return loadConfig(home).slots.slice(count);
+  return withMutex(`${configPath(home)}.lock`, () => {
+    const { count } = loadConfig(home);
+    if (count + add > MAX_SLOTS) throw new Error(`At most ${MAX_SLOTS} slots (have ${count}, asked for ${add} more)`);
+    saveConfig(home, count + add);
+    return loadConfig(home).slots.slice(count);
+  });
 }
 
 export function slotEnv(slot, base = process.env) {
@@ -104,30 +141,65 @@ export function readClaim(home, id) {
   }
 }
 
-// A claim is a scheduling hint so `run --slot auto` spreads work over idle slots. Correctness of
-// the browser itself still rests on Prodex's own per-slot send lock, which stays in force.
-// A claim whose owner process is gone is reaped; a recycled pid keeps a claim alive until
-// `release --slot N` removes it.
-export function claimSlot(home, id, { pid = process.pid, label = '', alive = processAlive, now = Date.now } = {}) {
-  const file = claimFile(home, id);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      fs.writeFileSync(file, `${JSON.stringify({ pid, label, startedAt: now() })}\n`, { flag: 'wx' });
-      return { ok: true, release: () => releaseClaim(home, id, pid) };
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-    }
-    const holder = readClaim(home, id);
-    if (holder && alive(holder.pid)) return { ok: false, holder };
-    fs.rmSync(file, { force: true });
+function claimAgeMs(file) {
+  try {
+    return Date.now() - fs.statSync(file).mtimeMs;
+  } catch {
+    return null;
   }
-  return { ok: false, holder: readClaim(home, id) };
 }
 
-export function releaseClaim(home, id, pid = null) {
-  const holder = readClaim(home, id);
-  if (pid !== null && holder && holder.pid !== pid) return false;
+// A claim is a scheduling hint so `run --slot auto` spreads work over idle slots; Prodex's own
+// per-slot send lock remains the guard for the browser itself. The claim holds only a random
+// owner id, the pid and a start time, never a session key or any conversation text.
+//
+// The file appears complete and atomically (hard link of a fully written temp file). Judging a
+// claim dead and removing it happens under a mutex and re-reads the file first, so a claim just
+// taken by someone else is never deleted. Dead = owner pid gone, or no heartbeat for staleMs
+// (covers a pid recycled by another process). A file that cannot be parsed counts as live until
+// it is stale.
+export function claimSlot(home, id, { pid = process.pid, alive = processAlive, now = Date.now, staleMs = CLAIM_STALE_MS, beatMs = CLAIM_BEAT_MS } = {}) {
+  const file = claimFile(home, id);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const owner = crypto.randomUUID();
+  const temp = `${file}.${owner}.tmp`;
+  fs.writeFileSync(temp, `${JSON.stringify({ owner, pid, startedAt: now() })}\n`);
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        fs.linkSync(temp, file);
+        const beat = setInterval(() => {
+          try {
+            const at = new Date();
+            fs.utimesSync(file, at, at);
+          } catch { /* claim already gone */ }
+        }, beatMs);
+        beat.unref();
+        return { ok: true, owner, release: () => { clearInterval(beat); return releaseClaim(home, id, owner); } };
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+      }
+      const verdict = withMutex(`${file}.reap`, () => {
+        const age = claimAgeMs(file);
+        if (age === null) return { retry: true };
+        const holder = readClaim(home, id);
+        const dead = holder ? !alive(holder.pid) || age >= staleMs : age >= staleMs;
+        if (!dead) return { holder };
+        fs.rmSync(file, { force: true });
+        return { retry: true };
+      });
+      if (!verdict.retry) return { ok: false, holder: verdict.holder };
+    }
+    return { ok: false, holder: readClaim(home, id) };
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
+}
+
+// With `owner` set only that owner's claim is removed; without it the claim is dropped
+// unconditionally (manual `release`).
+export function releaseClaim(home, id, owner = null) {
+  if (owner !== null && readClaim(home, id)?.owner !== owner) return false;
   fs.rmSync(claimFile(home, id), { force: true });
   return true;
 }
