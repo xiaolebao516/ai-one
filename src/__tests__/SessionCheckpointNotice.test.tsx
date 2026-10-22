@@ -6,6 +6,7 @@ import { modeName } from '../i18n/modes';
 import type { Locale } from '../i18n/resolve';
 import { formatI18n, t } from '../i18n/t';
 import { SessionCheckpointNotice } from '../ui/SessionCheckpointNotice';
+import { Button } from '../ui/v2';
 import {
   clearStartupSessionCheckpointNotice,
   loadStartupSessionCheckpointNotice,
@@ -26,6 +27,7 @@ vi.mock('../host', () => ({
 
 interface ElementProps {
   children?: ReactNode;
+  actions?: ReactNode;
   onClick?: () => void;
 }
 
@@ -45,7 +47,13 @@ function findAllElements(node: ReactNode, predicate: (element: ReactElement) => 
   if (!isValidElement(node)) return [];
 
   const matches = predicate(node) ? [node] : [];
-  return [...matches, ...findAllElements(propsOf(node).children, predicate)];
+  // #42: the notice renders through v2 <Notice>, whose buttons sit in the `actions` slot.
+  return [...matches, ...findAllElements(propsOf(node).children, predicate), ...findAllElements(propsOf(node).actions, predicate)];
+}
+
+// Native <button> before the #42 migration, shared v2 <Button> after it.
+function isButton(element: ReactElement): boolean {
+  return element.type === 'button' || element.type === Button;
 }
 
 function firstElement(node: ReactNode, predicate: (element: ReactElement) => boolean): ReactElement {
@@ -103,11 +111,24 @@ describe('SessionCheckpointNotice', () => {
     expect(html).toContain(formatI18n(t('sessionCheckpoint.interrupted', locale), { mode: modeName('debate', locale) }));
     expect(html).toContain(`${t('sessionCheckpoint.step', locale)} 2`);
 
-    propsOf(firstElement(tree, (element) => element.type === 'button' && textOf(element).includes(t('sessionCheckpoint.dismiss', locale)))).onClick?.();
+    propsOf(firstElement(tree, (element) => isButton(element) && textOf(element).includes(t('sessionCheckpoint.dismiss', locale)))).onClick?.();
     expect(onDismiss).toHaveBeenCalledTimes(1);
 
-    propsOf(firstElement(tree, (element) => element.type === 'button' && textOf(element).includes(t('sessionCheckpoint.replay', locale)))).onClick?.();
+    propsOf(firstElement(tree, (element) => isButton(element) && textOf(element).includes(t('sessionCheckpoint.replay', locale)))).onClick?.();
     expect(onReplay).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the replay action guarded while replaying and hidden without a snapshot (v2 migration)', () => {
+    const replaying = renderToStaticMarkup(SessionCheckpointNotice({ notice: notice(), onDismiss: vi.fn(), onReplay: vi.fn(), replaying: true, locale: 'en' }));
+    expect(replaying).toMatch(/<button[^>]*disabled=""[^>]*aria-busy="true"[^>]*>.*?Replay/);
+    expect(replaying).toContain('data-v2-migrated="session-checkpoint-notice"');
+    expect(replaying).toContain('data-v2-skin=');
+
+    const withoutSnapshot = { ...notice(), replaySnapshot: undefined };
+    const tree = SessionCheckpointNotice({ notice: withoutSnapshot, onDismiss: vi.fn(), onReplay: vi.fn(), locale: 'en' });
+    expect(findAllElements(tree, isButton).map(textOf)).toEqual([t('sessionCheckpoint.dismiss', 'en')]);
+    // No v1 palette classes remain in the migrated markup.
+    expect(renderToStaticMarkup(tree)).not.toMatch(/amber-|emerald-|zinc-/);
   });
 
   it('clears the checkpoint when the startup notice is dismissed', async () => {

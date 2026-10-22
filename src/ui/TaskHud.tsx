@@ -42,6 +42,11 @@ import {
   StatusIndicator,
   Tabs,
   V2Scope,
+  V2_SKINS,
+  V2_SKIN_IDS,
+  isV2SkinId,
+  setV2Skin,
+  useV2Skin,
   type V2BadgeTone,
 } from './v2';
 
@@ -74,6 +79,7 @@ function hudTabHasFocus(): boolean {
 export function TaskHud({ locale, onClose, tasks = TASK_HUD_MOCK_TASKS, initialState }: TaskHudProps) {
   const [state, dispatch] = useReducer(hudReducer, initialState, (overrides) => initialHudState(overrides));
   const text = taskHudText(locale);
+  const skin = useV2Skin();
   const data = state.scenario === 'empty' ? [] : tasks;
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -144,6 +150,17 @@ export function TaskHud({ locale, onClose, tasks = TASK_HUD_MOCK_TASKS, initialS
             { value: 'sample', label: text.t('scenarioSample') },
             { value: 'empty', label: text.t('scenarioEmpty') },
           ]}
+        />
+        {/* #42 demo: one switch re-skins every v2 surface (this HUD and the migrated chat / settings areas). */}
+        <Select
+          id={`${ID}-skin`}
+          label={text.t('skinLabel')}
+          size="sm"
+          value={skin}
+          onChange={(value) => {
+            if (isV2SkinId(value)) setV2Skin(value);
+          }}
+          options={V2_SKIN_IDS.map((id) => ({ value: id, label: V2_SKINS[id].label }))}
         />
       </header>
 
