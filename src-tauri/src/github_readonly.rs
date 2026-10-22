@@ -10,7 +10,8 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use serde_json::Value;
-use tokio::process::Command;
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::process::{Child, Command};
 
 const GH_PROGRAM: &str = "gh";
 const TIMEOUT: Duration = Duration::from_secs(15);
@@ -28,7 +29,7 @@ pub(crate) const INVALID_JSON: &str = "GitHub returned invalid JSON; snapshot is
 
 #[tauri::command]
 pub async fn github_readonly_get(webview: tauri::Webview, path: String) -> Result<Value, String> {
-    crate::webviews::ensure_control_webview(&webview)?;
+    crate::webviews::ensure_control_webview(&webview).map_err(|_| NOT_ALLOWED.to_string())?;
     let path = allowed_get_path(&path).ok_or_else(|| NOT_ALLOWED.to_string())?;
     run_gh(GH_PROGRAM, &get_args(path)).await
 }
@@ -39,7 +40,7 @@ pub async fn github_readonly_associations(
     repo: String,
     numbers: Vec<u64>,
 ) -> Result<Value, String> {
-    crate::webviews::ensure_control_webview(&webview)?;
+    crate::webviews::ensure_control_webview(&webview).map_err(|_| NOT_ALLOWED.to_string())?;
     let query = associations_query(&repo, &numbers).ok_or_else(|| NOT_ALLOWED.to_string())?;
     run_gh(GH_PROGRAM, &graphql_args(&query)).await
 }
@@ -150,22 +151,46 @@ async fn run_gh(program: &str, args: &[String]) -> Result<Value, String> {
     #[cfg(windows)]
     command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flash per query
 
-    let child = command.spawn().map_err(|error| {
+    let mut child = command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             NOT_INSTALLED.to_string()
         } else {
             FAILED.to_string()
         }
     })?;
-    // On timeout the future (and with it the child, kill_on_drop) is dropped.
-    let output = tokio::time::timeout(TIMEOUT, child.wait_with_output())
+    match tokio::time::timeout(TIMEOUT, collect(&mut child)).await {
+        Ok(result) => result,
+        Err(_) => {
+            // kill_on_drop would also do this; kill eagerly so a hung gh does not linger.
+            let _ = child.start_kill();
+            Err(TIMED_OUT.to_string())
+        }
+    }
+}
+
+/// Reads stdout with a hard cap (never buffers more than MAX_OUTPUT_BYTES + 1), then reaps gh.
+async fn collect(child: &mut Child) -> Result<Value, String> {
+    let stdout = child.stdout.take().ok_or_else(|| FAILED.to_string())?;
+    let Some(bytes) = read_capped(stdout, MAX_OUTPUT_BYTES)
         .await
-        .map_err(|_| TIMED_OUT.to_string())?
-        .map_err(|_| FAILED.to_string())?;
-    if !output.status.success() {
+        .map_err(|_| FAILED.to_string())?
+    else {
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+        return Err(FAILED.to_string());
+    };
+    let status = child.wait().await.map_err(|_| FAILED.to_string())?;
+    if !status.success() {
         return Err(FAILED.to_string());
     }
-    parse_output(&output.stdout)
+    parse_output(&bytes)
+}
+
+/// `None` as soon as the stream proves longer than `cap`; at most `cap + 1` bytes are held.
+async fn read_capped<R: AsyncRead + Unpin>(reader: R, cap: usize) -> std::io::Result<Option<Vec<u8>>> {
+    let mut bytes = Vec::new();
+    reader.take(cap as u64 + 1).read_to_end(&mut bytes).await?;
+    Ok((bytes.len() <= cap).then_some(bytes))
 }
 
 fn parse_output(stdout: &[u8]) -> Result<Value, String> {
@@ -259,6 +284,15 @@ mod tests {
         assert_eq!(parse_output(br#"[{"number":1}]"#).unwrap()[0]["number"], 1);
         assert_eq!(parse_output(b"not json").unwrap_err(), INVALID_JSON);
         assert_eq!(parse_output(&vec![b' '; MAX_OUTPUT_BYTES + 1]).unwrap_err(), FAILED);
+    }
+
+    #[tokio::test]
+    async fn caps_output_while_reading() {
+        assert_eq!(read_capped(&b"1234"[..], 4).await.unwrap(), Some(b"1234".to_vec()));
+        assert_eq!(read_capped(&b"12345"[..], 4).await.unwrap(), None);
+        // An endless stream is cut off after cap + 1 bytes instead of being buffered.
+        let endless = tokio::io::repeat(b'x');
+        assert_eq!(read_capped(endless, 1024).await.unwrap(), None);
     }
 
     #[tokio::test]

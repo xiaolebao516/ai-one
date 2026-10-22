@@ -205,11 +205,20 @@ export const host = {
 
 const GITHUB_QUERY_FAILED = 'GitHub query failed; check gh auth status, repository access, network and API rate limits.';
 
+/** The only messages the read-only bridge may surface (Spec #50): fixed text, never gh output. */
+const GITHUB_MESSAGES: ReadonlySet<string> = new Set([
+  'Request not allowed.',
+  'gh is not installed; install GitHub CLI and run gh auth login.',
+  'gh query timed out; snapshot is incomplete.',
+  GITHUB_QUERY_FAILED,
+  'GitHub returned invalid JSON; snapshot is incomplete.',
+]);
+
 /** Tauri rejects with the command's error string; collectSnapshot expects Error objects. */
 async function readOnlyGitHub(request: Promise<unknown>): Promise<unknown> {
   try {
     return await request;
   } catch (error) {
-    throw new Error(typeof error === 'string' && error ? error : GITHUB_QUERY_FAILED);
+    throw new Error(typeof error === 'string' && GITHUB_MESSAGES.has(error) ? error : GITHUB_QUERY_FAILED);
   }
 }
