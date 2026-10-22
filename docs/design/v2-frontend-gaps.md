@@ -52,7 +52,7 @@
 
 1. **先快速可用，再好看简洁**：功能先跑通；界面精修、精简由 Opus 之后另开 Task，不在本轮追求。
 2. **视觉只守一条基线**（§2.1：字体与留白），其余沿用现有 v2 组件，不做新视觉探索。
-3. 觉得复杂时按这个**开发优先级**保（与 §11 的合并顺序一致，依赖不矛盾）：L0 视觉基线 → L1 写入桥 → L5 任务现场补全 → L6 聊天页 → L2 流程 → L3 协调设置 → L7 讨论接入（含本地任务模型）→ L4 发起任务 → L9 Chat 主导（#113，独立并行，用户要求尽快跑通）。额度 HUD（L8）独立并行。“可提前准备”指可以先用演示数据做界面，“必须等待”指真实集成要等依赖合并。
+3. 觉得复杂时按这个顺序保，**开发优先级与 §11 合并顺序完全一致**：L0 视觉基线 → L1 ∥ L2 ∥ L6 → L5 → L3 → L7（含本地任务模型）→ L4 发起任务。L8 额度 HUD、L9 Chat 主导（#113，用户要求尽快跑通）独立并行。“可提前准备”指可以先用演示数据做界面，“必须等待”指真实集成要等依赖合并。
 
 ## 2. 共用约定（所有新页面遵守）
 
@@ -130,7 +130,7 @@
 - 说明区：`CC 协调` 标记 + 一行“经 Prodex 派 GPT 执行/审计，需要时请 Argon、Opus”。
 - 说明区第二行写清楚后果：“点‘交给 CC’后，ai-one 会建一个 Task Issue，并把接手指令放进剪贴板，你粘贴给 Claude Code。”
 - 点「交给 CC」后的步骤（行内进度，不弹窗）：
-  1. 建 Task Issue。正文**按 `.github/ISSUE_TEMPLATE/task.md` 生成**，字段如下：`关联 / 派工`（Parent Spec：用户选了才填，否则“无”；Reviewed Spec Revision：随父 Spec；Complexity：默认 `ROUTINE`；Owner：“待 CC 接手后登记”；Reviewer：“ChatGPT（独立审计，经 Prodex 新对话）”；Depends on：无）、`任务与范围`（**需求原文原样放这里**；非目标：“由 CC 与用户确认后补”）、`交付 / 验收标准`（写“**验收标准待 CC 在开工前补齐，补齐前不得开始实现**”并留空勾选项）、`实施与验证记录`（PR：待创建），末尾附「协调简报」（S6）与来源“由 ai-one 创建”；
+  1. 建 Task Issue。正文**按 `.github/ISSUE_TEMPLATE/task.md` 生成**，字段如下：`关联 / 派工`（Parent Spec：用户选了才填，否则“无”；**写入桥不建立 GitHub 原生 Sub-issue 关系**，正文写明“原生子 Issue 关系待 CC 接手时建立（工具不能建时报告待关联，不伪报完成）”；Reviewed Spec Revision：随父 Spec；Complexity：默认 `ROUTINE`；Owner：“待 CC 接手后登记”；Reviewer：“ChatGPT（独立审计，经 Prodex 新对话）”；Depends on：无）、`任务与范围`（**需求原文原样放这里**；非目标：“由 CC 与用户确认后补”）、`交付 / 验收标准`（写“**验收标准待 CC 在开工前补齐，补齐前不得开始实现**”并留空勾选项）、`实施与验证记录`（PR：待创建），末尾附「协调简报」（S6）与来源“由 ai-one 创建”；
   2. **回读** Issue 确认已创建（拿到编号和链接）；
   3. 复制接手指令：`按 AGENTS.md 快速开发模式接手 <owner/repo> 的 Issue #<N>`；
   4. 显示结果卡：`已创建 #N · 接手指令已复制` + 「在 GitHub 打开」「再复制一次」「查看任务」。
@@ -259,13 +259,14 @@ interface StageDef {
   id: string; name: string; command?: string;      // 如 'grill'，对应 /grill
   collaboration: Collaboration;
   participants: Participant[];
+  note?: string;                                    // “补充说明”（可选，写给 CC；持久化，并渲染进 Issue 的流程定义）
   endCondition: EndCondition;                       // 枚举：user-confirms | audit-pass | audit-pass-and-local-verify | rounds-done | all-subtasks-done
   onFail: FailPolicy;                               // 枚举：stop-and-ask | retry-n | skip | escalate-to-user
   reworkLimit?: number;                             // 主写+审计用，默认 3
   builtin: boolean;                                 // 内置阶段不可删，可“复制后编辑”
 }
 interface FlowDef { id: string; name: string; description?: string; stages: StageRef[]; builtin: boolean }
-interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'participants'|'endCondition'|'onFail'|'reworkLimit'>>; /* 预留 */ next?: never }
+interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'participants'|'endCondition'|'onFail'|'reworkLimit'|'note'>>; /* 预留 */ next?: never }
 ```
 
 - `next?: never` 是**分支预留位**：本期永远不出现，但文件格式 `schemaVersion: 1` 留好，以后加分支不破坏旧文件。
@@ -341,7 +342,7 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
 |---|---|---|---|
 | `create_issue` | `repo`、`title`、`body` | 在用户指定的仓库建一个新 Issue（不加标签） | 总览「交给 CC」「开始流程」；汇总卡「转入定方案」 |
 | `comment` | `repo`、`issue`、`text` | 在指定 Issue 上发一条评论 | 「给 CC 留言」 |
-| `set_pause` | `repo`、`issue`、`state: "paused" \| "running"` | 发固定模板评论：paused=“【ai-one】用户已暂停：请停止派发新工作，正在进行的一步可完成。” / running=“【ai-one】用户已恢复：可继续派发。” | 「暂停」「继续」 |
+| `set_pause` | `repo`、`issue`、`state: "paused" \| "running"` | 发评论，正文格式见下方「评论统一格式」；中间一行：paused=“用户已暂停：请停止派发新工作，正在进行的一步可完成。” / running=“用户已恢复：可继续派发。” | 「暂停」「继续」 |
 | `accept` | `repo`、`issue`、`pr`、`expectedHead`（40 位 SHA） | **先重新读取该 PR 当前 HEAD，与 `expectedHead` 不一致就拒绝，不写任何东西**；一致才：①发评论“【ai-one】用户验收通过（针对 HEAD <SHA>）。” ②移除 `needs-user` 标签 | 「验收通过」 |
 | `request_changes` | `repo`、`issue`、`pr`、`expectedHead`、`text`（必填） | 同样先校验 HEAD；①发评论（用户意见 + HEAD）②加 `needs-review` 标签 | 「要求修改…」 |
 
@@ -349,7 +350,7 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
 
 约束：
 
-- 所有评论正文开头带固定前缀 `【ai-one 代用户发出】`，让读 Issue 的 agent 区分来源；用户自由输入的部分原样附在后面，不改写。
+- **评论统一格式**（所有写评论的动作一致）：第 1 行固定前缀 `【ai-one 代用户发出】`；第 2 行起是该动作的固定模板句或用户自由输入（原样附上，不改写；`accept` / `request_changes` 含完整 HEAD）；最后一行隐藏标记 `<!-- ai-one:<action>:v1 -->`（`<action>` 取 `comment` / `set_pause` / `accept` / `request_changes`）。暂停状态识别只认带该标记的 `set_pause` 评论。
 - **不合并、不关单、不删评论、不改已有 Issue 的标题或正文、不改其他标签**（`create_issue` 只创建新 Issue；`pause`/`resume` 只是评论）。
 - **写后回读**与结果状态（四态，界面逐个如实显示）：`confirmed`（全部回读确认）、`partial`（复合动作只成功了一步，如评论发出但标签没改成，界面写明哪一步成功、哪一步失败，**不显示成全成功**，不自动重试）、`unconfirmed`（已发出但没能确认）、`failed`。复合动作的顺序固定为先评论后标签。
 - **HEAD 防陈旧在桥接端强制**：`accept` / `request_changes` 在写入前由 Rust 端重读 PR HEAD 比较，不依赖界面快照；界面快照不一致时按钮另显示“HEAD 已更新，先刷新”。
@@ -368,7 +369,7 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
 ### 6.5 暂停与继续
 
 - 顶部状态区「暂停」按钮（任务进行中且有 GitHub Issue 才显示）。点击 → 调用 `set_pause(paused)` 写评论 → **回读确认评论存在后**，状态胶囊旁立即显示 `已暂停`（你下的指令）。
-- 暂停状态的判定是确定的：取该 Issue 上带固定前缀与隐藏标记（评论末尾 `<!-- ai-one:set_pause:v1 -->`）的 `set_pause` 评论里**最新的一条**；`paused` 为最新则已暂停，`running` 或没有则未暂停。不解析 CC 或其他人的评论内容，不猜测。**已知限制**：所有 agent 与用户共用同一 GitHub 账号，无法证明某条评论确由 ai-one 写入，前缀与标记只能区分格式，不能防伪造；这一点写进 PR 与用户文档，不宣称防篡改。
+- 暂停状态的判定是确定的：取该 Issue 上带固定前缀与隐藏标记（`<!-- ai-one:set_pause:v1 -->`，格式见 §6.3）的 `set_pause` 评论里**最新的一条**；`paused` 为最新则已暂停，`running` 或没有则未暂停。不解析 CC 或其他人的评论内容，不猜测。**已知限制**：所有 agent 与用户共用同一 GitHub 账号，无法证明某条评论确由 ai-one 写入，前缀与标记只能区分格式，不能防伪造；这一点写进 PR 与用户文档，不宣称防篡改。
 - 按钮旁固定小字，如实写限制：“CC 正在执行的这一步会跑完；下一步起读到暂停就停。”不写“已停止”“立即停止”。
 - 已暂停时按钮变「继续」→ 调用 `set_pause(running)` 写评论。
 - 配套规则（实施时同步写进 AGENTS.md，由该线 PR 一并提出）：**agent 每次派发新工作前先读 Issue，发现最新的 ai-one 暂停/继续评论是暂停就不派发，等继续。**
@@ -410,6 +411,10 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
   - **继续追问**：回到该讨论追加一轮；
   - **结束并保存**：保存汇总并标记完成。
 - 讨论任务没有 GitHub Issue 时：「给 CC 留言」「暂停」等 §6 的写入按钮**不显示**（没有写入目标）。
+- **恢复语义**：[UNVERIFIED] 讨论引擎能否从保存状态恢复运行、能否对已完成的讨论追加一轮，须由 L7 开工时先验证并写入 PR；设计上的约定如下（引擎做不到的部分如实标注不可用，不伪装）：
+  - 重启或刷新后，**进行中的讨论不自动继续**，任务标记“已中断”，显示已完成环节的摘要与汇总（若已有），提供「重新开始」（新开一次运行，把已保存的前文摘要作为上下文，不复用旧的网页会话）；
+  - 已完成的讨论：「继续追问」= 以保存的汇总为上下文新开一轮运行，产物追加到同一个任务的记录里；
+  - 引擎不支持时，这两个按钮显示为不可用并写明原因。
 - 依赖：L7 先交付本地任务模型与接入；L4 的“想需求”入口依赖 L7（L4 的其余模式不依赖）。
 
 ---
@@ -466,14 +471,14 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
 
 用户决定（2026-10-23）：额度 HUD **以 Agent HUD Open 的桌面端为准移过来**，替代此前“只借鉴视觉、不移植”的结论（`TECHNICAL-RESEARCH-V1.md` §8 的当时判断基于 Swift 原版；现在上游已有 Tauri 2 + Rust + React 的跨平台版本，见 `jazzenchen/agent-hud-open`）。
 
-- **来源**：`jazzenchen/agent-hud-open`（Apache-2.0）。固定一个上游提交 SHA，在仓库外临时目录克隆核对，记录 SHA 与验证记录（AGENTS.md「上游克隆」规则）。复制代码须保留许可与版权声明，更新 `NOTICE.md`，改动处按 Apache-2.0 标注。
+- **来源**：`jazzenchen/agent-hud-open`（Apache-2.0）。**上游提交固定为 `5c1f93e9457cb0f5fd3d69042144ffa63e51851b`（`main` 于 2026-10-22 的提交，最新发布 v0.5.5）**，在仓库外临时目录克隆核对，记录 SHA 与验证记录（AGENTS.md「上游克隆」规则）。复制代码须保留许可与版权声明，更新 `NOTICE.md`，改动处按 Apache-2.0 标注。
 - **移过来的东西**（以上游 README 为准，逐项在 Spec 里列清单并标“已移 / 未移 / 不适用”）：
   - 屏幕边缘的 HUD 窗口：简单模式（每个 agent 的 logo 套额度环 + 百分比）、动态模式；发光颜色按额度 <70% 绿 / ≥70% 黄 / ≥90% 红；悬停展开：额度与重置时间、燃烧速率、24 小时 token、会话列表（等你的排最前）。
   - Rust 核心：读本机 coding agent（Claude Code、Codex 等）的记录，计算额度、token、成本估算、会话。
   - token 用量统计：时间范围、token 类型、agent/模型占比、会话明细、缓存命中、成本估算（标 ≈）。
   - 回到会话、请求审批的呈现（保留“从不替你决定”）。
-- **不移**：iPhone / Apple Watch 与 Remote、刘海模式（Windows 无）、Liquid Glass 材质；内置 MCP 先不移（单独评估）。“完全移植”的含义固定为：**上游桌面端（Windows 可用）的功能一项不挑拣、行为原样保留**；上面“不移”的是平台不适用或另行评估的部分。
-- **规格以固定 SHA 的上游为准**：L8 开工时固定上游提交 SHA 并写进 Issue；布局、悬停展开、隐藏、额度颜色阈值、未知 / 读取失败状态都**原样沿用该 SHA 的上游行为**，所以本稿不另画 S7 线框（草图页「7 额度 HUD」只列状态清单作验收对照）。ai-one 只新增两点：网页订阅拿不到的额度显示“未知”；与 #98 资源页读同一份数据。
+- **范围**：移植目标 = 上游**桌面 HUD 功能**（窗口、额度、token 统计、会话、审批呈现，以下列表）一项不挑拣、行为原样保留。**不在本线范围**：iPhone / Apple Watch 与 Remote、刘海模式（Windows 无）、Liquid Glass 材质，以及内置 MCP（另行评估，不属于“桌面 HUD 功能”）。所以“完全移植”与“排除 MCP”不矛盾：MCP 不在被移植的范围内。
+- **规格以固定 SHA 的上游为准**（`5c1f93e`，见上）；布局、悬停展开、隐藏、额度颜色阈值、未知 / 读取失败状态都**原样沿用该 SHA 的上游行为**，所以本稿不另画 S7 线框（草图页「7 额度 HUD」只列状态清单作验收对照）。ai-one 只新增两点：网页订阅拿不到的额度显示“未知”；与 #98 资源页读同一份数据。
 - **规则同步**：`main/AGENTS.md` 现写“Agent HUD Open 仅作视觉参考”。L8 的 PR 同步修订该句，并在 Spec #32 v2 的变更记录里记决议（见附）。
 - **与 ai-one 的衔接**：HUD 作为独立悬浮窗；ai-one 标题栏的资源点（#98）与资源页读同一份额度数据，不重复实现；网页订阅（ChatGPT/Claude 网页等）拿不到的额度**写“未知”**，不假装有（#82 的四种来源规则不变）。
 - **风险**：上游 Windows 版标注为 preview、未经真机验证。本线必须在 Windows 真机逐项验证，验证不过的写进“未移 / 已知问题”，不写成已完成。
@@ -493,10 +498,10 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
 | L1 GitHub 写入桥 | Rust 白名单命令 + `host.githubWrite` + 回读 + 测试（§6.3、§10-1） | 无 | `src-tauri/**`、`src/host/**` |
 | L2 流程与阶段 | `flowModel` + 受限文件命令与存储 + S3 页面 + 导入导出 + 内置内容 | 无 | `src/stages/**`、`src/workbench/views/FlowsView.tsx` |
 | L3 CC 协调设置 | `coordination` 存储 + 简报渲染 + S6 页面 | 与 L2 共用存储工具（先到先建，另一方复用） | `src/stages/**`、`src/workbench/views/` |
-| L4 发起任务 | `composerModel` + 四种模式 + 结果卡 | L1（`create_issue`）、L2（流程下拉）、L3（简报）；“想需求”入口依赖 L7 | `src/workbench/views/HomeView.tsx`、`composerModel.ts` |
+| L4 发起任务 | `composerModel` + 四种模式 + 结果卡 | L1（`create_issue`）、L2（流程下拉）、L3（简报）；“想需求”入口依赖 L7 | `src/workbench/views/HomeView.tsx`、`composerModel.ts`、`Workbench.tsx`（路由/导航）、`workbenchModel.ts` |
 | L5 任务现场补全 | 检查器抽屉 + 接管入口 + 留言/暂停/验收按钮 + 通知 | L1 | `src/workbench/views/TaskView.tsx`、`src/workbench/drawer/**` |
 | L6 聊天页 | S2 全部 | 无（仅复用旧界面发送能力） | `src/workbench/views/chat/**` |
-| L7 讨论接入 | S5 + 本地任务模型（§7） | #81（已合并）；受限文件命令（L2 先建） | `src/workbench/useWorkbenchData.ts`、`localTasks`、`TaskView.tsx` 的讨论分支 |
+| L7 讨论接入 | S5 + 本地任务模型（§7） | #81（已合并）；受限文件命令（L2 先建） | `src/workbench/useWorkbenchData.ts`、`Workbench.tsx`（路由）、`workbenchModel.ts`、`localTasks`、`TaskView.tsx` 的讨论分支 |
 | L9 Chat 主导 | Spec #113：网页 AI 协调、程序转发、结束清理对话 | #94/#102（归档能力）；入口由 L4 决定 | `src/workflow/chatLed/**` |
 
 建议合并顺序（与 §1.1 的开发优先级一致）：**L0 最先**（其余线都用它的令牌）→ L1 ∥ L2 ∥ L6（互不依赖，可并行）→ L5（依赖 L1）→ L3 → L7 → L4（依赖 L1、L2、L3，“想需求”入口依赖 L7）。L8、L9 独立并行。#98 / #82（资源）的非 HUD 部分与上述各线文件不重叠。冲突点：L4 与 L5/L7 都会改 `HomeView.tsx` / `TaskView.tsx`，L1 与 L8 共享 `src-tauri` 注册文件，由各线调度 agent 按合并顺序处理，不在同一分支同时写。
@@ -522,3 +527,5 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
 | 11 | 阶段命令入口与 #32 不一致 | 总览解析 `/plan /split /build /ship`，走“交给 CC”只做该阶段；聊天页只支持 `/grill`（§3.1） |
 
 **需随 Spec #32 升 v2 一并记录的三处决议**：① 网页 Chat 主导提前（#113）；② 额度 HUD 移植（#82）并修订 AGENTS.md 对 Agent HUD Open 的表述；③ 合并口径以 AGENTS.md 快速开发模式为准，#32 第 6 条“最后合并请求用户”的旧表述更正。
+
+**第二轮审计（HEAD bda76ab，REVISE）处理（r3）**：① #32 正文第 6 条与变更记录统一，`v2-product-design.md` 顶部加指向说明；② #103 的 Reviewed Spec Revision 升 v2 并留重审评论；③ §3.4 写明原生 Sub-issue 关系由 CC 建；④ §1.1 与 §11 顺序统一，L4/L7 路由文件范围补全；⑤ 评论格式统一（前缀 + 模板 + 隐藏标记）；⑥ §7 补讨论恢复语义；⑦ §10.1 固定上游 SHA 并澄清 MCP 范围；⑧ `StageDef` 增加 `note` 字段。
