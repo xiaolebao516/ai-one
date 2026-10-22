@@ -178,12 +178,24 @@ reply text or credentials, and its fields are re-validated on read.
 - Continue the **same thread**: pass the thread URL to the ask itself,
   `--target-url "$THREAD" --confirm-target`, and mirror it in `--thread-url` so the ownership
   record names the thread that is actually being written to.
+- Continue it **on the slot whose tab holds that thread** (`--slot N`, not `auto`). `auto` may
+  pick another slot, whose tab is on a different conversation; the ask then stops with "No open
+  ChatGPT tab matches the confirmed target URL" before sending anything, so retrying on the right
+  slot is safe. The slot holding a thread shows in `list` (its claim or closure record) and in the
+  `thread` field of earlier ask/recover output; its debug port also lists the open tab
+  (`http://127.0.0.1:<port>/json`). Observed 2026-10-22.
 - `--continue` / `--continue-task` are not reliable after a restart or across sessions; do not
   use them as the only way back to a thread.
 - After a `request_mismatch` or "the browser tab was moved to a different conversation", stop.
   Take the answer back with
   `prodex pro browser recover --port <port> --target-url "$THREAD" --request-id <id>` and check
   `request_verified: yes` before doing anything else. Never resend blindly.
+- `recover` is plain Prodex, not wrapped by `run`, so give it the slot's own environment:
+  `PRODEX_CDP_PORT=<port>` and, for slot N ≥ 2,
+  `PRODEX_SEND_LOCK_FILE=~/.local/share/prodex/browser-send-slotN.lock`. Without the lock file it
+  waits on slot 1's lock ("another prodex send holds the browser") and times out even though
+  slot N is idle. Observed 2026-10-22. If the thread is still generating, recover says so; run it
+  again once the answer has settled.
 - Every turn should leave its outcome as a short comment on the task issue (question, result,
   blockers) - that comment is the handoff that survives a closed session.
 - Long prompts (tens of KB) have repeatedly triggered `request_mismatch` in the field even
