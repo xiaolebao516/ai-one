@@ -138,6 +138,11 @@ pub(crate) fn associations_query(repo: &str, numbers: &[u64]) -> Option<String> 
 }
 
 async fn run_gh(program: &str, args: &[String]) -> Result<Value, String> {
+    run_limited(program, args, TIMEOUT, MAX_OUTPUT_BYTES).await
+}
+
+/// `run_gh` with explicit limits so tests can drive the kill paths with real child processes.
+async fn run_limited(program: &str, args: &[String], timeout: Duration, max_bytes: usize) -> Result<Value, String> {
     let mut command = Command::new(program);
     command
         .args(args)
@@ -158,7 +163,7 @@ async fn run_gh(program: &str, args: &[String]) -> Result<Value, String> {
             FAILED.to_string()
         }
     })?;
-    match tokio::time::timeout(TIMEOUT, collect(&mut child)).await {
+    match tokio::time::timeout(timeout, collect(&mut child, max_bytes)).await {
         Ok(result) => result,
         Err(_) => {
             // kill_on_drop would also do this; kill eagerly so a hung gh does not linger.
@@ -169,9 +174,9 @@ async fn run_gh(program: &str, args: &[String]) -> Result<Value, String> {
 }
 
 /// Reads stdout with a hard cap (never buffers more than MAX_OUTPUT_BYTES + 1), then reaps gh.
-async fn collect(child: &mut Child) -> Result<Value, String> {
+async fn collect(child: &mut Child, max_bytes: usize) -> Result<Value, String> {
     let stdout = child.stdout.take().ok_or_else(|| FAILED.to_string())?;
-    let Some(bytes) = read_capped(stdout, MAX_OUTPUT_BYTES)
+    let Some(bytes) = read_capped(stdout, max_bytes)
         .await
         .map_err(|_| FAILED.to_string())?
     else {
@@ -293,6 +298,45 @@ mod tests {
         // An endless stream is cut off after cap + 1 bytes instead of being buffered.
         let endless = tokio::io::repeat(b'x');
         assert_eq!(read_capped(endless, 1024).await.unwrap(), None);
+    }
+
+    /// A real child that writes forever (never exits on its own).
+    fn endless_writer() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            ("cmd", vec!["/C".into(), "for /L %i in (0,0,1) do @echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx".into()])
+        } else {
+            ("yes", vec![])
+        }
+    }
+
+    /// A real child that runs far longer than the test timeout. Started directly (no shell wrapper)
+    /// so killing it closes the pipe; a grandchild would keep the pipe open after the kill.
+    fn long_sleeper() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            ("ping", vec!["-n".into(), "60".into(), "127.0.0.1".into()])
+        } else {
+            ("sleep", vec!["60".into()])
+        }
+    }
+
+    #[tokio::test]
+    async fn kills_and_reaps_a_child_that_exceeds_the_output_cap() {
+        let (program, args) = endless_writer();
+        let started = std::time::Instant::now();
+        // Generous timeout: returning well before it proves the over-cap path killed the child,
+        // and `collect` only returns after `child.wait()`, i.e. after the process was reaped.
+        let result = run_limited(program, &args, Duration::from_secs(20), 64 * 1024).await;
+        assert_eq!(result.unwrap_err(), FAILED);
+        assert!(started.elapsed() < Duration::from_secs(10), "took {:?}", started.elapsed());
+    }
+
+    #[tokio::test]
+    async fn kills_a_child_that_outlives_the_timeout() {
+        let (program, args) = long_sleeper();
+        let started = std::time::Instant::now();
+        let result = run_limited(program, &args, Duration::from_millis(500), MAX_OUTPUT_BYTES).await;
+        assert_eq!(result.unwrap_err(), TIMED_OUT);
+        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
     }
 
     #[tokio::test]
