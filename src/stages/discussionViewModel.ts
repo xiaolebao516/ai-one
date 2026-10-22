@@ -255,16 +255,18 @@ function valueField(text: string | undefined): DiscussionSummaryField {
 
 function parseReportSection(text: string, section: AuditSectionName): string | undefined {
   const lines = text.split(/\r?\n/);
-  let fence: { char: string; length: number } | undefined;
+  let fence: { char: string; length: number; indent: number } | undefined;
   let collecting = false;
   let found = false;
   const content: string[] = [];
   for (const line of lines) {
-    const marker = /^\s*(`{3,}|~{3,})/.exec(line);
+    const marker = /^( *)(`{3,}|~{3,})/.exec(line);
     if (marker) {
-      const char = marker[1][0];
-      if (!fence) fence = { char, length: marker[1].length };
-      else if (char === fence.char && marker[1].length >= fence.length && line.trim() === marker[1]) fence = undefined;
+      const indent = marker[1].length;
+      const char = marker[2][0];
+      if (!fence) fence = { char, length: marker[2].length, indent };
+      // CommonMark: a closing fence is at most three spaces deeper than the opening one, with nothing after it.
+      else if (char === fence.char && marker[2].length >= fence.length && indent <= fence.indent + 3 && line.trim() === marker[2]) fence = undefined;
       continue;
     }
     if (fence) continue;

@@ -199,4 +199,14 @@ describe('discussion view model', () => {
     expect(model.matrix.rows[0].cells.first.tone).toBe('unknown');
     expect(model.matrix.rows[1].cells.first.tone).toBe('unknown');
   });
+
+  it('does not close a fence with a line indented four or more spaces', () => {
+    const report = 'The auditor reviewed everything carefully and wrote this report.\n\n'
+      + '## Evidence gaps\n```\n    ```\n## Next steps\nfake step inside a fence\n```\nReal gap text.\n\n'
+      + '## Next steps\nReal next step.\n\n'
+      + '[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:AGREED]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]';
+    const model = buildDiscussionViewModel(state({ outputs: { audit1: report } }));
+    expect(model.summary.evidenceGaps).toEqual({ kind: 'value', text: 'Real gap text.' });
+    expect(model.summary.nextSteps).toEqual({ kind: 'value', text: 'Real next step.' });
+  });
 });
