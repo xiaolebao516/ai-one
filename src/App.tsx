@@ -280,7 +280,7 @@ function isGeneratedImageResponse(content: string): boolean {
   return /^\[Image generated(?::[^\]]+)?\]$/.test(content.trim());
 }
 
-export default function App() {
+export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void } = {}) {
   const { locale, t: translate, setLanguage } = useI18n();
   useEffect(() => {
     void Promise.resolve()
@@ -2130,6 +2130,15 @@ export default function App() {
                   )}
                 </button>
                 <TaskHudEntry locale={locale} onOpen={() => setTaskHudOpen(true)} />
+                {onOpenWorkbench ? (
+                  <button
+                    type="button"
+                    className="border border-sky-300 dark:border-sky-800 px-2 py-1 text-xs text-sky-700 dark:text-sky-200 hover:bg-sky-50 dark:hover:bg-sky-950"
+                    onClick={onOpenWorkbench}
+                  >
+                    {locale.startsWith('zh') ? '新界面' : 'New workbench'}
+                  </button>
+                ) : null}
                 <button type="button" className="border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800" onClick={() => setSettingsOpen(true)}>
                   {translate('header.settings')}
                 </button>
