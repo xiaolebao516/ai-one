@@ -10,14 +10,23 @@ import { fileURLToPath } from 'node:url';
 
 export const EXIT = { ok: 0, error: 1, held: 2 };
 
+// Claim commits never carry the local git identity (a real name or private email would be pushed
+// with every claim) and must not depend on one being configured.
+const CLAIM_IDENTITY = {
+  GIT_AUTHOR_NAME: 'ai-one issue-claim',
+  GIT_AUTHOR_EMAIL: 'issue-claim@ai-one.invalid',
+  GIT_COMMITTER_NAME: 'ai-one issue-claim',
+  GIT_COMMITTER_EMAIL: 'issue-claim@ai-one.invalid',
+};
+
 const USAGE = `usage:
   node scripts/issue-claim/cli.mjs claim <N> --agent "<tool / session>"
   node scripts/issue-claim/cli.mjs show [<N>]
   node scripts/issue-claim/cli.mjs release <N> --agent "<tool / session>"
 options: --remote <name> (default origin)`;
 
-function git(args, { cwd, input, allowFail = false } = {}) {
-  const result = spawnSync('git', args, { cwd, input: input ?? '', encoding: 'utf8' });
+function git(args, { cwd, input, env, allowFail = false } = {}) {
+  const result = spawnSync('git', args, { cwd, input: input ?? '', encoding: 'utf8', env: env ? { ...process.env, ...env } : process.env });
   if (result.error) throw result.error;
   if (result.status !== 0 && !allowFail) {
     throw new Error(`git ${args[0]} failed: ${(result.stderr || result.stdout).trim()}`);
@@ -36,7 +45,9 @@ function parseArgs(argv) {
       options[arg.slice(2)] = value;
       i += 1;
     } else if (/^#?\d+$/.test(arg) && options.issue === undefined) {
-      options.issue = Number(arg.replace('#', ''));
+      const issue = Number(arg.replace('#', ''));
+      if (!Number.isSafeInteger(issue) || issue <= 0) throw new Error(`not an issue number: ${arg}`);
+      options.issue = issue;
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
@@ -59,15 +70,25 @@ function readClaim(issue, { cwd, remote }) {
 }
 
 export function claim(issue, agent, { cwd, remote = 'origin', now = new Date() } = {}) {
+  // Same holder (same tool + session string) resuming: keep the existing claim instead of failing.
+  const existing = readClaim(issue, { cwd, remote });
+  if (existing) return existing.agent === agent ? { ok: true, sha: existing.sha, resumed: true } : { ok: false, holder: existing };
   const emptyTree = git(['mktree'], { cwd, input: '' }).stdout;
-  const message = `claim #${issue}\n\nagent: ${agent}\nat: ${now.toISOString()}\n`;
-  const commit = git(['commit-tree', emptyTree, '-m', message], { cwd }).stdout;
+  const message = `claim #${issue}
+
+agent: ${agent}
+at: ${now.toISOString()}
+`;
+  const commit = git(['commit-tree', emptyTree, '-m', message], { cwd, env: CLAIM_IDENTITY }).stdout;
   const pushed = git(['push', '--porcelain', `--force-with-lease=${refFor(issue)}:`, remote, `${commit}:${refFor(issue)}`], {
     cwd,
     allowFail: true,
   });
   if (pushed.status === 0) return { ok: true, sha: commit };
+  // The push may have landed even though it reported failure (connection dropped after the update):
+  // the claim is ours exactly when the remote ref points at the commit we just made.
   const holder = readClaim(issue, { cwd, remote });
+  if (holder?.sha === commit) return { ok: true, sha: commit };
   if (holder) return { ok: false, holder };
   throw new Error(`push failed: ${pushed.stderr || pushed.stdout}`);
 }
@@ -77,8 +98,16 @@ export function release(issue, agent, { cwd, remote = 'origin' } = {}) {
   if (!holder) return { ok: true, released: false };
   if (holder.agent !== agent) return { ok: false, holder };
   // Lease on the claim we just read: if someone re-claimed in between, the delete is refused.
-  git(['push', '--porcelain', `--force-with-lease=${refFor(issue)}:${holder.sha}`, remote, `:${refFor(issue)}`], { cwd });
-  return { ok: true, released: true };
+  const pushed = git(['push', '--porcelain', `--force-with-lease=${refFor(issue)}:${holder.sha}`, remote, `:${refFor(issue)}`], {
+    cwd,
+    allowFail: true,
+  });
+  if (pushed.status === 0) return { ok: true, released: true };
+  // Uncertain result: read back instead of guessing.
+  const after = readClaim(issue, { cwd, remote });
+  if (!after) return { ok: true, released: true };
+  if (after.sha !== holder.sha) return { ok: false, holder: after };
+  throw new Error(`release failed: ${pushed.stderr || pushed.stdout}`);
 }
 
 export function list({ cwd, remote = 'origin' } = {}) {
@@ -119,7 +148,7 @@ export function main(argv, { cwd = process.cwd(), out = console.log, err = conso
     if (command === 'claim') {
       const result = claim(issue, agent, { cwd, remote });
       if (result.ok) {
-        out(`claimed #${issue} for ${agent}`);
+        out(result.resumed ? `#${issue} is already held by ${agent}; resuming` : `claimed #${issue} for ${agent}`);
         return EXIT.ok;
       }
       err(`not claimed: ${describe(issue, result.holder)}. Do not work on it unless the user reassigns it or the holder hands it over in the Issue.`);

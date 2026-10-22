@@ -70,8 +70,40 @@ test('three processes claiming at once: exactly one succeeds', async () => {
   assert.deepEqual(codes.filter((code) => code === EXIT.held).length, 2);
 });
 
+test('the same holder claiming again resumes instead of being refused', () => {
+  const [a] = clones;
+  assert.equal(run(a, ['claim', '83', '--agent', 'Codex / s1']).code, EXIT.ok);
+  const again = run(a, ['claim', '83', '--agent', 'Codex / s1']);
+  assert.equal(again.code, EXIT.ok);
+  assert.match(again.out, /resuming/);
+  assert.equal(run(a, ['release', '83', '--agent', 'Codex / s1']).code, EXIT.ok);
+});
+
+test('claim commits carry the fixed tool identity, not the local git user', () => {
+  const [a] = clones;
+  assert.equal(run(a, ['claim', '84', '--agent', 'Codex / s1']).code, EXIT.ok);
+  git(a, 'fetch', '--quiet', 'origin', 'refs/heads/claim/84');
+  const who = git(a, 'log', '-1', '--format=%an <%ae> / %cn <%ce>', 'FETCH_HEAD');
+  assert.equal(who, 'ai-one issue-claim <issue-claim@ai-one.invalid> / ai-one issue-claim <issue-claim@ai-one.invalid>');
+  assert.equal(run(a, ['release', '84', '--agent', 'Codex / s1']).code, EXIT.ok);
+});
+
+test('a stale lease cannot delete a newer claim', () => {
+  const [a, b] = clones;
+  assert.equal(run(a, ['claim', '85', '--agent', 'old']).code, EXIT.ok);
+  const stale = git(a, 'ls-remote', 'origin', 'refs/heads/claim/85').split(/\s+/)[0];
+  assert.equal(run(a, ['release', '85', '--agent', 'old']).code, EXIT.ok);
+  assert.equal(run(b, ['claim', '85', '--agent', 'new']).code, EXIT.ok);
+  const refused = spawnSync('git', ['push', `--force-with-lease=refs/heads/claim/85:${stale}`, 'origin', ':refs/heads/claim/85'], { cwd: a, encoding: 'utf8' });
+  assert.notEqual(refused.status, 0);
+  assert.match(run(a, ['show', '85']).out, /claimed by new/);
+  assert.equal(run(b, ['release', '85', '--agent', 'new']).code, EXIT.ok);
+});
+
 test('bad arguments are a usage error, not a claim', () => {
   assert.equal(run(clones[0], ['claim', '82']).code, EXIT.error);
   assert.equal(run(clones[0], ['claim', 'abc', '--agent', 'x']).code, EXIT.error);
+  assert.equal(run(clones[0], ['claim', '0', '--agent', 'x']).code, EXIT.error);
+  assert.equal(run(clones[0], ['claim', '99999999999999999999', '--agent', 'x']).code, EXIT.error);
   assert.equal(run(clones[0], ['show']).out.includes('#82'), false);
 });
