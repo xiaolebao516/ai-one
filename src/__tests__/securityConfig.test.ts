@@ -9,6 +9,11 @@ describe('Tauri control-pane security boundary', () => {
     expect(capability).not.toHaveProperty('remote');
   });
 
+  it('grants the read-only GitHub bridge to the main control webview only (#51)', () => {
+    expect(capability.permissions).toEqual(expect.arrayContaining(['allow-github-readonly-get', 'allow-github-readonly-associations']));
+    expect(capability.webviews).toEqual(['main']);
+  });
+
   it('enables a production CSP while leaving Vite development usable', () => {
     expect(tauriConfig.app.security).toMatchObject({
       csp: {

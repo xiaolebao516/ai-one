@@ -188,8 +188,28 @@ export const host = {
     load: (): Promise<string | null> => invoke('session_checkpoint_load'),
     clear: (): Promise<void> => invoke('session_checkpoint_clear'),
   },
+  /**
+   * Read-only GitHub reads through the locally authenticated gh (#51, Spec #50). Rust allows only the
+   * endpoints scripts/task-status/snapshot.mjs uses; failures reject with a fixed message, never gh output.
+   */
+  github: {
+    get: (path: string): Promise<unknown> => readOnlyGitHub(invoke('github_readonly_get', { path })),
+    associations: (repo: string, numbers: number[]): Promise<unknown> =>
+      readOnlyGitHub(invoke('github_readonly_associations', { repo, numbers })),
+  },
   share: {
     exportMarkdown: (suggestedName: string, content: string): Promise<string | null> =>
       invoke('export_markdown', { suggestedName, content }),
   },
 };
+
+const GITHUB_QUERY_FAILED = 'GitHub query failed; check gh auth status, repository access, network and API rate limits.';
+
+/** Tauri rejects with the command's error string; collectSnapshot expects Error objects. */
+async function readOnlyGitHub(request: Promise<unknown>): Promise<unknown> {
+  try {
+    return await request;
+  } catch (error) {
+    throw new Error(typeof error === 'string' && error ? error : GITHUB_QUERY_FAILED);
+  }
+}
