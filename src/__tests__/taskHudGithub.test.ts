@@ -165,6 +165,40 @@ describe('Spec #50 v1: CI is SHA-bound, not a review', () => {
     expect(item.ci?.detail?.zh).toContain('证据不完整');
   });
 
+  it('keeps multi-check CI evidence separate from commit statuses and preserves source metadata', () => {
+    const record = pr(54, false, 'success');
+    record.ci.checks.push(
+      { name: 'lint', headSha: HEAD, status: 'completed', conclusion: 'success', url: 'https://github.com/acme/demo/actions/runs/2' },
+      { name: 'tests', headSha: HEAD, status: 'completed', conclusion: 'success', url: 'https://github.com/acme/demo/actions/runs/3' },
+    );
+    record.ci.statuses.push(
+      { context: 'build', state: 'success', url: 'https://ci.example.test/build' },
+      { context: 'security', state: 'success', url: 'https://ci.example.test/security' },
+    );
+
+    const task = snapshotToHudTasks(snapshot([], [record]), NOW)[0];
+    const ciEvidence = task.evidence.filter((entry) => entry.id.startsWith('acme/demo:pr:54:ci:'));
+    expect(ciEvidence).toHaveLength(2);
+    const checkRaw = JSON.parse(ciEvidence[0].raw ?? '{}') as {
+      source: typeof source; data: Record<string, unknown>;
+    };
+    const statusRaw = JSON.parse(ciEvidence[1].raw ?? '{}') as {
+      source: typeof source; data: Record<string, unknown>;
+    };
+    expect(ciEvidence.every((entry) => entry.kind === 'readback')).toBe(true);
+    expect(checkRaw.source).toEqual(record.ci.sources[0]);
+    expect(statusRaw.source).toEqual(record.ci.sources[1]);
+    expect(checkRaw.data).toEqual({
+      headSha: HEAD, conclusion: 'success', completeness: 'complete', checks: record.ci.checks,
+    });
+    expect(statusRaw.data).toEqual({
+      headSha: HEAD, conclusion: 'success', completeness: 'complete', statuses: record.ci.statuses,
+    });
+    expect(checkRaw.data).not.toHaveProperty('statuses');
+    expect(statusRaw.data).not.toHaveProperty('checks');
+    expect(ciEvidence.every((entry) => entry.observedMinutesAgo === 15)).toBe(true);
+  });
+
   it('uses readback URLs and timestamps, but marks acceptance as unverified inference', () => {
     const item = snapshotToHudTasks(snapshot([], [pr(40)]), NOW)[0];
     expect(item.status).toBe('accept');
@@ -186,8 +220,9 @@ describe('Spec #50 v1: snapshot quality and repository isolation', () => {
     data.pagination.issues = { page: 1, limit: 1, returned: 1, more: 'possible',
       earlierPagesOmitted: false, source };
     const task = snapshotToHudTasks(data, NOW)[0];
-    expect(task.gap?.en).toContain('more items may exist');
-    expect(task.gap?.zh).toContain('快照状态：partial');
+    expect(task.gap?.en).toContain('without a linked open PR');
+    expect(task.gap?.en).not.toContain('more items may exist');
+    expect(task.gap?.zh).not.toContain('快照状态');
 
     const failed = snapshot();
     failed.status = 'error';
@@ -212,6 +247,45 @@ describe('Spec #50 v1: snapshot quality and repository isolation', () => {
       pagination: { issues: { more: 'no' }, pullRequests: { more: 'no' } },
     });
     expect(calls.some((path) => path.includes('per_page=2'))).toBe(true);
+  });
+
+  it('keeps partial / more-possible warnings at repo level for multiple tasks, not in each task gap', async () => {
+    const api = {
+      async get(path: string): Promise<unknown> {
+        if (path.includes('/issues?')) return [
+          { number: 9, title: 'Issue 9', state: 'open' },
+          { number: 10, title: 'Issue 10', state: 'open' },
+        ];
+        if (path.includes('/pulls?')) throw new Error('GitHub query failed; check gh auth status, repository access, network and API rate limits.');
+        throw new Error('Unexpected query');
+      },
+      async associations(): Promise<unknown> { return { data: { repository: {} } }; },
+    };
+    const [repo] = await loadGitHubTasks(['acme/demo'], api, { now: NOW, limit: 2 });
+    expect(repo.status).toBe('partial');
+    expect(repo.errors).toHaveLength(1);
+    expect(repo.errors[0].message).toContain('GitHub query failed');
+    expect(repo.pagination).toMatchObject({
+      issues: { more: 'possible', returned: 2 },
+      pullRequests: { more: 'unknown', returned: null },
+    });
+    expect(repo.tasks).toHaveLength(2);
+    for (const task of repo.tasks) {
+      expect(task.gap?.en).toContain('without a linked open PR');
+      expect(task.gap?.en).toContain('association could not be fully verified');
+      expect(task.gap?.en).not.toMatch(/Snapshot status|pagination|more items/);
+      expect(task.gap?.zh).not.toMatch(/快照状态|快照分页|可能还有更多/);
+    }
+
+    // A partial repository snapshot must not add a gap to a PR with verified associations.
+    const completePr = pr(20);
+    const mixed = snapshot([issue(11)], [completePr]);
+    mixed.status = 'partial';
+    mixed.pagination.issues = { page: 1, limit: 10, returned: 1, more: 'possible',
+      earlierPagesOmitted: false, source };
+    const tasks = snapshotToHudTasks(mixed, NOW);
+    expect(tasks[0].gap?.en).toContain('without a linked open PR');
+    expect(tasks[1].gap).toBeUndefined();
   });
 
   it('catches invalid repo options without affecting the next repository', async () => {
