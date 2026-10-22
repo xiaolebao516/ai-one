@@ -285,7 +285,7 @@ mod tests {
         let backup = result.backup.expect("backup filename");
         assert!(backup.starts_with("flows.json.bak-"));
         assert!(backup.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-'));
-        assert_eq!(std::fs::read(dir.join(backup)).expect("read backup"), body);
+        assert_eq!(std::fs::read(dir.join(backup)).expect("read backup"), body.to_vec());
         assert!(!dir.join("flows.json").exists());
         clean_dir(&dir);
     }
