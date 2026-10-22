@@ -23,38 +23,43 @@
 
 ## Prodex：免费的 GPT 工人与审计员（快速入口）
 
-Prodex 是本机命令行工具，用来唤起用户已登录的 ChatGPT 网页，让 GPT 干活。它用的是用户的 ChatGPT 订阅，**不耗 Claude 等其他 agent 的额度**，所以能派就派。
+Prodex 是本机命令行工具，用来唤起用户已登录的 ChatGPT 网页，让 GPT 干活。它复用用户现有的 ChatGPT 订阅，**不额外消耗 Claude 等其他 agent 的额度**，所以能派就派。
 
-- **默认档位**：正式派工（执行、审计、讨论）一律显式传最高档 `--effort high`（2026-10-22 账号的最高档；不确定时先 `prodex pro browser models` 看，菜单出现 Pro 就用 `--model Pro`）。只有测试 Prodex 本身才用即时档，测完恢复；测试会在用户账号里留下对话，事先告知用户并标明是测试。
+- **默认档位**：正式派工（执行、审计、讨论）一律显式传最高档 `--effort high`（2026-10-22 账号的最高档；不确定时先 `prodex pro browser models` 看，菜单出现 Pro 就用 `--model Pro`）。以回复里实际生效的档位为准，参数传了不等于生效；无法核实时写 `UNVERIFIED`。只有测试 Prodex 本身才用即时档，测完恢复；测试会在用户账号里留下对话，事先告知用户并标明是测试。
 - **GPT 能直接操作 GitHub**：它在网页里带 GitHub 连接器，可以读仓库代码、推分支和提交、开 / 改 PR、写 Issue / PR 评论，并按快速开发模式的条件合并、关单。派工时直接让它做这些写操作，不要只让它“给建议”再由 agent 抄一遍；写操作结果以回读 GitHub 为准。
 - **默认并行 worker**：调度 agent 拆好步骤后，实现、测试、文档、排查默认都派给 GPT，能并行的同时派到不同槽位；agent 自己只做被显式指定由它做的部分（架构、跨线接口、前端观感、本机真机运行、需要本机环境的验证）。
-- **默认免费异步审计员**：每个 PR 的独立审计默认派 GPT，用一个和执行无关的新对话（作者不审自己）。审计在后台跑，调度 agent 不用干等，可以先做别的。审计员对问题有把握、改动小而明确时，可以让它直接在该 PR 分支上提交修复并逐条说明改了什么；调度 agent 回读这次提交的 diff 并跑必要验证，再换一个与修复无关的新对话对新 HEAD 复审（修复的对话已经是这部分的作者）。改动大、有争议或涉及别的线时，仍交回执行方改。
+- **默认免费异步审计员**：每个 PR 的独立审计默认派 GPT，用一个和执行无关的新对话（作者不审自己）。“异步”指调度 agent 把 `run` 放到后台进程或另一个终端里跑（`run` 本身会一直等到回复），自己先做别的。
+- **审计员有把握就让它直接改**：审计发现的问题小而明确、审计员有把握时，可以让它直接在 PR 分支上提交修复。顺序：① 调度 agent 先确认执行方已停止写这个分支，把唯一写入权交给审计员；② 审计员基于最新 HEAD 提交，只改指出的问题，逐条说明改了什么；③ 调度 agent 回读这次提交的 diff 并跑必要验证；④ **修复者不能给包含自己修改的 HEAD 签 PASS**，必须换一个与修复无关的新对话审计完整新 HEAD。改动大、有争议或涉及别的线时，仍交回执行方改。
+- **追问和复审分开**：没有改代码时，对审计意见追问、澄清可以续用原对话；只要审计员或执行方提交了新代码，对新 HEAD 的复审按上一条处理（修复者之外的对话），作者自己的对话不能给自己签 PASS。
 
-**快速入口（可直接复制，命令细节见 `scripts/prodex-slots/README.md`）**
+**快速入口（Bash 写法，命令细节见 `scripts/prodex-slots/README.md`）**
 
 ```bash
-# 1. 看有哪些槽位、谁在用
+# 1. 看有哪些槽位、当前谁在用
 node scripts/prodex-slots/cli.mjs list
-# 2. 开新对话派工 / 审计：自动挑空闲槽位，满了排队；回复只写进本地文件
+# 2. 开新对话派工 / 审计：自动挑空闲槽位，满了排队；回复只写进本地文件。
+#    err.log 里的 "using slot N" 是这次用的槽位，reply.md 第一行有对话地址：两样都记到本地笔记
 node scripts/prodex-slots/cli.mjs run --slot auto --task <Issue号> --session <你的标识> --wait-ms 1800000 \
   -- --new-chat --effort high --stdin --timeout-ms 1800000 < prompt.md > reply.md 2> err.log
-# 3. 在同一个对话里继续（复审、追问）：必须指定这个对话所在的槽位 N
+# 3. 在同一个对话里继续（追问、同一审计员的下一轮）：必须用这个对话所在的槽位 N
 node scripts/prodex-slots/cli.mjs run --slot <N> --task <Issue号> --session <你的标识> --thread-url "$THREAD" \
   -- --target-url "$THREAD" --confirm-target --effort high --stdin < next.md > reply2.md 2> err2.log
-# 4. 结果不明（request_mismatch、超时）：不重发，带上该槽位的端口和锁文件按 request-id 取回
-PRODEX_CDP_PORT=<端口> PRODEX_SEND_LOCK_FILE=<该槽位锁文件> \
+# 4a. 结果不明（request_mismatch、超时），对话在 1 号槽位：不重发，按 request-id 取回（不设锁文件变量）
+env -u PRODEX_SEND_LOCK_FILE PRODEX_CDP_PORT=9333 \
+  prodex pro browser recover --port 9333 --target-url "$THREAD" --request-id <id>
+# 4b. 对话在 N≥2 号槽位：带上该槽位的端口（9333+N-1）和锁文件
+PRODEX_CDP_PORT=<端口> PRODEX_SEND_LOCK_FILE="${PRODEX_SLOTS_HOME:-$HOME/.local/share/prodex}/browser-send-slot<N>.lock" \
   prodex pro browser recover --port <端口> --target-url "$THREAD" --request-id <id>
 ```
 
-槽位 N 的端口是 9333+N−1；锁文件：1 号槽位是 Prodex 默认锁（不设该变量），N≥2 是 `~/.local/share/prodex/browser-send-slotN.lock`。对话在哪个槽位：`list` 显示的线程 URL，或报错信息里的 thread。
-
 **并行时怎么不冲突**
 
-- 一个槽位同时只服务一个对话；`run --slot auto` 只挑空闲槽位，全忙时按 `--wait-ms` 排队（退出码 4），不预占、不往别人正在进行的对话里塞消息。
-- 续聊必须用对话所在的槽位（`--slot N`）。用 `auto` 可能挑到别的槽位，报 “No open ChatGPT tab matches the confirmed target URL”；这种情况消息没有发出，换对的槽位重试即可。
-- 恢复（recover）必须带该槽位的端口和锁文件；不带锁文件会去等 1 号槽位的锁，表现为“另一个发送占着浏览器”然后超时。
-- 同一个分支同一时间只有一个写入者：派 GPT 改某个分支时，调度 agent 自己不在这个分支提交；多个 GPT 并行改代码时，各自用不重叠的文件，或分开的子步骤顺序合入。
-- 提示词：新对话的正文不要出现 `github.com`（链接或域名都避免），用 `owner/repo`、`#N`、SHA 代替，否则容易误报 `request_mismatch`；几十 KB 的长提示词也可能误报。大段代码优先让 GPT 用连接器自己读，提示词里只给 HEAD、范围和要点。误报时按上面第 4 步取回，不重发。
+- 一个槽位同时只服务一个对话；`run --slot auto` 只挑空闲槽位，全忙时按 `--wait-ms` 排队（退出码 4），不往别人正在进行的对话里塞消息。
+- **槽位“就绪”不等于没有待续的对话**：`run` 一结束就释放占用，之后别人用 `auto` 开新对话可能落到这个槽位，把页面切到新对话。`list` 只显示正在进行的占用和最近一次显式 `release` 的记录，找不回历史对话在哪个槽位。所以要续聊的对话，派工方自己记下槽位号、对话地址和 request-id（本地笔记，私有对话地址不写进 Issue），并尽量在一轮结束后马上续聊。槽位工具没有跨轮预约；页面已被别人切走时，原对话仍在 ChatGPT 历史里，但不保证能用 `--target-url` 回到它，这时新开对话并在提示词里交代前几轮的结论。
+- 续聊必须用对话所在的槽位（`--slot N`）。用 `auto` 可能挑到别的槽位，报 “No open ChatGPT tab matches the confirmed target URL”；这时消息没有发出，换对的槽位重试即可。
+- 恢复（recover）是直接调用 Prodex，不经过 `run`，要按上面 4a / 4b 带对槽位的端口和锁文件；N≥2 不带锁文件会去等 1 号槽位的锁，表现为“另一个发送占着浏览器”然后超时。
+- **同一个分支严格串行写入**：同一时间只有一个写入者（agent 或某个 GPT 对话），调度 agent 负责交接写入权；派 GPT 改某个分支时，调度 agent 自己不在这个分支提交。文件不重叠也不能同时往同一个分支提交（会基于旧 HEAD 或互相覆盖引用）。要并行，就让各个 GPT 在不同分支上做，或者先并行准备、再按顺序逐个提交。
+- 提示词：实测新对话正文出现 `github.com`（链接或域名）时常误报 `request_mismatch`，几十 KB 的长提示词也会；所以用 `owner/repo`、`#N`、SHA 代替域名，大段代码优先让 GPT 用连接器自己读，提示词里只给 HEAD、范围和要点。这是规避经验，不代表所有 `request_mismatch` 都是误报：一律按第 4 步取回核对，不重发。
 - 回复正文只存本地文件，不贴进 Issue / PR / 共享日志；Issue 里只写这一轮的要点、结论和阻塞。
 - 退出码 3（要登录、验证码、窗口被收起）：停下这一路，告诉用户哪个槽位要处理；其他线照常。工具提示要手动删的残留文件（如 `slot-N.json.reap`），确认没有槽位命令在跑后请用户删，agent 不自己绕过。
 

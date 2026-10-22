@@ -103,11 +103,13 @@ node scripts/prodex-slots/cli.mjs run --slot auto --task 71 --session s1 \
 ```
 
 Continuing one thread - the ownership URL and the ask target must be the same URL, otherwise
-the claim would describe a different conversation than the one being written to:
+the claim would describe a different conversation than the one being written to. Run it on the
+slot that holds the thread (`--slot N`, where N is the slot the first `run` reported as
+`using slot N` on stderr), not on `auto` - see *Multi-turn conversations and recovery*:
 
 ```bash
 THREAD='https://chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013'
-node scripts/prodex-slots/cli.mjs run --slot auto --task 71 --session s1 --thread-url "$THREAD" \
+node scripts/prodex-slots/cli.mjs run --slot 2 --task 71 --session s1 --thread-url "$THREAD" \
   -- --target-url "$THREAD" --confirm-target --effort high
 ```
 
@@ -181,9 +183,16 @@ reply text or credentials, and its fields are re-validated on read.
 - Continue it **on the slot whose tab holds that thread** (`--slot N`, not `auto`). `auto` may
   pick another slot, whose tab is on a different conversation; the ask then stops with "No open
   ChatGPT tab matches the confirmed target URL" before sending anything, so retrying on the right
-  slot is safe. The slot holding a thread shows in `list` (its claim or closure record) and in the
-  `thread` field of earlier ask/recover output; its debug port also lists the open tab
-  (`http://127.0.0.1:<port>/json`). Observed 2026-10-22.
+  slot is safe. Observed 2026-10-22.
+- **Record the slot yourself.** `run` releases its claim as soon as the ask returns, and `list`
+  only shows live claims and the last explicit `release` record, so it cannot tell which slot a
+  past thread lives on. Note the `using slot N` line from stderr, the thread URL and the request
+  id from the reply when you dispatch. A `ready` slot may still hold a thread someone means to
+  continue: another `run --slot auto -- --new-chat` can land on it and move its tab to a new
+  conversation. There is no reservation across turns; continue soon, and if the tab has moved,
+  start a new chat that restates the earlier rounds (whether `--target-url` can reopen a thread
+  whose tab was moved away is not verified). A slot's debug port lists its open tab
+  (`http://127.0.0.1:<port>/json`).
 - `--continue` / `--continue-task` are not reliable after a restart or across sessions; do not
   use them as the only way back to a thread.
 - After a `request_mismatch` or "the browser tab was moved to a different conversation", stop.
@@ -192,7 +201,9 @@ reply text or credentials, and its fields are re-validated on read.
   `request_verified: yes` before doing anything else. Never resend blindly.
 - `recover` is plain Prodex, not wrapped by `run`, so give it the slot's own environment:
   `PRODEX_CDP_PORT=<port>` and, for slot N ≥ 2,
-  `PRODEX_SEND_LOCK_FILE=~/.local/share/prodex/browser-send-slotN.lock`. Without the lock file it
+  `PRODEX_SEND_LOCK_FILE=<slots home>/browser-send-slotN.lock` (slots home is `PRODEX_SLOTS_HOME`,
+  default `~/.local/share/prodex`). For slot 1 leave `PRODEX_SEND_LOCK_FILE` unset (Prodex's own
+  default lock). Without the lock file a slot N ≥ 2 recover
   waits on slot 1's lock ("another prodex send holds the browser") and times out even though
   slot N is idle. Observed 2026-10-22. If the thread is still generating, recover says so; run it
   again once the answer has settled.
