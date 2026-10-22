@@ -33,6 +33,8 @@
     "allow-snapshot-delete",
     "allow-session-checkpoint-save",
     "allow-session-checkpoint-load",
-    "allow-session-checkpoint-clear"
+    "allow-session-checkpoint-clear",
+    "allow-github-readonly-get",
+    "allow-github-readonly-associations"
   ]
 }
