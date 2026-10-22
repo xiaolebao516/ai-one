@@ -326,7 +326,7 @@ function GallerySections({ skin, mode, compact }: { skin: V2SkinId; mode: V2Mode
           notice={{ checkpoint: { graphId: 'debate', graphVersion: 1, mode: 'debate', questionHash: 'demo', stepIndex: 2, startedAt: '', updatedAt: '' }, replaySnapshot: { id: 'demo', graphId: 'debate' } }}
           onDismiss={() => {}}
           onReplay={() => {}}
-          locale="zh-TW"
+          locale="zh-CN"
         />
         <SettingsUpdateRow state={{ status: 'idle' }} onCheck={() => {}} labels={UPDATE_LABELS} />
         <SettingsUpdateRow state={{ status: 'up-to-date', version: 'v1.9.7' }} onCheck={() => {}} labels={UPDATE_LABELS} />
@@ -359,7 +359,7 @@ function TaskHudEntryPreview() {
   return (
     <div className="flex items-center gap-v2-sm text-v2-meta text-v2-ink-3">
       聊天工具栏入口：
-      <TaskHudEntry locale="zh-TW" onOpen={() => {}} />
+      <TaskHudEntry locale="zh-CN" onOpen={() => {}} />
     </div>
   );
 }
