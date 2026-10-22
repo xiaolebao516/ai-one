@@ -119,13 +119,14 @@ function hasId(ids: readonly string[] | undefined, nodeId: string): boolean {
 function statusFor(state: DiscussionRunState, nodeId: string): DiscussionTone {
   const output = readOutput(state.outputs, nodeId);
   const status = state.statusByNode?.[nodeId];
-  if (state.errorByNode?.[nodeId] || status === 'error' || (output && /^(?:\[Error:|Error:)/i.test(output.trim()))) return 'block';
+  // An explicit pending status beats anything inferred from a stale output text (answer, error or skip marker).
+  const stale = status === 'pending';
+  if (state.errorByNode?.[nodeId] || status === 'error' || (!stale && output && /^(?:\[Error:|Error:)/i.test(output.trim()))) return 'block';
   if (hasId(state.timedOutNodeIds, nodeId) || status === 'timeout') return 'block';
-  if (hasId(state.skippedNodeIds, nodeId) || status === 'skipped' || output === SKIP_RESPONSE) return 'paused';
+  if (hasId(state.skippedNodeIds, nodeId) || status === 'skipped' || (!stale && output === SKIP_RESPONSE)) return 'paused';
   if (status === 'paused') return 'paused';
   if (hasId(state.activeNodeIds, nodeId) || status === 'running') return 'run';
-  // An explicit pending status beats inference from a stale non-empty output.
-  if (status === 'pending') return 'unknown';
+  if (stale) return 'unknown';
   if ((output !== undefined && output.trim().length > 0) || status === 'done') return 'done';
   return 'unknown';
 }

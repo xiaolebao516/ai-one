@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SKIP_RESPONSE } from '../workflow/state';
 import { buildDiscussionViewModel, type DiscussionRunState } from '../stages/discussionViewModel';
 
 function decision(status: 'AGREE' | 'REVISE', proposal: string, issues: string): string {
@@ -188,5 +189,14 @@ describe('discussion view model', () => {
       + '[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:AGREED]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]';
     const model = buildDiscussionViewModel(state({ outputs: { audit1: report } }));
     expect(model.summary.evidenceGaps).toEqual({ kind: 'value', text: 'Real gap text.' });
+  });
+
+  it.each([['an old error', 'Error: previous run failed'], ['an old skip marker', SKIP_RESPONSE]])('lets pending beat %s left in the output', (_label, output) => {
+    const model = buildDiscussionViewModel(state({
+      outputs: { first: output, round1_first: output },
+      statusByNode: { first: 'pending', round1_first: 'pending' },
+    }));
+    expect(model.matrix.rows[0].cells.first.tone).toBe('unknown');
+    expect(model.matrix.rows[1].cells.first.tone).toBe('unknown');
   });
 });
