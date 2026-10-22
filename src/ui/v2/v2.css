@@ -1,0 +1,115 @@
+/*
+ * v2 component layer (#41). Every rule is scoped under .v2-scope so nothing here can reach the
+ * v1 chat UI or the html.ai-sister theme; colours come only from the --v2-* tokens that
+ * <V2Scope> writes from src/ui/v2/tokens.ts. Most styling is Tailwind classes in the components;
+ * this file only holds what utilities cannot express (status glyph shapes, keyframes, focus ring).
+ */
+
+.v2-scope {
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
+}
+
+.v2-scope :focus-visible {
+  outline: 2px solid var(--v2-focus);
+  outline-offset: 2px;
+}
+
+/* Programmatic focus targets (a view heading moved to after navigation) are not keyboard stops. */
+.v2-scope :is(h1, h2, h3, h4, section, article, div)[tabindex="-1"]:focus-visible {
+  outline: none;
+}
+
+/* Status glyph: colour + shape + (always) text label, so status never relies on colour alone. */
+.v2-scope .v2-glyph {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--v2-unknown);
+}
+
+.v2-scope .v2-glyph::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.v2-scope .v2-glyph[data-tone="run"] { color: var(--v2-run); }
+.v2-scope .v2-glyph[data-tone="run"]::before { animation: v2-pulse 1.8s infinite; }
+
+.v2-scope .v2-glyph[data-tone="rework"] { color: var(--v2-rework); }
+.v2-scope .v2-glyph[data-tone="rework"]::before {
+  width: 9px;
+  height: 9px;
+  background: none;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: v2-spin 1.4s linear infinite;
+}
+
+.v2-scope .v2-glyph[data-tone="you"] { color: var(--v2-you); }
+.v2-scope .v2-glyph[data-tone="you"]::before {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  transform: rotate(45deg) scale(0.85);
+}
+
+.v2-scope .v2-glyph[data-tone="block"] { color: var(--v2-block); }
+.v2-scope .v2-glyph[data-tone="block"]::before { border-radius: 2px; }
+
+.v2-scope .v2-glyph[data-tone="paused"] { color: var(--v2-paused); }
+.v2-scope .v2-glyph[data-tone="paused"]::before {
+  border-radius: 1px;
+  background: linear-gradient(90deg, currentColor 0 35%, transparent 35% 65%, currentColor 65%);
+}
+
+.v2-scope .v2-glyph[data-tone="done"] { color: var(--v2-done); }
+.v2-scope .v2-glyph[data-tone="done"]::before {
+  width: 9px;
+  height: 5px;
+  border-radius: 0;
+  background: none;
+  border: solid currentColor;
+  border-width: 0 0 2px 2px;
+  transform: rotate(-45deg) translate(1px, -1px);
+}
+
+.v2-scope .v2-glyph[data-tone="unknown"] { color: var(--v2-unknown); }
+.v2-scope .v2-glyph[data-tone="unknown"]::before {
+  background: none;
+  border: 1.5px dashed currentColor;
+}
+
+.v2-scope .v2-spinner {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--v2-line-strong);
+  border-top-color: var(--v2-ink-2);
+  animation: v2-spin 0.9s linear infinite;
+}
+
+@keyframes v2-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
+  70% { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+@keyframes v2-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v2-scope .v2-glyph::before,
+  .v2-scope .v2-spinner {
+    animation: none;
+  }
+}

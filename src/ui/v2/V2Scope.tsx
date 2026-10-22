@@ -1,0 +1,43 @@
+import { createContext, useContext, type CSSProperties, type HTMLAttributes, type ReactNode } from 'react';
+import { cx } from './cx';
+import { useV2Skin } from './skinPreference';
+import { resolveV2Mode, useDocumentDarkClass } from './themeMode';
+import { v2CssVariables, type V2ModePreference, type V2SkinId } from './tokens';
+import './v2.css';
+
+export interface V2ScopeProps extends HTMLAttributes<HTMLDivElement> {
+  /** Pin a visual scheme. Omit it to follow the shared skin preference (setV2Skin), which is how every v2 surface switches together. */
+  skin?: V2SkinId;
+  /** `auto` follows the app theme (`html.dark`); `light` / `dark` pin the scope. */
+  mode?: V2ModePreference;
+  children?: ReactNode;
+}
+
+/** Skin of the nearest enclosing scope, so unpinned nested scopes match their surroundings. */
+const InheritedSkin = createContext<V2SkinId | undefined>(undefined);
+
+/**
+ * Root of every v2 surface. Writes the skin's tokens as `--v2-*` custom properties on its own
+ * element, so v2 styling exists only inside the scope and two scopes can show different skins
+ * side by side. Nested scopes override their parent.
+ */
+export function V2Scope({ skin: pinnedSkin, mode = 'auto', className, style, children, ...rest }: V2ScopeProps) {
+  const preferredSkin = useV2Skin();
+  const inheritedSkin = useContext(InheritedSkin);
+  // Pinned > enclosing scope > shared preference.
+  const skin = pinnedSkin ?? inheritedSkin ?? preferredSkin;
+  const documentDark = useDocumentDarkClass();
+  const resolved = resolveV2Mode(mode, documentDark);
+  const scopeStyle = { ...v2CssVariables(skin, resolved), colorScheme: resolved, ...style } as CSSProperties;
+  return (
+    <div
+      {...rest}
+      data-v2-skin={skin}
+      data-v2-mode={resolved}
+      className={cx('v2-scope font-v2 text-v2-body text-v2-ink', className)}
+      style={scopeStyle}
+    >
+      <InheritedSkin.Provider value={skin}>{children}</InheritedSkin.Provider>
+    </div>
+  );
+}
