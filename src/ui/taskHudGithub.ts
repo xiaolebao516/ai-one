@@ -4,7 +4,6 @@ import {
   type SnapshotClient,
   type SnapshotError,
   type SnapshotIssue,
-  type SnapshotPaginationEntry,
   type SnapshotPullRequest,
   type SnapshotSource,
   type SnapshotStatus,
@@ -128,15 +127,6 @@ function guidance(status: TaskStatus): { summary: LText; nextStep: LText } {
   }
 }
 
-function paginationGap(snapshot: GitHubSnapshot): LText | undefined {
-  const entries = Object.entries(snapshot.pagination) as Array<[string, SnapshotPaginationEntry]>;
-  if (!entries.some(([, p]) => p.more !== 'no' || p.earlierPagesOmitted)) return undefined;
-  return {
-    en: 'Snapshot pagination is incomplete or uncertain; more items may exist.',
-    zh: '快照分页不完整或尚不确定，可能还有更多条目。',
-  };
-}
-
 function combinedGap(parts: Array<LText | undefined>): LText | undefined {
   const present = parts.filter((item): item is LText => item !== undefined);
   return present.length ? {
@@ -169,11 +159,19 @@ function makeTask(
     evidence.push(readback(id + ':pr', { en: 'Open PR #' + pr.number + (pr.draft ? ' (Draft)' : ' (non-Draft)'),
       zh: '开放 PR #' + pr.number + (pr.draft ? '（草稿）' : '（非草稿）') },
     pr.source, now, { number: pr.number, draft: pr.draft, headSha: pr.headSha }));
+    // snapshot.mjs produces sources in check-runs, then commit-status order.
+    // Keep shared metadata in both readbacks, but attach each query's own payload only once.
+    const ciMeta = { headSha: pr.ci.headSha, conclusion: pr.ci.conclusion, completeness: pr.ci.completeness };
     for (const [index, source] of pr.ci.sources.entries()) {
+      const sourceData = index === 0
+        ? { ...ciMeta, checks: pr.ci.checks }
+        : index === 1
+          ? { ...ciMeta, statuses: pr.ci.statuses }
+          : ciMeta;
       evidence.push(readback(id + ':ci:' + index, { en: 'CI bound to HEAD ' + pr.ci.headSha +
         '; conclusion ' + pr.ci.conclusion + '; completeness ' + pr.ci.completeness,
         zh: 'CI 对应 HEAD ' + pr.ci.headSha + '；结果 ' + pr.ci.conclusion + '；完整性 ' + pr.ci.completeness },
-      source, now, { ci: pr.ci }));
+      source, now, sourceData));
     }
     if (pr.association.source) {
       evidence.push(readback(id + ':pr-association',
@@ -194,10 +192,7 @@ function makeTask(
     (!issue && pr && pr.association.status !== 'complete')
       ? { en: 'PR/Issue association could not be fully verified from the loaded snapshot.',
           zh: '无法从当前加载的快照完整核实 PR/Issue 的关联。' } : undefined;
-  const partialSnapshot: LText | undefined = snapshot.status !== 'complete'
-    ? { en: 'Snapshot status: ' + snapshot.status + '; some GitHub data may be unavailable.',
-        zh: '快照状态：' + snapshot.status + '；部分 GitHub 数据可能不可用。' }
-    : undefined;
+  const gap = combinedGap([noPr, uncertainAssociation]);
 
   return {
     id,
@@ -216,9 +211,7 @@ function makeTask(
       ci: ciFor(pr) } : {}),
     // Review verdicts, local execution, Agent online/quota/iteration are NOT in the snapshot.
     evidence,
-    ...(combinedGap([noPr, uncertainAssociation, partialSnapshot, paginationGap(snapshot)])
-      ? { gap: combinedGap([noPr, uncertainAssociation, partialSnapshot, paginationGap(snapshot)]) }
-      : {}),
+    ...(gap ? { gap } : {}),
   };
 }
 
