@@ -79,13 +79,15 @@ out of shared logs. Claims store only a random owner id, the pid and a start tim
 
 ## How an agent uses it
 
+0. Run `list` first to see which slots exist and which are `ready`.
 1. Estimate how many Prodex jobs will run at once. If that exceeds the ready slots from
    `list`, **ask the user** to approve N more slots; do not add them on your own.
 2. After approval run `add --count N`. Exit `3` means the user has to sign in to ChatGPT (or
    finish a verification) in the opened window(s); tell them which slot numbers, then run
    `list` until they are `ready`. Exit `1` is a tool or Prodex failure, not a login problem.
-3. Dispatch with `run --slot auto`. Exit `3` again means ask the user; exit `4` means wait or
-   ask for more slots.
+3. Dispatch with `run --slot auto -- <ask args>`, always passing `--effort` explicitly, with the
+   prompt on stdin and the output redirected to a file. Exit `3` again means ask the user; exit
+   `4` means wait or ask for more slots.
 4. A claim only steers jobs onto idle slots. Prodex's own per-slot lock remains the guard
    against two sends touching one tab.
 
@@ -112,3 +114,32 @@ out of shared logs. Claims store only a random owner id, the pid and a start tim
   explicitly for real work, and restore the level after tests.
 - Test runs create chats in the user's account; mark them as tests and let the user delete them.
 - `list` only sees claims made through this tool, not sends started with plain `prodex`.
+
+## Not implemented / not verified yet
+
+Tracked in Issue #61. Policy: the tool is used as it is; each item below is handled only when
+it blocks real work, with a targeted PR that ticks it off in #61. Do not treat these as working.
+
+Not implemented:
+- No command to remove or shrink slots (the count only grows; closing a slot's browser and
+  deleting its profile is manual).
+- Window restoring exists only on Windows; the tool was only tested on Windows.
+- The model-level slider of a slot is not restored after tests; always pass `--effort`.
+- No advice on how many slots to open: the dispatching agent decides and asks the user.
+- `list` cannot see sends made with plain `prodex`; `run` wraps only `ask` (how `recover` and
+  `--continue-task` should pick a slot is not designed).
+
+Not verified:
+- Whether the logins survive a reboot, and what `ensure` does after one.
+- Whether many simultaneous logged-in browsers on one account are throttled or challenged.
+- Whether Prodex's `--minimized` / virtual-display modes avoid taking screen space.
+- A real-machine record of "all slots busy, wait, then start" (only unit tests cover it).
+- What happens to generating and reading the reply if a slot window is minimized mid-run.
+- `--continue-task` / `recover` from a browser other than the one that holds the conversation.
+- The last reviewed version has local tests only (no CI, which is manual now) and its second
+  review round's fixes were not independently re-reviewed.
+
+Accepted trade-offs: a mutex file left by a crash must be deleted by hand; claims need a file
+system with hard links (NTFS); a claim with no heartbeat for 2 minutes counts as dead, so after
+a long machine sleep two jobs may share a slot (Prodex's per-slot lock still serializes them);
+the 10 s send spacing is shared by all slots; slot windows are visible windows.
