@@ -7,7 +7,7 @@ import { taskHudText } from '../ui/taskHudText';
 import { Badge, Button, Icon, IconButton, Notice, SegmentedControl, StatusIndicator, V2Scope, cx, type V2IconName } from '../ui/v2';
 import { CommandPalette } from './CommandPalette';
 import { NAV_KEY, paletteCommands } from './paletteCommands';
-import { isCountable, isExact, observedAt, repoNotices, useWorkbenchData, type DataHealth, type GitHubLoader, type WorkbenchData } from './useWorkbenchData';
+import { countLabel, isExact, observedAt, repoNotices, useWorkbenchData, type DataHealth, type GitHubLoader, type WorkbenchData } from './useWorkbenchData';
 import {
   HOME_ROUTE,
   MAX_REPOS,
@@ -136,7 +136,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader }: WorkbenchProp
           text={text}
           locale={locale}
           tasks={data.tasks}
-          known={isCountable(data.health)}
+          health={data.health}
           active={navViewFor(current)}
           activeTaskId={current.taskId}
           theme={data.prefs.theme}
@@ -176,7 +176,7 @@ interface TitleBarProps {
 
 function TitleBar({ text, tasks, health, onPalette, onShowTasks }: TitleBarProps) {
   const summary = summarize(tasks);
-  const count = (n: number) => (isExact(health) ? String(n) : health === 'partial' ? `≥${n}` : '?');
+  const count = (n: number) => countLabel(n, health);
   const values = { inProgress: summary.inProgress, needsYou: summary.needsYou };
   const islandLabel = isExact(health)
     ? text.t('islandAria', values)
@@ -225,7 +225,7 @@ interface SidebarProps {
   text: WorkbenchText;
   locale: Locale;
   tasks: readonly HudTask[];
-  known: boolean;
+  health: DataHealth;
   active: NavView;
   activeTaskId?: string;
   theme: WorkbenchData['prefs']['theme'];
@@ -235,7 +235,7 @@ interface SidebarProps {
   onOpenClassic: () => void;
 }
 
-function Sidebar({ text, locale, tasks, known, active, activeTaskId, theme, onNavigate, onOpenTask, onTheme, onOpenClassic }: SidebarProps) {
+function Sidebar({ text, locale, tasks, health, active, activeTaskId, theme, onNavigate, onOpenTask, onTheme, onOpenClassic }: SidebarProps) {
   const summary = summarize(tasks);
   const hud = taskHudText(locale);
   const groups = groupByRepo(activeTasks(tasks));
@@ -245,7 +245,9 @@ function Sidebar({ text, locale, tasks, known, active, activeTaskId, theme, onNa
       <ul className="grid gap-0.5">
         {NAV_VIEWS.map((view, index) => {
           const label = text.t(NAV_KEY[view]);
-          const count = view === 'home' ? summary.needsYou : view === 'tasks' ? summary.total : undefined;
+          const raw = view === 'home' ? summary.needsYou : view === 'tasks' ? summary.total : undefined;
+          // Same rule as the status island: exact, "at least", or "?"; never a stale or partial number as fact.
+          const count = raw === undefined || (raw === 0 && isExact(health)) ? undefined : countLabel(raw, health);
           return (
             <li key={view}>
               <button
@@ -271,7 +273,11 @@ function Sidebar({ text, locale, tasks, known, active, activeTaskId, theme, onNa
 
       <section aria-label={text.t('activeTasks')} className="grid grid-cols-[minmax(0,1fr)] gap-v2-xs max-[1099px]:hidden">
         <h2 className="px-v2-sm text-v2-micro font-semibold text-v2-ink-3">{text.t('activeTasks')}</h2>
-        {groups.length === 0 ? <p className="px-v2-sm text-v2-micro text-v2-ink-3">{text.t(known ? 'noActiveTasks' : 'islandUnknown')}</p> : null}
+        {groups.length === 0 ? (
+          <p className="px-v2-sm text-v2-micro text-v2-ink-3">
+            {text.t(isExact(health) ? 'noActiveTasks' : health === 'partial' ? 'partialNone' : 'islandUnknown')}
+          </p>
+        ) : null}
         {groups.map((group) => (
           <div key={group.repo}>
             <div className="truncate px-v2-sm text-v2-micro text-v2-ink-3">{group.repo}</div>
@@ -318,8 +324,9 @@ function SourceBar({ text, data, locale }: { text: WorkbenchText; data: Workbenc
   const [draft, setDraft] = useState('');
   const [repoError, setRepoError] = useState<string | undefined>();
   const { prefs, github } = data;
-  const notices = prefs.source === 'github' ? repoNotices(github.results) : [];
-  const observed = observedAt(github.results);
+  const current = github.reposKey === prefs.repos.join('\n') ? github.results : [];
+  const notices = prefs.source === 'github' ? repoNotices(current) : [];
+  const observed = observedAt(current);
   return (
     <div className="sticky top-0 z-10 grid gap-v2-xs border-b border-v2-line bg-v2-panel px-v2-page py-v2-sm">
       <div className="flex flex-wrap items-center gap-v2-sm text-v2-meta">

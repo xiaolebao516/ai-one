@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TASK_HUD_MOCK_TASKS } from '../ui/taskHudMockData';
 import type { HudTask, TaskStatus } from '../ui/taskHudModel';
 import type { GitHubRepoTasks } from '../ui/taskHudGithub';
-import { dataHealth, isCountable, isExact, observedAt, repoNotices } from '../workbench/useWorkbenchData';
+import { countLabel, dataHealth, isCountable, isExact, observedAt, repoNotices } from '../workbench/useWorkbenchData';
 import {
   activeTasks,
   filterCommands,
@@ -114,6 +114,18 @@ describe('task grouping and headline', () => {
 
   it('never calls unreadable task states "nothing to do"', () => {
     expect(headline([task('u', 'unknown'), task('d', 'done')])).toEqual({ kind: 'unclear', inProgress: 0, needsYou: 0, unknown: 1 });
+    expect(headline([task('u', 'unknown'), task('r', 'running')])).toEqual({ kind: 'moving', inProgress: 1, needsYou: 0, unknown: 1 });
+    expect(headline([task('u', 'unknown'), task('a', 'accept')])).toEqual({ kind: 'waiting', inProgress: 0, needsYou: 1, unknown: 1 });
+  });
+
+  it('writes every count with one rule: exact, at least, or unknown', () => {
+    expect([countLabel(3, 'demo'), countLabel(3, 'complete'), countLabel(3, 'partial'), countLabel(3, 'loading'), countLabel(3, 'failed')]).toEqual([
+      '3',
+      '3',
+      '≥3',
+      '?',
+      '?',
+    ]);
   });
 
   it('works on the shipped demo data', () => {

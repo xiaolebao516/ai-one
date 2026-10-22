@@ -185,5 +185,36 @@ describe('GitHub reads', () => {
     expect(h1(container)).toBe('Nothing of this kind in what could be read; the rest is unknown.');
     expect(container.querySelector('header button[aria-label]')?.textContent).toContain('≥0');
     expect(container.textContent).not.toContain('No tasks here yet');
+    // The sidebar follows the same rule as the status island.
+    const sidebar = container.querySelector('nav') as HTMLElement;
+    expect(sidebar.textContent).not.toContain('Nothing in progress');
+    expect(sidebar.textContent).toContain('Nothing of this kind in what could be read');
+  });
+
+  it('partial reads show counts as "at least" in the sidebar, the overview and the task filters', async () => {
+    const loader: GitHubLoader = async () => [repoResult('o/a', [githubTask('t1', 'Read task')]), repoResult('o/b', [], 'error')];
+    const container = await mount(loader);
+    await click(buttonByText(container, 'GitHub'));
+    const navTasks = [...container.querySelectorAll('nav li button')].find((button) => button.textContent?.startsWith('Tasks'));
+    expect(navTasks?.textContent).toContain('≥1');
+    expect(container.querySelector('#home-in-progress')?.textContent).toContain('≥1');
+    await key(window, { key: '2', ctrlKey: true });
+    expect(container.querySelector('[role="radiogroup"][aria-label="Filter tasks"]')?.textContent).toContain('All ≥1');
+  });
+
+  it('a stale snapshot shows "?" in the sidebar while refreshing', async () => {
+    const calls: ReturnType<typeof deferred<GitHubRepoTasks[]>>[] = [];
+    const loader: GitHubLoader = () => {
+      const next = deferred<GitHubRepoTasks[]>();
+      calls.push(next);
+      return next.promise;
+    };
+    const container = await mount(loader);
+    await click(buttonByText(container, 'GitHub'));
+    await act(async () => calls[0].resolve([repoResult('xiaolebao516/ai-one', [githubTask('t1', 'Read task')])]));
+    const navTasks = () => [...container.querySelectorAll('nav li button')].find((button) => button.textContent?.startsWith('Tasks'));
+    expect(navTasks()?.textContent).toContain('1');
+    await click(buttonByText(container, 'Refresh'));
+    expect(navTasks()?.textContent).toContain('?');
   });
 });

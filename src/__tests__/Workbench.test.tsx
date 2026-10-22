@@ -73,6 +73,14 @@ describe('Overview', () => {
     expect(partial).toContain('Only part of GitHub could be read');
     expect(partial).not.toContain('No tasks here yet');
   });
+
+  it('never says "nothing waiting for you" while some task state is unreadable', () => {
+    const running = TASK_HUD_MOCK_TASKS.find((item) => item.status === 'running')!;
+    const unreadable = { ...running, id: 'x-unknown', status: 'unknown' as const };
+    const text = visibleText(renderToStaticMarkup(<HomeView locale="en" tasks={[running, unreadable]} health="complete" onOpenTask={noop} onShowTasks={noop} />));
+    expect(text).toContain('1 more with an unreadable state');
+    expect(text).not.toContain('nothing waiting for you');
+  });
 });
 
 describe('Task page needs-you', () => {

@@ -4,11 +4,16 @@ import { formatAge, inProgressTasks, needsYouTasks, pickText, type HudTask } fro
 import { taskHudText } from '../../ui/taskHudText';
 import { Badge, Button, Card, EmptyState, Icon, SectionHeader, SegmentedControl } from '../../ui/v2';
 import { TaskRow, TaskStatus } from '../TaskBits';
-import { isCountable, isExact, type DataHealth } from '../useWorkbenchData';
+import { countLabel, isCountable, isExact, type DataHealth } from '../useWorkbenchData';
 import { headline } from '../workbenchModel';
 import { workbenchText } from '../workbenchText';
 
 type ComposerMode = 'chat' | 'grill' | 'cc' | 'flow';
+
+/** Exact counts go in the header's count slot; "at least" / unknown ones are written into the title. */
+function sectionTitle(label: string, n: number, health: DataHealth): string {
+  return isExact(health) ? label : `${label} ${countLabel(n, health)}`;
+}
 
 export interface HomeViewProps {
   locale: Locale;
@@ -27,8 +32,10 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
   let title: string;
   if (health === 'loading') title = text.t('headlineLoading');
   else if (health === 'failed') title = text.t('headlineFailed');
-  else if (lead.kind === 'waiting') title = text.t('headlineWaiting', { inProgress: lead.inProgress, needsYou: lead.needsYou });
-  else if (lead.kind === 'moving') title = text.t('headlineMoving', { inProgress: lead.inProgress });
+  else if (lead.kind === 'waiting')
+    title = text.t(lead.unknown ? 'headlineWaitingUnknown' : 'headlineWaiting', { inProgress: lead.inProgress, needsYou: lead.needsYou, unknown: lead.unknown });
+  // "nothing waiting for you" is only said when every task's state was read.
+  else if (lead.kind === 'moving') title = text.t(lead.unknown ? 'headlineMovingUnknown' : 'headlineMoving', { inProgress: lead.inProgress, unknown: lead.unknown });
   else if (lead.kind === 'unclear') title = text.t('headlineUnclear', { unknown: lead.unknown });
   else if (health === 'partial') title = text.t('partialNone');
   else title = text.t(lead.kind === 'quiet' ? 'headlineQuiet' : 'headlineEmpty');
@@ -62,7 +69,7 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
       <div className="grid gap-v2-lg min-[1100px]:grid-cols-[minmax(0,1fr)_300px]">
         <div className="grid content-start gap-v2-lg">
           <section aria-labelledby="home-needs-you">
-            <SectionHeader id="home-needs-you" title={text.t('needsYou')} count={countable ? needsYou.length : undefined} description={text.t('needsYouHint')} />
+            <SectionHeader id="home-needs-you" title={sectionTitle(text.t('needsYou'), needsYou.length, health)} count={isExact(health) ? needsYou.length : undefined} description={text.t('needsYouHint')} />
             {needsYou.length ? (
               <ul className="mt-v2-sm grid gap-v2-sm">
                 {needsYou.map((task) => (
@@ -75,8 +82,8 @@ export function HomeView({ locale, tasks, health, onOpenTask, onShowTasks }: Hom
           <section aria-labelledby="home-in-progress">
             <SectionHeader
               id="home-in-progress"
-              title={text.t('inProgress')}
-              count={countable ? moving.length : undefined}
+              title={sectionTitle(text.t('inProgress'), moving.length, health)}
+              count={isExact(health) ? moving.length : undefined}
               actions={
                 <Button size="sm" variant="ghost" onClick={onShowTasks}>
                   {text.t('allTasks')}

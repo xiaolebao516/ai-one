@@ -3,7 +3,7 @@ import type { Locale } from '../../i18n/resolve';
 import type { HudTask } from '../../ui/taskHudModel';
 import { Card, EmptyState, SectionHeader, SegmentedControl } from '../../ui/v2';
 import { TaskRow } from '../TaskBits';
-import type { DataHealth } from '../useWorkbenchData';
+import { countLabel, isExact, type DataHealth } from '../useWorkbenchData';
 import { filterTasks, groupByRepo, type TaskFilter } from '../workbenchModel';
 import { workbenchText } from '../workbenchText';
 
@@ -30,7 +30,13 @@ export function TasksView({ locale, tasks, health, onOpenTask }: TasksViewProps)
           label={text.t('filterAria')}
           value={filter}
           onChange={(value) => setFilter(value as TaskFilter)}
-          options={FILTERS.map((value) => ({ value, label: text.t(FILTER_KEY[value]), count: filterTasks(tasks, value).length }))}
+          options={FILTERS.map((value) => {
+            const n = filterTasks(tasks, value).length;
+            // Exact counts use the count badge; partial / unknown reads say "at least" or "?" in the label.
+            return isExact(health)
+              ? { value, label: text.t(FILTER_KEY[value]), count: n }
+              : { value, label: `${text.t(FILTER_KEY[value])} ${countLabel(n, health)}` };
+          })}
         />
       </header>
       {groups.length === 0 ? (
@@ -44,7 +50,7 @@ export function TasksView({ locale, tasks, health, onOpenTask }: TasksViewProps)
       ) : (
         groups.map((group) => (
           <section key={group.repo} aria-label={group.repo}>
-            <SectionHeader level={3} title={group.repo} count={group.tasks.length} />
+            <SectionHeader level={3} title={isExact(health) ? group.repo : `${group.repo} ${countLabel(group.tasks.length, health)}`} count={isExact(health) ? group.tasks.length : undefined} />
             <Card padding="none" className="mt-v2-sm">
               <ul className="divide-y divide-v2-line p-v2-xs">
                 {group.tasks.map((task) => (

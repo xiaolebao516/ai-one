@@ -62,6 +62,12 @@ export function isExact(health: DataHealth): boolean {
   return health === 'demo' || health === 'complete';
 }
 
+/** How a count reads in the UI: exact, "at least" after a partial read, or unknown. */
+export function countLabel(n: number, health: DataHealth): string {
+  if (isExact(health)) return String(n);
+  return health === 'partial' ? `≥${n}` : '?';
+}
+
 /** Counts mean something (exactly or as "at least") only for these. */
 export function isCountable(health: DataHealth): boolean {
   return isExact(health) || health === 'partial';
