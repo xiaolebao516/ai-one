@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import * as childProcess from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -962,7 +961,7 @@ test('a release that the reap mutex blocks is reported loudly after a successful
   const h = harness();
   addSlots(h.home, 1);
   let armed = false;
-  h.deps.runAsk = async (slot, args) => {
+  h.deps.runAsk = async (slot) => {
     // The mutex goes stale while the ask is running, so release happens into a blocked mutex.
     const reap = `${claimPath(h.home, slot.id)}.reap`;
     fs.writeFileSync(reap, '999\n');
@@ -989,6 +988,20 @@ test('a slot the sweep found blocked is not claimed by run at all', async () => 
   assert.equal(await h.run(['run', '--slot', 'auto', '--', '--new-chat']), EXIT.OK);
   assert.equal(h.log.asks[0].slot, 2, 'the sweep-blocked slot was never claimed');
   assert.equal(readClaim(h.home, 1).pid, 111, 'the pre-existing claim was left to its owner');
+});
+
+test('an unrelated sweep-blocked slot does not change the selected busy slot exit code', async () => {
+  const h = harness({ states: { 2: 'busy' } });
+  addSlots(h.home, 1);
+  const reap = `${claimPath(h.home, 1)}.reap`;
+  fs.mkdirSync(path.dirname(reap), { recursive: true });
+  fs.writeFileSync(reap, '999\n');
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(reap, old, old);
+  assert.equal(await h.run(['run', '--slot', '2', '--wait-ms', '0', '--', '--new-chat']), EXIT.BUSY);
+  assert.ok(h.log.err.some((line) => line.includes('all usable slots stayed busy')));
+  assert.equal(h.log.asks.length, 0);
+  assert.equal(readClaim(h.home, 2), null);
 });
 
 test('a missing prodex.mjs reports the npm root and the exact PRODEX_ENTRY command', () => {

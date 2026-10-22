@@ -263,8 +263,9 @@ async function runCommand(options, passthrough, deps, err, sweepReport = []) {
   const blocked = new Map();
   // Slots the sweep already found unclaimable (stale mutex, blocked deletion) are not retried
   // here: claiming them would either fail again or - worse - succeed and then fail to release.
+  const wantedIds = new Set(wanted.map((slot) => slot.id));
   for (const item of sweepReport) {
-    if (item.blocked) blocked.set(item.slot, item.blocked);
+    if (item.blocked && wantedIds.has(item.slot)) blocked.set(item.slot, item.blocked);
   }
   for (;;) {
     let anyReadyButBusy = false;
@@ -297,10 +298,10 @@ async function runCommand(options, passthrough, deps, err, sweepReport = []) {
         if (code !== 0) err(`prodex-slots: prodex ask exited with code ${code}; its own output above shows the reason. On a request_mismatch, take the answer back with \`prodex pro browser recover --port <port> --target-url <thread-url> --request-id <id>\` and do not resend blindly`);
         return code === 0 ? EXIT.OK : EXIT.ERROR;
       } finally {
-        // A release that could not happen (blocked mutex or file) must never look like a clean
-        // success: say the slot stays occupied until `list` shows it free.
+        // This also runs when the browser was busy or the ask failed, so do not assume success.
+        // A blocked .reap mutex prevents sweeping even after the heartbeat expires.
         if (claim.release() !== true) {
-          err(`prodex-slots: slot ${slot.id}: the claim could not be released. The ask itself succeeded; treat the slot as occupied until \`list\` shows it free - the sweep or the 2-minute heartbeat will clear it.`);
+          err(`prodex-slots: slot ${slot.id}: the claim could not be released; this is separate from the ask result; treat the slot as occupied until \`list\` shows it free. Run \`list\` for the self-heal report; a blocked .reap mutex requires its printed manual fix after other prodex-slots commands have stopped.`);
         }
       }
     }
