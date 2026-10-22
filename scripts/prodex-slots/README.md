@@ -36,7 +36,7 @@ excludes `run` jobs on slot 1. The number of slots (1..8) is stored in
 - `list`: sweeps the claim directory first (see *Self-healing* - this is the one read-only
   command that also removes dead leftovers), then reports each slot's state, any live claim (by
   pid) and the last closure. States: `ready`; `busy` (logged in,
-  still generating a reply, so `run` waits for it); `down` (browser not running);
+  still generating a reply, so `run` waits for it); `down` (Windows process evidence and a silent CDP endpoint confirm the browser is absent);
   `needs-login`; `hidden` (window minimized or the tab not visible, Prodex cannot send);
   `error` (the probe or the browser start itself failed); `unknown`. Only `ready` slots take
   new work. `list` never restores a window.
@@ -54,6 +54,25 @@ Exit codes: `0` ok, `1` error, `3` the user must act (sign in or complete a Chat
 verification / add a slot), `4` every ready slot stayed busy past `--wait-ms`. A failing
 `prodex ... ask` is always `1`, with its own code written to stderr, so its code can never
 pass for `3` or `4`. A browser that cannot be started or probed is `1`, not `3`.
+
+## Browser evidence when CDP is unreachable
+
+`browser_unreachable` alone no longer proves the browser is closed. On Windows,
+the tool checks Edge/Chrome primary processes against the exact slot port and full
+profile path, then probes CDP and page presence. A matching live process with a silent
+port, a responding port without a ready page, ambiguous process identity, failed probes,
+and unsupported platforms remain `unknown`. These states include diagnostic guidance in
+`list`, `ensure` and `run`; they do not trigger an automatic restart or imply expired login.
+An intermediate `unknown` after a confirmed fresh launch is polled within the startup budget.
+
+Slot 1 delegates its profile to Prodex. If browsers are running but the full identity cannot
+be established, it remains conservatively `unknown`; inspect the intended browser before
+reopening it. Process command lines, profile paths, private URLs and raw probe errors are
+not included in these diagnostics. Existing ready/busy/hidden/login checks are unchanged.
+
+The single-browser dispatch feasibility assessment and its unimplemented prototype are
+documented in [the Issue #84 assessment](../../docs/prodex-single-browser.md). Existing
+multi-slot dispatch remains in use.
 
 ## Error output shape
 

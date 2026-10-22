@@ -293,9 +293,13 @@ async function runCommand(options, passthrough, deps, err, sweepReport = []) {
       }
       if (claim.warning) err(`prodex-slots: slot ${slot.id}: ${claim.warning} (the claim itself is fine; the sweep collects the leftover)`);
       try {
-        const { state } = await checkWithRestore(slot, deps);
+        const { state, detail } = await checkWithRestore(slot, deps);
         if (state === 'busy') { anyReadyButBusy = true; continue; }
-        if (state !== 'ready') { notReady.set(slot.id, state); continue; }
+        if (state !== 'ready') {
+          notReady.set(slot.id, state);
+          if (state === 'unknown' && detail) err(`prodex-slots: slot ${slot.id}: ${detail}`);
+          continue;
+        }
         const label = ownershipLabel(options.ownership);
         err(`prodex-slots: using slot ${slot.id} (port ${slot.port})${label ? ` for ${label}` : ''}`);
         // The ask's own exit code is not part of this tool's 0/1/3/4 contract: any failure is 1.
@@ -323,6 +327,10 @@ async function runCommand(options, passthrough, deps, err, sweepReport = []) {
       if (notReady.size === 0 || [...notReady.values()].includes('error')) {
         err(`prodex-slots: could not use any slot. ${detail}.${fix}`);
         return EXIT.ERROR;
+      }
+      if ([...notReady.values()].includes('unknown')) {
+        err(`prodex-slots: no usable slot. ${detail}. Browser state is uncertain; no automatic restart was attempted. Inspect the browser window and run \`list\` again. Sign in only if the page asks.`);
+        return EXIT.NEEDS_USER;
       }
       err(`prodex-slots: no usable slot. ${detail}. Ask the user to sign in or complete any ChatGPT verification (run \`ensure\`), or to add slots (\`add --count N\`).`);
       return EXIT.NEEDS_USER;

@@ -15,13 +15,17 @@ function commandLineOf(process) {
   return process?.commandLine ?? process?.CommandLine ?? null;
 }
 
-function hasExactPort(commandLine, port) {
-  return new RegExp('(?:^|\\s)--remote-debugging-port(?:=|\\s+)' + String(Number(port)) + '(?=\\s|$)', 'i').test(commandLine);
+function optionValue(commandLine, name) {
+  // Windows may quote the whole option or just its value. Keep quoted spaces within
+  // one argument so option-like text inside a profile path cannot match another flag.
+  const args = (commandLine.match(/(?:[^\s"]|"[^"]*")+/g) ?? []).map((arg) => arg.replaceAll('"', ''));
+  const index = args.findIndex((arg) => arg.toLowerCase() === name || arg.toLowerCase().startsWith(name + '='));
+  if (index === -1) return null;
+  return args[index].toLowerCase() === name ? args[index + 1] ?? '' : args[index].slice(name.length + 1);
 }
 
-function profileArgument(commandLine) {
-  const match = /(?:^|\s)--user-data-dir(?:=|\s+)(?:"([^"]+)"|([^\s"]+))(?=\s|$)/i.exec(commandLine);
-  return match?.[1] ?? match?.[2] ?? null;
+function hasExactPort(commandLine, port) {
+  return optionValue(commandLine, '--remote-debugging-port') === String(Number(port));
 }
 
 function normalizedWindowsPath(value) {
@@ -30,13 +34,13 @@ function normalizedWindowsPath(value) {
 }
 
 function hasExactProfile(commandLine, profileDir) {
-  const actual = normalizedWindowsPath(profileArgument(commandLine));
+  const actual = normalizedWindowsPath(optionValue(commandLine, '--user-data-dir'));
   const expected = normalizedWindowsPath(profileDir);
   return actual !== null && expected !== null && actual === expected;
 }
 
 function isChildProcess(commandLine) {
-  return /(?:^|\s)--type(?:=|\s|$)/i.test(commandLine);
+  return optionValue(commandLine, '--type') !== null;
 }
 
 // Only a primary Edge/Chrome process with the exact port and full profile path counts as

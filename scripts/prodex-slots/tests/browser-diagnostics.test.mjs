@@ -34,7 +34,7 @@ function mockRealDeps({
   fetchFn = async () => { throw new Error('PRIVATE-CDP-ERROR'); },
 } = {}) {
   const calls = { powershell: 0, fetch: 0 };
-  const spawnSyncFn = (command, _args) => {
+  const spawnSyncFn = (command) => {
     if (command === 'powershell.exe') {
       calls.powershell += 1;
       if (processProbeError) {
@@ -78,6 +78,13 @@ test('only the exact main browser process with the exact port and full profile p
   assert.equal(classifyWindowsBrowserProcesses([
     browserProcess({ name: 'firefox.exe' }),
   ], SLOT2).state, 'absent', 'an unrelated executable is not a browser match');
+});
+
+test('whole quoted Windows arguments still identify the live dedicated browser', () => {
+  const profile = 'C:\\Prodex Profiles\\slot2';
+  const process = browserProcess();
+  process.CommandLine = '"C:\\Program Files\\Edge\\msedge.exe" "--remote-debugging-port=9334" "--user-data-dir=' + profile + '"';
+  assert.equal(classifyWindowsBrowserProcesses([process], { ...SLOT2, profileDir: profile }).state, 'running');
 });
 
 test('a live matching process with an unresponsive CDP port is unknown, never down', async () => {
@@ -179,7 +186,7 @@ test('unsupported platforms report unknown rather than inferring the browser is 
 
 test('ensure keeps polling a newly launched browser while its page state is unknown', async () => {
   const home = tempHome();
-  addSlots(home, 0 + 0 + 1);
+  addSlots(home, 1);
   const states = ['down', 'unknown', 'ready'];
   const launches = [];
   let now = 0;
@@ -230,4 +237,20 @@ test('list surfaces safe diagnostic guidance for an uncertain browser state', as
   assert.equal(row.state, 'unknown');
   assert.match(row.detail, /debugging port is not responding/);
   assert.ok(!JSON.stringify(row).includes(PROFILE2));
+});
+
+test('run reports the uncertain browser cause without misdirecting to login or more slots', async () => {
+  const home = tempHome();
+  addSlots(home, 1);
+  const { deps } = mockRealDeps({ home });
+  const checkSlot = deps.checkSlot.bind(deps);
+  deps.checkSlot = (slot) => checkSlot({ ...slot, profileDir: PROFILE2 });
+  deps.runAsk = async () => assert.fail('must not send on an uncertain browser');
+  const err = [];
+  const code = await main(['run', '--slot', '2', '--', '--new-chat'], {
+    deps, out: () => {}, err: (value) => err.push(value),
+  });
+  assert.equal(code, EXIT.NEEDS_USER);
+  assert.match(err.join('\n'), /process is running, but its debugging port is not responding/);
+  assert.doesNotMatch(err.join('\n'), /Ask the user to sign in|add slots/);
 });
