@@ -11,7 +11,6 @@ import {
 } from '../../shared/constants';
 import { onBridgeMessage, publishBridgeMessage, resetBusForTests } from '../bridge/bus';
 import { resetBridgePullForTests } from '../bridge/pull';
-import { armDevDeliberationFault, clearDevDeliberationFault, isDevDeliberationFaultArmed } from '../dev/deliberationFault';
 import { host } from '../host';
 import { resetCancelState } from '../workflow/cancel';
 import {
@@ -108,7 +107,6 @@ describe('workflow graph foundation', () => {
     resetCancelState();
     resetStepTimeoutForTests();
     resetSessionCheckpointForTests();
-    clearDevDeliberationFault();
     vi.clearAllTimers();
     await Promise.resolve();
     vi.useRealTimers();
@@ -360,6 +358,8 @@ describe('workflow graph foundation', () => {
     expect(prompts[3].text).toContain('independent chatgpt');
     expect(prompts[4].text).toContain('independent chatgpt');
     expect(prompts[4].text).toContain('reasoned response');
+    expect(prompts[4].text).toContain('kept in English because the app parses them');
+    expect(prompts[4].text).toContain('Do not switch to English because the headings and these instructions are in English.');
     expect(system).toHaveLength(1);
     expect(system[0]).toContain('COMPLETE_AGREED (round 1');
   });
@@ -438,50 +438,6 @@ describe('workflow graph foundation', () => {
     expect(vi.mocked(host.provider.stop)).toHaveBeenCalledWith('gemini');
     expect(reports).toHaveLength(1);
     expect(reports[0]).toContain('COMPLETE_AGREED');
-  });
-
-  it('dev-only pre-send fault retries Gemini round 1 without redoing earlier steps', async () => {
-    expect(import.meta.env.DEV).toBe(true);
-    expect(armDevDeliberationFault()).toBe(true);
-    const sends: AIProvider[] = [];
-    const failures: string[] = [];
-    const reports: string[] = [];
-    const offTimeout = onStepTimeoutEvent((event) => {
-      if (!event.timedOut) return;
-      failures.push(event.failureKind ?? 'unknown');
-      expect(event.provider).toBe('gemini');
-      expect(event.skipAllowed).toBe(false);
-      expect(chooseStepTimeoutAction('retry', event.requestId)).toBe(true);
-    });
-    const offBridge = onBridgeMessage((event) => {
-      if (event.provider === ('system' as AIProvider) && event.action === 'RESPONSE_DONE') reports.push(String(event.payload));
-    });
-    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
-      sends.push(provider);
-      const response = provider === 'claude'
-        ? [
-          'Evidence-backed findings: Sources reviewed. Shared conclusions: Both support the result. Disagreements: NONE. Evidence gaps: NONE. Next steps: Validate.',
-          '[[AI_ONE_AUDIT_DECISION:FINISH]]',
-          '[[AI_ONE_AUDIT_RESULT:AGREED]]',
-          '[[AI_ONE_AUDIT_QUESTION:NONE]]',
-        ].join('\n')
-        : 'discussion response from ' + provider;
-      publishBridgeMessage(done(provider, response));
-    });
-
-    await expect(executeGraph(deliberationGraph, {
-      text: 'Test pre-send fault and continue',
-      roles: { first: 'chatgpt', second: 'gemini', auditor: 'claude' },
-    })).resolves.toBeUndefined();
-    offTimeout();
-    offBridge();
-
-    expect(failures).toEqual(['provider-error']);
-    expect(sends).toEqual(['chatgpt', 'gemini', 'chatgpt', 'gemini', 'claude']);
-    expect(vi.mocked(host.provider.stop)).not.toHaveBeenCalled();
-    expect(reports).toHaveLength(1);
-    expect(reports[0]).toContain('COMPLETE_AGREED');
-    expect(isDevDeliberationFaultArmed()).toBe(false);
   });
 
   it('deliberation requires an available distinct auditor and validates the graph', async () => {

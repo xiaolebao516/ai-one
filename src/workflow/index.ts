@@ -1,6 +1,5 @@
 import type { AIProvider, ChatMode, ModeRoles, WorkflowPresetId } from '../../shared/types';
 import { AI_PROVIDERS, CHAT_MODES, DEFAULT_FREE_TARGET_PROVIDERS } from '../../shared/constants';
-import { clearDevDeliberationFault } from '../dev/deliberationFault';
 import { getRuntimeAppVersion } from '../appVersion';
 import { host } from '../host';
 import type { Locale } from '../i18n/resolve';
@@ -48,7 +47,6 @@ export async function runWorkflow(params: RunWorkflowParams): Promise<RunWorkflo
   try {
     return await runPreparedWorkflow(params);
   } finally {
-    if (params.presetId === 'deliberation') clearDevDeliberationFault();
     run.finish();
   }
 }

@@ -5,7 +5,6 @@ import { startBridgePull, resetProviderBootState } from './bridge/pull';
 import { isRenderableResponseMessage } from './bridge/render';
 import { publishBridgeMessage } from './bridge/bus';
 import { EchoPanel } from './dev/EchoPanel';
-import { DevDeliberationFaultControl } from './dev/DevDeliberationFaultControl';
 import { getRuntimeAppVersion } from './appVersion';
 import { host } from './host';
 import { useI18n } from './i18n/context';
@@ -2184,7 +2183,6 @@ export default function App() {
           </div>
           <div className="ai-sister-conversation-composer shrink-0 border-t border-zinc-200 pt-2 dark:border-zinc-800">
             {stepTimeout?.timedOut ? <StepTimeoutDialog event={stepTimeout} onClose={() => setStepTimeout(undefined)} locale={locale} /> : null}
-            {import.meta.env.DEV && presetId === 'deliberation' ? <DevDeliberationFaultControl disabled={isProcessing} /> : null}
             <InputBar
               onSend={send}
               onCancel={cancelWorkflow}
