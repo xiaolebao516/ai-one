@@ -208,3 +208,26 @@ test('ensure keeps polling a newly launched browser while its page state is unkn
   assert.equal(JSON.parse(out[0])[0].state, 'ready');
   assert.equal(now, 4000, 'polling continues through an intermediate unknown state');
 });
+
+
+test('list surfaces safe diagnostic guidance for an uncertain browser state', async () => {
+  const home = tempHome();
+  addSlots(home, 1);
+  const { deps } = mockRealDeps({ home, processes: [browserProcess()] });
+  const checkSlot = deps.checkSlot.bind(deps);
+  deps.checkSlot = (slot) => checkSlot(slot.id === 2 ? { ...slot, profileDir: PROFILE2 } : slot);
+  const out = [];
+  const err = [];
+
+  const code = await main(['list', '--json'], {
+    deps,
+    out: (value) => out.push(value),
+    err: (value) => err.push(value),
+  });
+
+  assert.equal(code, EXIT.OK);
+  const row = JSON.parse(out[0]).find((item) => item.id === 2);
+  assert.equal(row.state, 'unknown');
+  assert.match(row.detail, /debugging port is not responding/);
+  assert.ok(!JSON.stringify(row).includes(PROFILE2));
+});

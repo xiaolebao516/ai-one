@@ -194,10 +194,12 @@ async function describeSlots(config, deps, sweepReport = []) {
     const reaped = sweepReport.filter((item) => item.slot === slot.id && item.removed)
       .map(({ removed, reason }) => ({ removed, reason }));
     const closure = readClosure(deps.home, slot.id);
+    const check = await deps.checkSlot(slot);
     return {
       id: slot.id,
       port: slot.port,
-      state: (await deps.checkSlot(slot)).state,
+      state: check.state,
+      ...(['unknown', 'down'].includes(check.state) && check.detail ? { detail: check.detail } : {}),
       ...(reaped.length ? { reaped } : {}),
       ...(closure ? { lastClosed: closure } : {}),
       busyWith: busy ? { pid: claim.pid, ...claimOwnership(claim) } : null,
