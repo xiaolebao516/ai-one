@@ -56,4 +56,14 @@ describe('/grill command parser', () => {
       options: {},
     });
   });
+
+  it.each([
+    ['/grill --team "unfinished question', 'invalid-option'],
+    ['/grill --team= question', 'invalid-option'],
+    ['/grill --team "" question', 'invalid-option'],
+  ])('rejects the malformed option %s', (input, reason) => {
+    const result = parseGrillCommand(input);
+    expect(result.reason).toBe(reason);
+    expect(result.options).toEqual({});
+  });
 });

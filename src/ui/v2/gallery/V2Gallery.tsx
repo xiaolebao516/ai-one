@@ -141,12 +141,14 @@ function GallerySections({ skin, mode, compact }: { skin: V2SkinId; mode: V2Mode
     try {
       const parsed: unknown = JSON.parse(discussionReplayInput);
       if (!Array.isArray(parsed) || !parsed.every((item): item is string => typeof item === 'string')) {
+        setDiscussionReplayState(null);
         setDiscussionReplayError('请粘贴有效的 JSON 字符串数组。');
         return;
       }
       setDiscussionReplayState(createDiscussionRunStateFromOutputs(parsed));
       setDiscussionReplayError('');
     } catch {
+      setDiscussionReplayState(null);
       setDiscussionReplayError('读取失败：请检查 JSON 格式，并确认数组不超过 11 项。');
     }
   };

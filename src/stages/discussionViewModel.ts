@@ -124,6 +124,8 @@ function statusFor(state: DiscussionRunState, nodeId: string): DiscussionTone {
   if (hasId(state.skippedNodeIds, nodeId) || status === 'skipped' || output === SKIP_RESPONSE) return 'paused';
   if (status === 'paused') return 'paused';
   if (hasId(state.activeNodeIds, nodeId) || status === 'running') return 'run';
+  // An explicit pending status beats inference from a stale non-empty output.
+  if (status === 'pending') return 'unknown';
   if ((output !== undefined && output.trim().length > 0) || status === 'done') return 'done';
   return 'unknown';
 }
@@ -266,7 +268,7 @@ function parseReportSection(text: string, section: AuditSectionName): string | u
     }
     if (fence) continue;
     const withoutMarkdown = line.trim().replace(/^#{1,6}\s*/, '').replace(/^(?:[-*+]|\d+[.)])\s+/, '');
-    const heading = /^(?:\*\*|__)?(Evidence-backed findings|Shared conclusions|Disagreements|Evidence gaps|Next steps|有证据支持的发现|有證據支持的發現|共同结论|共同結論|分歧|证据缺口|證據缺口|证据空白|證據空白|下一步)(?:\*\*|__)?\s*(?::|：)?\s*(.*)$/i.exec(withoutMarkdown);
+    const heading = /^(?:\*\*|__)?(Evidence-backed findings|Shared conclusions|Disagreements|Evidence gaps|Next steps|有证据支持的发现|有證據支持的發現|共同结论|共同結論|分歧|证据缺口|證據缺口|证据空白|證據空白|下一步)\s*(?::|：)?\s*(?:\*\*|__)?\s*(?::|：)?\s*(.*)$/i.exec(withoutMarkdown);
     if (!heading) {
       if (collecting) content.push(line);
       continue;

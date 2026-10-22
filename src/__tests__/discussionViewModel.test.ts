@@ -171,4 +171,22 @@ describe('discussion view model', () => {
     expect(model.summary.evidenceGaps).toEqual({ kind: 'missing' });
     expect(model.summary.nextSteps).toEqual({ kind: 'missing' });
   });
+
+  it('lets an explicit pending status beat a stale non-empty output', () => {
+    const model = buildDiscussionViewModel(state({
+      outputs: { first: 'stale first answer', round1_first: decision('AGREE', 'Use an explicit typed discussion state model', 'NONE') },
+      statusByNode: { first: 'pending', round1_first: 'pending' },
+    }));
+    expect(model.matrix.rows[0].cells.first.tone).toBe('unknown');
+    expect(model.matrix.rows[1].cells.first.tone).toBe('unknown');
+    expect(model.summary.conclusion.kind === 'value' && model.summary.conclusion.basis).toBe('unresolved');
+  });
+
+  it.each(['**证据缺口：**', '**Evidence gaps:**', '**Evidence gaps**:'])('reads a bold heading written as %s without leaking markup', (heading) => {
+    const report = 'The auditor reviewed everything carefully and wrote this report.\n\n'
+      + heading + '\nReal gap text.\n\n## Next steps\nReal next step.\n\n'
+      + '[[AI_ONE_AUDIT_DECISION:FINISH]]\n[[AI_ONE_AUDIT_RESULT:AGREED]]\n[[AI_ONE_AUDIT_QUESTION:NONE]]';
+    const model = buildDiscussionViewModel(state({ outputs: { audit1: report } }));
+    expect(model.summary.evidenceGaps).toEqual({ kind: 'value', text: 'Real gap text.' });
+  });
 });
