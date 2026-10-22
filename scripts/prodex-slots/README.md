@@ -53,8 +53,73 @@ verification / add a slot), `4` every ready slot stayed busy past `--wait-ms`. A
 pass for `3` or `4`. A browser that cannot be started or probed is `1`, not `3`.
 
 `run` forwards the ask's stdout (the model reply) unchanged. Redirect it to a file and keep it
-out of shared logs. Claims store only a random owner id, the pid and a start time, never a
-`--session-key` or any conversation text.
+out of shared logs. Claims store a random owner id, the pid, a start time and, when `run` was
+given them, the three ownership fields described below - never reply text, ask stdin/stdout or
+credentials.
+
+## Who a slot serves
+
+A claim only says "busy". Add ownership so another session can tell which task, session and
+thread a busy slot is working on.
+
+Starting a new chat - there is no thread yet, so leave `--thread-url` out:
+
+```bash
+node scripts/prodex-slots/cli.mjs run --slot auto --task 71 --session s1 \
+  -- --new-chat --effort high
+```
+
+Continuing one thread - the ownership URL and the ask target must be the same URL, otherwise
+the claim would describe a different conversation than the one being written to:
+
+```bash
+THREAD='https://chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013'
+node scripts/prodex-slots/cli.mjs run --slot auto --task 71 --session s1 --thread-url "$THREAD" \
+  -- --target-url "$THREAD" --confirm-target --effort high
+```
+
+Quote the URL. `--thread-url https://chatgpt.com/c/<id>` without quotes is legal for this tool
+but the shell reads `<id>` as a redirection, and the flag then receives something else.
+
+| Flag | Accepted | Stored as |
+|---|---|---|
+| `--task` | `71` or `#71` | `#71` |
+| `--session` | 1-64 chars of `A-Z a-z 0-9 . _ : -` | as given |
+| `--thread-url` | exactly `https://chatgpt.com/c/<thread-id>` or `https://chatgpt.com/g/g-p-<project>/c/<thread-id>`, where `<thread-id>` is the UUID from the address bar; at most 300 chars | as given |
+
+`list` appends them to the claim line, and `--json` puts them in `busyWith`:
+
+```
+slot 2  port 9334  ready  busy (pid 1234) #71 s1 https://chatgpt.com/c/6ad9e501-...
+```
+
+Five limits, and they are deliberate:
+
+- Ownership comes only from these flags. It is never read out of the ask arguments, stdin or
+  the page, so a typo cannot silently become "who this slot belongs to".
+- Only these three fields are stored. Reply text, ask stdin/stdout, cookies and tokens are not
+  written to a claim.
+- A thread URL may not carry credentials (`user:pass@`), a port, or any query string or fragment
+  (not even an empty `?` or `#`), and must point at a thread path. It also has to be written in
+  its canonical form: `..` segments and percent-escaped segments are refused instead of being
+  silently normalized, because the stored string is what other sessions read - normalizing after
+  the check would keep whatever sat in front of the path.
+- The thread id must be UUID-shaped (`8-4-4-4-12` hex), which is what ChatGPT puts in the address
+  bar. That is a format constraint on command-line input, not a claim that the id exists: it is
+  what stops an arbitrary string, such as a pasted token, from passing as a thread id.
+- No refusal message repeats the rejected value, for any of the three fields. A rejected value is
+  by definition text this tool did not expect, so it may be a token pasted in the wrong place,
+  and stderr ends up in logs. The message names the flag and the rule instead.
+- Values are re-validated when they are read back, not just the key names. A hand-edited claim
+  with an over-long or malformed field has those fields dropped from `list` instead of printed,
+  and cannot add keys that are not part of this set.
+- They are refused on `list`, `add`, `ensure` and `release`, because only `run` takes a claim.
+
+`--session` is this tool's own field. `prodex ... ask --session-key` is a different thing: it
+selects the prodex thread, it goes **after** `--`, and it is never written into a claim. Putting
+`--session-key` before `--` is a "Missing value" or unknown-option error rather than a silent
+substitution, so a thread key cannot be swallowed by the ownership layer.
+
 
 ## Concurrency model
 

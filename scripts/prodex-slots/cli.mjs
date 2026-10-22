@@ -3,20 +3,26 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { EXIT, addSlots, claimSlot, loadConfig, parseCheck, processAlive, readClaim, releaseClaim, slotEnv, slotsHome } from './slots.mjs';
+import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeOwnership, parseCheck, processAlive, readClaim, releaseClaim, slotEnv, slotsHome } from './slots.mjs';
 
 export const usage = [
   'Usage: node scripts/prodex-slots/cli.mjs <command> [options]',
-  '  list [--json]                         slots, browser state, claims',
+  '  list [--json]                         slots, browser state, claims and who they serve',
   '  add --count N [--json]                register N more slots and open their login windows',
   '  ensure [--json]                       reopen slot browsers that are not running',
-  '  run [--slot N|auto] [--wait-ms MS] -- <args of `prodex pro browser ask`>',
+  '  run [--slot N|auto] [--wait-ms MS] [--task N] [--session KEY] [--thread-url URL]',
+  '                                        -- <args of `prodex pro browser ask`>',
   '  release --slot N                      drop a stale claim',
+  'Ownership (run only): --task 71, --session s1, --thread-url https://chatgpt.com/c/<id>.',
+  'They are shown by `list` so another session can see who a slot serves; never reply text.',
+  'Use the ask\'s own --session-key after `--`: that one is prodex\'s, this one is ownership.',
   'Exit: 0 ok, 1 error (also any failure of the prodex ask itself), 3 needs the user, 4 all ready slots busy past --wait-ms.',
   '`run` passes the ask output (the reply) through to stdout: redirect it to a file, do not log it.',
 ].join('\n');
 
-const VALUE_OPTIONS = { '--slot': 'slot', '--count': 'count', '--wait-ms': 'waitMs' };
+const VALUE_OPTIONS = { '--slot': 'slot', '--count': 'count', '--wait-ms': 'waitMs', '--task': 'task', '--session': 'sessionKey', '--thread-url': 'threadUrl' };
+const OWNERSHIP_FLAGS = { task: '--task', sessionKey: '--session', threadUrl: '--thread-url' };
+const NUMERIC_OPTIONS = new Set(['--slot', '--count', '--wait-ms']);
 // States that are not a problem for the user: the slot works or will work by itself.
 const NO_USER_ACTION = new Set(['ready', 'busy']);
 
@@ -32,9 +38,18 @@ export function parseArgs(args) {
     if (seen.has(arg)) throw new Error(`Duplicate option: ${arg}`);
     seen.add(arg);
     if (arg === '--json') { options.json = true; continue; }
-    if (!(arg in VALUE_OPTIONS)) throw new Error(`Unknown option: ${arg}`);
+    if (!(arg in VALUE_OPTIONS)) {
+      // Report at most the option name, and only when it is one this tool knows. A token pasted
+      // in the wrong place arrives here as an "option" too, so nothing unrecognized is repeated.
+      const name = arg.split('=')[0];
+      if (name in VALUE_OPTIONS || name === '--json') {
+        throw new Error(`Unknown option: ${name}. Options take their value as the next argument (${name} <value>); the "=" form is not accepted here`);
+      }
+      throw new Error('Unknown option. Expected one of: --json, --slot, --count, --wait-ms, --task, --session, --thread-url, each with its value as the next argument; the "=" form is not accepted');
+    }
     const value = rest[++index];
     if (value === undefined || value.startsWith('--')) throw new Error(`Missing value: ${arg}`);
+    if (!NUMERIC_OPTIONS.has(arg)) { options[VALUE_OPTIONS[arg]] = value; continue; }
     if (arg === '--slot' && value === 'auto') continue;
     if (!/^\d+$/.test(value)) throw new Error(`Invalid integer: ${arg}`);
     options[VALUE_OPTIONS[arg]] = Number(value);
@@ -45,10 +60,26 @@ export function parseArgs(args) {
       throw new Error('Do not pass --port: the slot decides the browser');
     }
   } else if (passthrough.length) {
-    throw new Error(`${command ?? ''} takes no arguments after --`);
+    throw new Error('Only `run` takes arguments after `--`');
   }
   if (command === 'add' && !options.count) throw new Error('add needs --count N');
   if (command === 'release' && options.slot === 'auto') throw new Error('release needs --slot N');
+  const provided = Object.keys(OWNERSHIP_FLAGS).filter((key) => options[key] !== undefined);
+  if (provided.length) {
+    // Ownership is recorded in the claim, so only a command that takes a claim can carry it.
+    // The command is not validated (it may be a token pasted in the wrong place), so the message
+    // names the flags and the rule, not the command.
+    if (command !== 'run') {
+      throw new Error(`${provided.map((key) => OWNERSHIP_FLAGS[key]).join(' / ')} only apply to run`);
+    }
+    options.ownership = normalizeOwnership({
+      task: options.task,
+      sessionKey: options.sessionKey,
+      threadUrl: options.threadUrl,
+    });
+  } else {
+    options.ownership = {};
+  }
   return { command, options, passthrough };
 }
 
@@ -122,7 +153,7 @@ async function describeSlots(config, deps) {
   return Promise.all(config.slots.map(async (slot) => {
     const claim = readClaim(deps.home, slot.id);
     const busy = claim && (deps.alive ?? processAlive)(claim.pid);
-    return { id: slot.id, port: slot.port, state: (await deps.checkSlot(slot)).state, busyWith: busy ? { pid: claim.pid } : null };
+    return { id: slot.id, port: slot.port, state: (await deps.checkSlot(slot)).state, busyWith: busy ? { pid: claim.pid, ...claimOwnership(claim) } : null };
   }));
 }
 
@@ -159,8 +190,17 @@ async function ensureSlots(slots, deps, { pollMs = 2000, timeoutMs = 20_000 } = 
   return results;
 }
 
+// The task and session are what a reader needs to tell two busy slots apart; the thread URL is
+// kept in the listing rather than on this line, which `run` writes while it is already busy.
+function ownershipLabel(ownership = {}) {
+  return [ownership.task, ownership.sessionKey].filter(Boolean).join(' ');
+}
+
 function renderSlots(rows) {
-  return rows.map((r) => `slot ${r.id}  port ${r.port}  ${r.state}${r.detail ? ` (${r.detail})` : ''}${r.busyWith ? `  busy (pid ${r.busyWith.pid})` : ''}`).join('\n');
+  return rows.map((r) => {
+    const owned = r.busyWith ? [r.busyWith.task, r.busyWith.sessionKey, r.busyWith.threadUrl].filter(Boolean).join(' ') : '';
+    return `slot ${r.id}  port ${r.port}  ${r.state}${r.detail ? ` (${r.detail})` : ''}${r.busyWith ? `  busy (pid ${r.busyWith.pid})${owned ? ` ${owned}` : ''}` : ''}`;
+  }).join('\n');
 }
 
 async function runCommand(options, passthrough, deps, err) {
@@ -173,13 +213,14 @@ async function runCommand(options, passthrough, deps, err) {
     let anyReadyButBusy = false;
     for (const slot of wanted) {
       if (notReady.has(slot.id)) continue;
-      const claim = claimSlot(deps.home, slot.id, { alive: deps.alive, now: deps.now });
+      const claim = claimSlot(deps.home, slot.id, { alive: deps.alive, now: deps.now, meta: options.ownership });
       if (!claim.ok) { anyReadyButBusy = true; continue; }
       try {
         const { state } = await checkWithRestore(slot, deps);
         if (state === 'busy') { anyReadyButBusy = true; continue; }
         if (state !== 'ready') { notReady.set(slot.id, state); continue; }
-        err(`prodex-slots: using slot ${slot.id} (port ${slot.port})`);
+        const label = ownershipLabel(options.ownership);
+        err(`prodex-slots: using slot ${slot.id} (port ${slot.port})${label ? ` for ${label}` : ''}`);
         // The ask's own exit code is not part of this tool's 0/1/3/4 contract: any failure is 1.
         const code = await deps.runAsk(slot, passthrough);
         if (code !== 0) err(`prodex-slots: prodex ask exited with code ${code}`);
@@ -233,7 +274,8 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
       return EXIT.OK;
     }
     if (command === 'run') return await runCommand(options, passthrough, deps, err);
-    throw new Error(`Unknown command: ${command}`);
+    // The command is an argv token this tool did not recognise, so it is not repeated either.
+    throw new Error('Unknown command. The first argument must be one of: list, add, ensure, run, release (or --help)');
   } catch (error) {
     err(`${error.message}\n${usage}`);
     return EXIT.ERROR;
