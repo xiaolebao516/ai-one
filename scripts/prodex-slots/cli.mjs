@@ -96,19 +96,20 @@ export function parseArgs(args) {
   return { command, options, passthrough };
 }
 
-export function resolveProdexEntry(env = process.env) {
+// `npmRoot` is injectable so tests can force the not-found path without stubbing node:child_process.
+export function resolveProdexEntry(env = process.env, { npmRoot = null } = {}) {
   const candidates = [];
-  let npmRoot = '';
   if (env.PRODEX_ENTRY) candidates.push(env.PRODEX_ENTRY);
-  const npm = spawnSync('npm root -g', { encoding: 'utf8', shell: true, windowsHide: true });
-  if (npm.status === 0) {
-    npmRoot = String(npm.stdout).trim();
-    candidates.push(path.join(npmRoot, '@youdie006', 'prodex', 'prodex.mjs'));
+  let npmRootValue = npmRoot ?? '';
+  if (npmRoot === null) {
+    const npm = spawnSync('npm root -g', { encoding: 'utf8', shell: true, windowsHide: true });
+    if (npm.status === 0) npmRootValue = String(npm.stdout).trim();
   }
+  if (npmRootValue) candidates.push(path.join(npmRootValue, '@youdie006', 'prodex', 'prodex.mjs'));
   const found = candidates.find((file) => fs.existsSync(file));
   if (!found) {
-    const how = npmRoot
-      ? `PowerShell: $env:PRODEX_ENTRY = "${npmRoot}\\@youdie006\\prodex\\prodex.mjs"`
+    const how = npmRootValue
+      ? `PowerShell: $env:PRODEX_ENTRY = "${npmRootValue}\\@youdie006\\prodex\\prodex.mjs"`
       : 'PowerShell: $env:PRODEX_ENTRY = "<path to>\\prodex.mjs" (npm root -g produced nothing)';
     throw new Error(`Cannot find prodex.mjs. Set PRODEX_ENTRY to its absolute path - ${how}. Looked at: ${candidates.join(', ') || 'nothing'}`);
   }
@@ -251,7 +252,7 @@ function renderSlots(rows) {
   }).join('\n');
 }
 
-async function runCommand(options, passthrough, deps, err) {
+async function runCommand(options, passthrough, deps, err, sweepReport = []) {
   const config = loadConfig(deps.home);
   const wanted = options.slot === 'auto' ? config.slots : config.slots.filter((s) => s.id === options.slot);
   if (!wanted.length) {
@@ -260,6 +261,11 @@ async function runCommand(options, passthrough, deps, err) {
   const deadline = deps.now() + options.waitMs;
   const notReady = new Map();
   const blocked = new Map();
+  // Slots the sweep already found unclaimable (stale mutex, blocked deletion) are not retried
+  // here: claiming them would either fail again or - worse - succeed and then fail to release.
+  for (const item of sweepReport) {
+    if (item.blocked) blocked.set(item.slot, item.blocked);
+  }
   for (;;) {
     let anyReadyButBusy = false;
     for (const slot of wanted) {
@@ -268,9 +274,10 @@ async function runCommand(options, passthrough, deps, err) {
       try {
         claim = claimSlot(deps.home, slot.id, { alive: deps.alive, now: deps.now, meta: options.ownership });
       } catch (error) {
-        // A stale .reap mutex (or a policy-blocked deletion) makes this slot unclaimable; the
-        // sweep report has already printed the fix. Skip it and let the other slots work.
+        // A stale .reap mutex (or a policy-blocked deletion) makes this slot unclaimable; say so
+        // immediately and let the other slots work - never skip in silence.
         blocked.set(slot.id, error.message);
+        err(`prodex-slots: slot ${slot.id} could not be claimed: ${error.message}`);
         continue;
       }
       if (!claim.ok) {
@@ -290,7 +297,11 @@ async function runCommand(options, passthrough, deps, err) {
         if (code !== 0) err(`prodex-slots: prodex ask exited with code ${code}; its own output above shows the reason. On a request_mismatch, take the answer back with \`prodex pro browser recover --port <port> --target-url <thread-url> --request-id <id>\` and do not resend blindly`);
         return code === 0 ? EXIT.OK : EXIT.ERROR;
       } finally {
-        claim.release();
+        // A release that could not happen (blocked mutex or file) must never look like a clean
+        // success: say the slot stays occupied until `list` shows it free.
+        if (claim.release() !== true) {
+          err(`prodex-slots: slot ${slot.id}: the claim could not be released. The ask itself succeeded; treat the slot as occupied until \`list\` shows it free - the sweep or the 2-minute heartbeat will clear it.`);
+        }
       }
     }
     if (notReady.size + blocked.size === wanted.length) {
@@ -361,7 +372,7 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
       err(`prodex-slots: released slot ${options.slot}${had ? ' (claim removed)' : ' (no claim was present)'}; closed record written (${record.task ?? 'no task'}${record.note ? `, "${record.note}"` : ''}). The slot is reusable.`);
       return EXIT.OK;
     }
-    if (command === 'run') return await runCommand(options, passthrough, deps, err);
+    if (command === 'run') return await runCommand(options, passthrough, deps, err, sweepReport);
     // The command is an argv token this tool did not recognise, so it is not repeated either.
     throw new UsageError('Unknown command. The first argument must be one of: list, add, ensure, run, release (or --help)');
   } catch (error) {

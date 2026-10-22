@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import * as childProcess from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { main, parseArgs } from '../cli.mjs';
+import { main, parseArgs, resolveProdexEntry } from '../cli.mjs';
 import { EXIT, addSlots, claimSlot, loadConfig, normalizeOwnership, parseCheck, readClaim, releaseClaim, slotEnv, sweepSlots, removeClaimFile } from '../slots.mjs';
 
 const childScript = path.join(path.dirname(fileURLToPath(import.meta.url)), 'race-child.mjs');
@@ -955,4 +956,57 @@ test('sweep does not echo a hand-edited pid', () => {
   assert.equal(readClaim(home, 1), null, 'an invalid pid makes the claim dead and removable');
   assert.ok(!JSON.stringify(report).includes('SECRET-9f'), `the report echoed the pid: ${JSON.stringify(report)}`);
   assert.match(report[0].reason, /owner pid is invalid/);
+});
+
+test('a release that the reap mutex blocks is reported loudly after a successful ask', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  let armed = false;
+  h.deps.runAsk = async (slot, args) => {
+    // The mutex goes stale while the ask is running, so release happens into a blocked mutex.
+    const reap = `${claimPath(h.home, slot.id)}.reap`;
+    fs.writeFileSync(reap, '999\n');
+    fs.utimesSync(reap, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    armed = true;
+    return 0;
+  };
+  assert.equal(await h.run(['run', '--slot', '1', '--', '--new-chat']), EXIT.OK, 'the ask itself succeeded');
+  assert.equal(armed, true);
+  const stderr = h.log.err.join('\n');
+  assert.match(stderr, /the claim could not be released/);
+  assert.match(stderr, /treat the slot as occupied until `list` shows it free/);
+  assert.ok(!stderr.includes('Usage: node scripts/prodex-slots/cli.mjs'));
+  assert.equal(readClaim(h.home, 1).pid, process.pid, 'the claim is still on disk until the sweep or heartbeat clears it');
+});
+
+test('a slot the sweep found blocked is not claimed by run at all', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  claimSlot(h.home, 1, { pid: 111, alive: () => true });
+  const reap = `${claimPath(h.home, 1)}.reap`;
+  fs.writeFileSync(reap, '999\n');
+  fs.utimesSync(reap, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+  assert.equal(await h.run(['run', '--slot', 'auto', '--', '--new-chat']), EXIT.OK);
+  assert.equal(h.log.asks[0].slot, 2, 'the sweep-blocked slot was never claimed');
+  assert.equal(readClaim(h.home, 1).pid, 111, 'the pre-existing claim was left to its owner');
+});
+
+test('a missing prodex.mjs reports the npm root and the exact PRODEX_ENTRY command', () => {
+  let message = '';
+  try {
+    resolveProdexEntry({ PRODEX_ENTRY: 'C:/nowhere/prodex.mjs' }, { npmRoot: 'C:/npm/root' });
+  } catch (error) {
+    message = error.message;
+  }
+  assert.match(message, /Cannot find prodex\.mjs/);
+  assert.match(message, /PRODEX_ENTRY = "C:\/npm\/root\\@youdie006\\prodex\\prodex\.mjs"/);
+  assert.match(message, /Looked at: C:\/nowhere\/prodex\.mjs/);
+});
+
+test('a closure record without a usable timestamp is dropped', async () => {
+  const edited = harness();
+  fs.mkdirSync(path.join(edited.home, 'slot-claims'), { recursive: true });
+  fs.writeFileSync(path.join(edited.home, 'slot-claims', 'slot-1.closed.json'), `${JSON.stringify({ task: '#71' })}\n`);
+  assert.equal(await edited.run(['list', '--json']), EXIT.OK);
+  assert.equal(JSON.parse(edited.log.out[0])[0].lastClosed, undefined);
 });
