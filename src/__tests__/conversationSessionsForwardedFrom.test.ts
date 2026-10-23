@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { bubblesFromSession, conversationMessages } from '../ui/legacyConversationAdapters';
 import {
   createConversationSession,
   normalizeConversationSessionMessage,
@@ -25,6 +26,20 @@ describe('forwarded conversation message metadata', () => {
       content: 'reply',
       forwardedFrom: 'not-a-provider',
     })).not.toHaveProperty('forwardedFrom');
+  });
+
+  it('round-trips forwardedFrom through the classic UI adapters', () => {
+    const message: ConversationSessionMessage = {
+      id: 'relay-round-trip',
+      role: 'user',
+      content: 'complete forwarded prompt',
+      forwardedFrom: 'chatgpt',
+      final: true,
+    };
+    const session = createConversationSession({ id: 'round-trip', messages: [message], now: 20 });
+    const classicBubbles = bubblesFromSession(session);
+    expect(classicBubbles[0]?.forwardedFrom).toBe('chatgpt');
+    expect(conversationMessages(classicBubbles)[0]?.forwardedFrom).toBe('chatgpt');
   });
 
   it('treats forwarding metadata as a persisted content change without changing message fields', () => {

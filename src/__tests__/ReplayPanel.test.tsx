@@ -106,6 +106,35 @@ describe('ReplayPanel', () => {
     );
   });
 
+  it('publishes replay-running before planning and releases it only after settle', async () => {
+    const snapshot = buildSnapshot({ snapshotId: 'snapshot-lock' });
+    vi.mocked(getLastSnapshot).mockReturnValue(snapshot);
+    const states: boolean[] = [];
+    const panel = new ReplayPanel({ onReplayStateChange: (running) => states.push(running) });
+
+    const replay = panel.startReplay({ kind: 'last', snapshot });
+    expect(states).toEqual([true]);
+    await replay;
+    expect(states).toEqual([true, false]);
+  });
+
+  it('blocks replay while the owning chat runtime reports an active workflow', async () => {
+    const snapshot = buildSnapshot({ snapshotId: 'snapshot-blocked' });
+    vi.mocked(getLastSnapshot).mockReturnValue(snapshot);
+    const states: boolean[] = [];
+    const panel = new ReplayPanel({
+      canStartReplay: () => false,
+      runBlockedMessage: 'Chat workflow is running',
+      onReplayStateChange: (running) => states.push(running),
+    });
+    const tree = panel.render();
+    expect(propsOf(buttonWithText(tree, t('replay.lastRun', 'en'))).disabled).toBe(true);
+    await panel.startReplay({ kind: 'last', snapshot });
+    expect(replaySnapshot).not.toHaveBeenCalled();
+    expect(states).toEqual([]);
+    expect(renderToStaticMarkup(panel.render())).toContain('Chat workflow is running');
+  });
+
   it('renders stored snapshots newest first and wires replay and delete actions', async () => {
     vi.mocked(host.snapshot.list).mockResolvedValue([
       { id: 'snapshot-old', graphId: 'free', createdAt: '2026-07-05T00:00:00.000Z' },

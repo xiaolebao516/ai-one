@@ -69,8 +69,11 @@ function fakeRuntime(overrides: Partial<ChatRuntime> = {}): ChatRuntime {
     comparisonTargets: ['chatgpt', 'claude', 'grok'],
     selectedTargets: ['chatgpt'],
     busyProviders: ['claude'],
+    timeoutActions: {},
+    replayRunning: false,
     now,
     notice: undefined,
+    persistenceNotice: undefined,
     desktopAvailable: false,
     setSelectedTargets: vi.fn(),
     clearNotice: vi.fn(),
@@ -82,6 +85,8 @@ function fakeRuntime(overrides: Partial<ChatRuntime> = {}): ChatRuntime {
     forwardMessage: vi.fn(async () => true),
     retryProvider: vi.fn(async () => true),
     skipProvider: vi.fn(),
+    setReplayRunning: vi.fn(),
+    clearPersistenceNotice: vi.fn(),
     setPreset: vi.fn(),
   };
   return { ...runtime, ...overrides };
@@ -94,7 +99,7 @@ async function mount(runtime: ChatRuntime) {
   mounted.push({ root, container });
   await act(async () => root.render(
     <I18nProvider language="en">
-      <ChatView locale="en" runtime={runtime} onConvertToTask={() => {}} onStartGrill={() => {}} />
+      <ChatView locale="en" runtime={runtime} onConvertToTask={() => {}} />
     </I18nProvider>,
   ));
   return { root, container };
@@ -129,10 +134,88 @@ describe('ChatView', () => {
     };
     await act(async () => root.render(
       <I18nProvider language="en">
-        <ChatView locale="en" runtime={timedOutRuntime} onConvertToTask={() => {}} onStartGrill={() => {}} />
+        <ChatView locale="en" runtime={timedOutRuntime} onConvertToTask={() => {}} />
       </I18nProvider>,
     ));
     expect(container.textContent).toContain('Timed out · 600s');
+  });
+
+  it('enables retry and skip only for a pending timeout action owned by the active session', async () => {
+    const runtime = fakeRuntime({
+      busyProviders: ['chatgpt'],
+      comparisonTargets: ['chatgpt'],
+      replyStates: {
+        chatgpt: { status: 'timedOut', content: 'partial reply', startedAt: 5_000_000 - CHAT_RESPONSE_TIMEOUT_MS },
+      },
+      timeoutActions: {
+        chatgpt: { requestId: 9, runId: 'run-1', sessionId: 'chat-test', skipAllowed: true },
+      },
+    });
+    const { container } = await mount(runtime);
+    const card = [...container.querySelectorAll('article')].find((item) => item.getAttribute('data-chat-provider') === 'chatgpt');
+    const retry = buttonByText(card ?? container, 'Retry');
+    const skip = buttonByText(card ?? container, 'Skip');
+    expect(retry?.disabled).toBe(false);
+    expect(skip?.disabled).toBe(false);
+    await click(retry);
+    expect(runtime.retryProvider).toHaveBeenCalledWith('chatgpt');
+    await click(skip);
+    expect(runtime.skipProvider).toHaveBeenCalledWith('chatgpt');
+  });
+
+  it('keeps the draft and explains why the L7 discussion preset is unavailable', async () => {
+    const runtime = fakeRuntime();
+    const session = createConversationSession({
+      id: 'chat-test',
+      title: 'Test chat',
+      mode: 'consult',
+      presetId: 'deliberation',
+      messages: [],
+    });
+    const unavailableRuntime = { ...runtime, sessions: [session], activeSessionId: session.id, activeSession: session };
+    const { container } = await mount(unavailableRuntime);
+    const composer = container.querySelector<HTMLTextAreaElement>('#chat-composer');
+    if (!composer) throw new Error('chat composer not found');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(composer, 'keep this draft');
+      composer.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const form = composer.closest('form');
+    if (!form) throw new Error('chat form not found');
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    expect(composer.value).toBe('keep this draft');
+    expect(unavailableRuntime.sendMessage).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('L7');
+    expect(container.textContent).toContain('draft will be kept');
+  });
+
+  it('quotes the clicked card reply instead of a selection from another card', async () => {
+    const runtime = fakeRuntime({
+      replyStates: {
+        chatgpt: { status: 'completed', content: 'ChatGPT selected snippet' },
+        claude: { status: 'completed', content: 'Claude full reply' },
+      },
+      comparisonTargets: ['chatgpt', 'claude'],
+      busyProviders: [],
+    });
+    const { container } = await mount(runtime);
+    const chatgptCard = [...container.querySelectorAll('article')].find((item) => item.getAttribute('data-chat-provider') === 'chatgpt');
+    const claudeCard = [...container.querySelectorAll('article')].find((item) => item.getAttribute('data-chat-provider') === 'claude');
+    const sourceText = [...(chatgptCard ?? container).querySelectorAll('p')].find((item) => item.textContent === 'ChatGPT selected snippet');
+    if (!sourceText) throw new Error('ChatGPT reply text not found');
+    const range = document.createRange();
+    range.selectNodeContents(sourceText);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    await click(buttonByText(claudeCard ?? container, 'Quote'));
+    const composer = container.querySelector<HTMLTextAreaElement>('#chat-composer');
+    expect(composer?.value).toContain('> Claude full reply');
+    expect(composer?.value).not.toContain('ChatGPT selected snippet');
   });
 
   it('forwards the complete source reply with the chosen recipient and optional note', async () => {

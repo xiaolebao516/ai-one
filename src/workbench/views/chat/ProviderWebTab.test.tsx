@@ -17,6 +17,7 @@ const componentHost = vi.hoisted(() => ({
   provider: {
     open: vi.fn(async () => ({})),
     show: vi.fn(async () => undefined),
+    hide: vi.fn(async () => undefined),
     park: vi.fn(async () => undefined),
   },
   layout: { setBounds: vi.fn(async () => undefined) },
@@ -115,6 +116,9 @@ function makeHost(desktop = true) {
       show: vi.fn(async () => {
         calls.push('show');
       }),
+      hide: vi.fn(async () => {
+        calls.push('hide');
+      }),
       park: vi.fn(async (_provider: AIProvider, bounds: DOMRectReadOnly) => {
         calls.push('park');
         expect(bounds).toMatchObject({ x: -10000, y: -10000, width: 420, height: 320 });
@@ -146,6 +150,7 @@ beforeEach(() => {
   componentHost.app.isDesktop.mockReturnValue(false);
   componentHost.provider.open.mockResolvedValue({});
   componentHost.provider.show.mockResolvedValue(undefined);
+  componentHost.provider.hide.mockResolvedValue(undefined);
   componentHost.provider.park.mockResolvedValue(undefined);
   componentHost.layout.setBounds.mockResolvedValue(undefined);
 });
@@ -243,6 +248,32 @@ describe('ProviderWebTab', () => {
     await controller.whenIdle();
     expect(calls[calls.length - 1]).toBe('park');
     expect(host.provider.park).toHaveBeenCalledWith('chatgpt', HIDDEN_PROVIDER_LOAD_BOUNDS);
+  });
+
+  it('falls back to hide and retries when park rejects', async () => {
+    const { host, calls } = makeHost();
+    host.provider.park = vi.fn()
+      .mockRejectedValueOnce(new Error('transient park failure'))
+      .mockResolvedValueOnce(undefined);
+    const fakeWindow = fakeBrowserWindow();
+    const element = document.createElement('div');
+    element.getBoundingClientRect = () => rect(0, 0, 320, 240);
+    const controller = createProviderWebTabController({
+      provider: 'chatgpt',
+      host,
+      window: fakeWindow.browserWindow,
+      document,
+      getCurrentWindow: async () => createFocusApi(),
+    });
+
+    controller.start(element);
+    await controller.whenIdle();
+    expect(host.provider.park).toHaveBeenCalledTimes(2);
+    expect(host.provider.hide).toHaveBeenCalledTimes(1);
+    expect(calls).toContain('hide');
+
+    controller.dispose();
+    await controller.whenIdle();
   });
 
   it('lets the newest park intent win when an earlier open resolves late', async () => {

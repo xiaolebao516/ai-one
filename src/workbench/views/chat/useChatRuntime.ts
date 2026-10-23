@@ -29,7 +29,8 @@ import {
 import { defaultRolesForPreset } from '../../../ui/presetCatalogData';
 import { waitForProvidersSendable } from '../../../ui/targets';
 import { isSendable } from '../../../workflow/sendability';
-import { chooseStepTimeoutAction, onStepTimeoutEvent, runWorkflow as defaultRunWorkflow, type RunWorkflowParams, type RunWorkflowResult } from '../../../workflow';
+import { onStepTimeoutEvent, runWorkflow as defaultRunWorkflow, type RunWorkflowParams, type RunWorkflowResult } from '../../../workflow';
+import { chooseStepTimeoutAction } from '../../../workflow/stepTimeout';
 import type { Locale } from '../../../i18n/resolve';
 import { workbenchText } from '../../workbenchText';
 import {

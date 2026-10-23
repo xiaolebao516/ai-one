@@ -36,6 +36,10 @@ function rafWindow() {
 }
 
 describe('webview bounds', () => {
+  async function settleBoundsWrites() {
+    for (let index = 0; index < 8; index += 1) await Promise.resolve();
+  }
+
   it('rejects zero, negative, and non-finite dimensions or coordinates', () => {
     expect(getVisibleWebviewRect(rect(0, 0, 0, 20))).toBeNull();
     expect(getVisibleWebviewRect(rect(0, 0, 20, -1))).toBeNull();
@@ -44,7 +48,7 @@ describe('webview bounds', () => {
     expect(getVisibleWebviewRect(rect(0, 0, 20, 20))).not.toBeNull();
   });
 
-  it('coalesces events into one animation frame and deduplicates identical rectangles', () => {
+  it('coalesces events into one animation frame and deduplicates only confirmed rectangles', async () => {
     const raf = rafWindow();
     let current = rect(10, 20, 300, 240);
     const setBounds = vi.fn();
@@ -61,21 +65,24 @@ describe('webview bounds', () => {
     raf.flush();
     expect(setBounds).toHaveBeenCalledTimes(1);
     expect(setBounds).toHaveBeenCalledWith(current);
+    await settleBoundsWrites();
 
     controller.schedule();
     raf.flush();
     expect(setBounds).toHaveBeenCalledTimes(1);
+    await settleBoundsWrites();
 
     current = rect(11, 20, 300, 240);
     controller.schedule();
     raf.flush();
     expect(setBounds).toHaveBeenCalledTimes(2);
     expect(setBounds).toHaveBeenLastCalledWith(current);
+    await settleBoundsWrites();
 
     controller.dispose();
   });
 
-  it('resets deduplication after an invalid rectangle and cancels a pending frame on reset', () => {
+  it('resets deduplication after an invalid rectangle and cancels a pending frame on reset', async () => {
     const raf = rafWindow();
     let current = rect(10, 20, 300, 240);
     const setBounds = vi.fn();
@@ -87,12 +94,15 @@ describe('webview bounds', () => {
 
     controller.schedule();
     raf.flush();
+    await settleBoundsWrites();
     current = rect(10, 20, 0, 240);
     controller.schedule();
     raf.flush();
+    await settleBoundsWrites();
     current = rect(10, 20, 300, 240);
     controller.schedule();
     raf.flush();
+    await settleBoundsWrites();
     expect(setBounds).toHaveBeenCalledTimes(2);
 
     controller.schedule();
@@ -101,8 +111,31 @@ describe('webview bounds', () => {
     expect(raf.pending()).toBe(0);
     controller.dispose();
   });
-});
 
+  it('retries the same rectangle after a rejected write and deduplicates after success', async () => {
+    const raf = rafWindow();
+    const current = rect(10, 20, 300, 240);
+    const setBounds = vi.fn()
+      .mockRejectedValueOnce(new Error('transient host rejection'))
+      .mockResolvedValueOnce(undefined);
+    const controller = createWebviewBoundsSyncController({
+      getRect: () => current,
+      setBounds,
+      window: raf.browserWindow,
+    });
+
+    controller.flush();
+    expect(setBounds).toHaveBeenCalledTimes(1);
+    await settleBoundsWrites();
+    controller.flush();
+    expect(setBounds).toHaveBeenCalledTimes(2);
+    await settleBoundsWrites();
+    controller.flush();
+    expect(setBounds).toHaveBeenCalledTimes(2);
+
+    controller.dispose();
+  });
+});
 describe('clipRectToVisibleArea', () => {
   const box = (left: number, top: number, right: number, bottom: number) =>
     ({ x: left, y: top, left, top, right, bottom, width: right - left, height: bottom - top, toJSON: () => ({}) }) as DOMRectReadOnly;
