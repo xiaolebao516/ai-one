@@ -597,7 +597,7 @@ function ReviewValue({ task, locale, text }: { task: HudTask; locale: Locale; te
   const review = task.review;
   if (!review || review.verdict === 'none') return <span className="text-v2-ink-3">{text.t('reviewNone')}</span>;
   const current = reviewIsCurrent(task);
-  const verdictTone: V2BadgeTone = !current ? 'unknown' : review.verdict === 'pass' ? 'done' : review.verdict === 'revise' ? 'rework' : 'block';
+  const verdictTone: V2BadgeTone = !current ? 'unknown' : review.verdict === 'pass' ? 'done' : review.verdict === 'revise' ? 'rework' : review.verdict === 'blocked' ? 'block' : 'unknown';
   return (
     <span className="flex flex-col items-start gap-1">
       <span className="flex flex-wrap items-center gap-v2-xs">

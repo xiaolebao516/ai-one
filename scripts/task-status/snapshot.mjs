@@ -236,10 +236,20 @@ export async function collectSnapshot(options, client, now = () => new Date().to
     const formal = [...reviews].reverse().find((r) => extractReviewVerdict(r.body, r.state) !== 'none');
     if (formal) {
       const verdict = extractReviewVerdict(formal.body, formal.state);
+      // Incomplete reviews must never promote an observed PASS to a verified passing review verdict.
+      const safeVerdict = rTruncated && verdict === 'pass' ? 'unknown' : verdict;
       prReview = {
-        verdict,
+        verdict: safeVerdict,
         headSha: formal.commitId || sha,
         by: { zh: formal.user, en: formal.user },
+        ...(rTruncated ? { truncated: true } : {}),
+      };
+    } else if (rTruncated) {
+      prReview = {
+        verdict: 'unknown',
+        headSha: sha,
+        by: { zh: '系统', en: 'system' },
+        truncated: true,
       };
     }
     snapshot.pullRequests.push({

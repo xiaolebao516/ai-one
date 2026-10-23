@@ -109,7 +109,7 @@ export interface HudTask {
   updatedMinutesAgo?: number;
   pr?: HudPr;
   ci?: HudCi;
-  review?: { verdict: 'pass' | 'revise' | 'blocked' | 'none'; headSha?: string; by?: LText };
+  review?: { verdict: 'pass' | 'revise' | 'blocked' | 'none' | 'unknown'; headSha?: string; by?: LText; truncated?: boolean };
   evidence: HudEvidence[];
   /** Comments history completeness: complete, truncated at pagination limit, or unknown on read errors. */
   commentsCompleteness?: 'complete' | 'truncated' | 'unknown';
@@ -143,9 +143,9 @@ export function effectiveCi(task: HudTask): CiView {
   return { state: ci.state, headSha: head };
 }
 
-/** A review verdict only counts for the HEAD it was given on. */
+/** A review verdict only counts for the HEAD it was given on and when review history is not truncated. */
 export function reviewIsCurrent(task: HudTask): boolean {
-  return Boolean(task.review && task.review.verdict !== 'none' && task.pr?.headSha && task.review.headSha === task.pr.headSha);
+  return Boolean(task.review && task.review.verdict !== 'none' && !task.review.truncated && task.pr?.headSha && task.review.headSha === task.pr.headSha);
 }
 
 /** Failed or unreadable: things the user should not read as healthy. */

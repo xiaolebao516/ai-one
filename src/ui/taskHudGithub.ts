@@ -279,7 +279,12 @@ function makeTask(
       ci: ciFor(pr),
     } : {}),
     ...(((pr as unknown as Record<string, unknown>)?.review || (issue as unknown as Record<string, unknown>)?.review)
-      ? { review: ((pr as unknown as Record<string, unknown>)?.review || (issue as unknown as Record<string, unknown>)?.review) as HudTask['review'] }
+      ? {
+          review: {
+            ...(((pr as unknown as Record<string, unknown>)?.review || (issue as unknown as Record<string, unknown>)?.review) as HudTask['review']),
+            ...(((pr as unknown as Record<string, unknown>)?.reviewsTruncated) ? { truncated: true } : {}),
+          } as HudTask['review'],
+        }
       : {}),
     evidence,
     commentsCompleteness,

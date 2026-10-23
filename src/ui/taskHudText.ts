@@ -221,7 +221,8 @@ const CI_REASON_ZH: Record<CiReason, string> = {
 const STAGE_EN: Record<HudStage['state'], string> = { done: 'done', active: 'in progress', todo: 'not started', skipped: 'skipped' };
 const STAGE_ZH: Record<HudStage['state'], string> = { done: '完成', active: '进行中', todo: '未开始', skipped: '跳过' };
 
-const VERDICT: Record<'pass' | 'revise' | 'blocked', string> = { pass: 'PASS', revise: 'REVISE', blocked: 'BLOCKED' };
+const VERDICT_EN: Record<'pass' | 'revise' | 'blocked' | 'unknown', string> = { pass: 'PASS', revise: 'REVISE', blocked: 'BLOCKED', unknown: 'UNKNOWN' };
+const VERDICT_ZH: Record<'pass' | 'revise' | 'blocked' | 'unknown', string> = { pass: 'PASS', revise: 'REVISE', blocked: 'BLOCKED', unknown: '未知（未读全）' };
 
 export interface TaskHudText {
   t: (key: HudTextKey, values?: Record<string, string | number>) => string;
@@ -232,7 +233,7 @@ export interface TaskHudText {
   ci: (state: CiView['state']) => string;
   ciReason: (reason: CiReason) => string;
   stage: (state: HudStage['state']) => string;
-  verdict: (verdict: 'pass' | 'revise' | 'blocked') => string;
+  verdict: (verdict: 'pass' | 'revise' | 'blocked' | 'unknown') => string;
 }
 
 function fill(template: string, values?: Record<string, string | number>): string {
@@ -255,6 +256,6 @@ export function taskHudText(locale: Locale): TaskHudText {
     ci: (state) => (zh ? CI_ZH : CI_EN)[state],
     ciReason: (reason) => (zh ? CI_REASON_ZH : CI_REASON_EN)[reason],
     stage: (state) => (zh ? STAGE_ZH : STAGE_EN)[state],
-    verdict: (verdict) => VERDICT[verdict],
+    verdict: (verdict) => (zh ? VERDICT_ZH : VERDICT_EN)[verdict] ?? verdict.toUpperCase(),
   };
 }

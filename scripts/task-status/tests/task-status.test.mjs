@@ -410,7 +410,55 @@ test('reviews 500-cap truncation records error and marks snapshot partial', asyn
   assert.equal(s.status, 'partial');
   assert.equal(s.pullRequests[0].reviewsTruncated, true);
   assert.equal(s.pullRequests[0].reviews.length, 500);
+  assert.equal(s.pullRequests[0].review.verdict, 'unknown');
+  assert.equal(s.pullRequests[0].review.truncated, true);
   assert.ok(s.errors.some((e) => e.message.includes('Reviews truncated at 500 items')));
+});
+
+test('reviews 500-cap truncation never promotes an observed PASS to a verified verdict', async () => {
+  const pageItems = () => Array.from({ length: 100 }, (_, i) => ({
+    id: i + 1,
+    body: i === 99 ? '**裁定：PASS**' : 'review comment',
+    user: 'reviewer',
+    state: 'commented',
+    commit_id: sha,
+  }));
+  const s = await collect(fixture({ reviews: pageItems }));
+  assert.equal(s.status, 'partial');
+  assert.equal(s.pullRequests[0].reviewsTruncated, true);
+  assert.equal(s.pullRequests[0].review.verdict, 'unknown');
+  assert.equal(s.pullRequests[0].review.truncated, true);
+});
+
+test('review page read failure never promotes an observed PASS to a verified verdict', async () => {
+  let callCount = 0;
+  const pageCallback = () => {
+    callCount++;
+    if (callCount === 1) {
+      return Array.from({ length: 100 }, (_, i) => ({
+        id: i + 1,
+        body: i === 0 ? '**裁定：PASS**' : 'review comment',
+        user: 'reviewer',
+        state: 'commented',
+        commit_id: sha,
+      }));
+    }
+    throw new Error('Simulated page 2 failure');
+  };
+  const s = await collect(fixture({ reviews: pageCallback }));
+  assert.equal(s.status, 'partial');
+  assert.equal(s.pullRequests[0].reviewsTruncated, true);
+  assert.equal(s.pullRequests[0].review.verdict, 'unknown');
+  assert.equal(s.pullRequests[0].review.truncated, true);
+});
+
+test('complete review read preserves PASS verdict without truncation', async () => {
+  const singlePass = [{ id: 1, body: '**裁定：PASS**', user: 'reviewer', state: 'commented', commit_id: sha }];
+  const s = await collect(fixture({ reviews: singlePass }));
+  assert.equal(s.status, 'complete');
+  assert.equal(s.pullRequests[0].reviewsTruncated, undefined);
+  assert.equal(s.pullRequests[0].review.verdict, 'pass');
+  assert.equal(s.pullRequests[0].review.truncated, undefined);
 });
 
 test('non-array comments or reviews response records error and marks snapshot partial', async () => {

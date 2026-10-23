@@ -29,10 +29,17 @@ export function OriginalResponseTab({ task, locale }: OriginalResponseTabProps) 
             <span className="font-semibold text-v2-ink">
               {isZh ? 'GitHub 独立审计评论' : 'GitHub Independent Review Comment'}
             </span>
-            <Badge tone={task.review.verdict === 'pass' ? 'done' : task.review.verdict === 'revise' ? 'rework' : 'block'}>
+            <Badge tone={task.review.verdict === 'pass' ? 'done' : task.review.verdict === 'revise' ? 'rework' : task.review.verdict === 'blocked' ? 'block' : 'neutral'}>
               {hud.verdict(task.review.verdict)}
             </Badge>
           </div>
+          {task.review.truncated ? (
+            <Notice tone="you">
+              {isZh
+                ? '审查记录未读全（受分页上限或读取错误影响），不能确认最新裁定。'
+                : 'Review history is incomplete (truncated or read error); cannot confirm latest verdict.'}
+            </Notice>
+          ) : null}
           {task.review.by ? (
             <p className="text-v2-micro text-v2-ink-3">
               {isZh ? '评审者' : 'Reviewer'}: {pickText(task.review.by, locale)}
