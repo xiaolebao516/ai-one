@@ -4,6 +4,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { onBridgeMessage } from '../bridge/bus';
 import type { AdapterNotice } from '../ui/reportBroken';
+import { githubWrite as githubWriteApi } from './githubWrite';
 
 export interface StoredSnapshotInfo {
   id: string;
@@ -198,6 +199,7 @@ export const host = {
     associations: (repo: string, numbers: number[]): Promise<unknown> =>
       readOnlyGitHub(invoke('github_readonly_associations', { repo, numbers })),
   },
+  githubWrite: githubWriteApi,
   /** Local Prodex metadata only. No dispatch, reply retrieval or file writes. */
   dispatch: {
     snapshot: async (repoPath: string): Promise<unknown> => {

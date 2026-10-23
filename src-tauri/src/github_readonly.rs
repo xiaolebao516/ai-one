@@ -77,12 +77,12 @@ pub(crate) fn valid_repo(repo: &str) -> bool {
     owner_ok && name_ok
 }
 
-fn is_sha(value: &str) -> bool {
+pub(crate) fn is_sha(value: &str) -> bool {
     value.len() == 40 && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Canonical decimal in `min..=max` (no sign, no leading zeros).
-fn bounded_int(value: &str, min: u64, max: u64) -> bool {
+pub(crate) fn bounded_int(value: &str, min: u64, max: u64) -> bool {
     if value.is_empty() || value.len() > 16 || (value.len() > 1 && value.starts_with('0')) {
         return false;
     }

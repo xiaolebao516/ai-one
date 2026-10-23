@@ -36,6 +36,12 @@
     "allow-session-checkpoint-clear",
     "allow-github-readonly-get",
     "allow-github-readonly-associations",
+    "allow-github-write-status",
+    "allow-github-write-create-issue",
+    "allow-github-write-comment",
+    "allow-github-write-set-pause",
+    "allow-github-write-accept",
+    "allow-github-write-request-changes",
     "allow-dispatch-readonly-snapshot"
   ]
 }
