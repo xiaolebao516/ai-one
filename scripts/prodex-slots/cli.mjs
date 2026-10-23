@@ -462,6 +462,11 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
           throw new Error(`Slot ${options.slot} is not registered; nothing was released or archived`);
         }
         if (had) {
+          // A run that still holds the claim has not finished its ask; archiving under it could
+          // archive the chat before that ask is sent.
+          if ((deps.alive ?? processAlive)(had.pid)) {
+            throw new Error('The run holding this slot claim is still active; wait for it to finish before archiving. Nothing was released or archived');
+          }
           const owner = claimOwnership(had);
           if (owner.task !== options.ownership.task || owner.threadUrl !== options.ownership.threadUrl) {
             throw new Error('The slot claim does not name exactly this task and thread; nothing was released or archived');

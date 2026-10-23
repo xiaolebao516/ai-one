@@ -200,8 +200,10 @@ export async function finish(args, { home = slotsHome(), verify = verifyHandoff,
   if (previous?.status === 'skipped' && !args.retry) throw new Error('Thread was skipped; retry explicitly to override');
   verify(input);
   return withLock(path.join(storageDir(home), 'thread-' + digest(threadUrl) + '.lock'), async () => {
-    if (statusFor(home, threadUrl)?.status === 'archived')
-      return { status: 'archived', alreadyArchived: true };
+    const inside = statusFor(home, threadUrl)?.status;
+    if (inside === 'archived') return { status: 'archived', alreadyArchived: true };
+    // skip() takes this same lock, so a skip that won the race is honoured here.
+    if (inside === 'skipped' && !args.retry) throw new Error('Thread was skipped; retry explicitly to override');
     await setStatus(home, threadUrl, { status: 'pending', task, slot });
     const claim = claimSlot(home, slot, { meta: { task, threadUrl } });
     if (!claim.ok) {
@@ -259,5 +261,12 @@ export async function finish(args, { home = slotsHome(), verify = verifyHandoff,
 
 export async function skip({ task, threadUrl }, { home = slotsHome() } = {}) {
   if (!/^[1-9]\d*$/.test(String(task))) throw new Error('Invalid task');
-  return setStatus(home, canonicalThread(threadUrl), { status: 'skipped', task, slot: null });
+  const url = canonicalThread(threadUrl);
+  try {
+    return await withLock(path.join(storageDir(home), 'thread-' + digest(url) + '.lock'),
+      () => setStatus(home, url, { status: 'skipped', task, slot: null }));
+  } catch (error) {
+    if (/lock is busy/.test(error?.message ?? '')) throw new Error('An archive of this thread is in progress; it could not be kept. Check Archived chats and unarchive if needed', { cause: error });
+    throw error;
+  }
 }

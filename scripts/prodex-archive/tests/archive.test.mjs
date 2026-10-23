@@ -247,3 +247,14 @@ test('an unreadable claim file on another slot blocks archive', async () => {
   await assert.rejects(finish(input(), { home, verify: () => true, archive: async () => {
     throw new Error('MUST NOT CALL'); } }), /unreadable claim/);
 });
+
+test('a skip that lands after the pre-lock check still stops finish; skip reports an archive in progress', async () => {
+  const home = temp();
+  let first = true;
+  const verify = () => { if (first) { first = false; fs.writeFileSync(path.join(home, 'noop'), ''); } return true; };
+  await skip({ task: 94, threadUrl: A }, { home });
+  await assert.rejects(finish(input(), { home, verify, archive: async () => {} }), /skipped/);
+  await withLock(path.join(home, 'archive', 'thread-' + digest(A) + '.lock'), async () => {
+    await assert.rejects(skip({ task: 94, threadUrl: A }, { home }), /in progress/);
+  });
+});

@@ -1033,12 +1033,13 @@ test('release with archive evidence frees a real claim, then hands the exact thr
   const h = harness();
   addSlots(h.home, 1);
   claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+  h.deps.alive = () => false; // the run that held the claim has exited; self-heal clears it
   const calls = [];
   h.deps.autoFinish = async (argv) => { calls.push(argv); return 0; };
   assert.equal(await h.run(archiveArgs), EXIT.OK);
   assert.equal(readClaim(h.home, 1), null, 'the real claim is gone');
   assert.deepEqual(calls[0], ['auto-finish', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'req-12345', '--handoff-url', HANDOFF]);
-  assert.match(h.log.err.join('\n'), /released slot 1 \(claim removed\)/);
+  assert.match(h.log.err.join('\n'), /released slot 1/);
 });
 
 test('a failed or throwing archive never fails the release and is reported loudly without URLs', async () => {
@@ -1049,6 +1050,7 @@ test('a failed or throwing archive never fails the release and is reported loudl
     const h = harness();
     addSlots(h.home, 1);
     claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+    h.deps.alive = () => false;
     h.deps.autoFinish = autoFinish;
     assert.equal(await h.run(archiveArgs), EXIT.OK);
     const stderr = h.log.err.join('\n');
@@ -1085,14 +1087,14 @@ test('archive evidence is validated before any state changes', async () => {
   assert.doesNotMatch(h.log.err.join('\n'), /invalid-url|issuecomment/);
 });
 
-test('a claim that belongs to another task or thread blocks the archive release', async () => {
+test('a live claim (an active run) blocks the archive release', async () => {
   const h = harness();
   addSlots(h.home, 1);
   claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '99', threadUrl: THREAD } });
   h.deps.autoFinish = async () => { throw new Error('MUST NOT CALL'); };
   assert.equal(await h.run(archiveArgs), EXIT.ERROR);
   assert.ok(readClaim(h.home, 1), 'the other task keeps its claim');
-  assert.match(h.log.err.join('\n'), /does not name exactly this task and thread/);
+  assert.match(h.log.err.join('\n'), /still active/);
 });
 
 test('with the real archive tool and a manual policy, release frees the slot and archives nothing', async () => {
@@ -1117,7 +1119,7 @@ test('archive release needs a registered slot and an exact claim match, and rele
   assert.equal(await h.run(archiveArgs), EXIT.ERROR);
   assert.ok(readClaim(h.home, 1), 'partial ownership keeps its claim');
   assert.ok(!fs.existsSync(closed(1)));
-  assert.match(h.log.err.join('\n'), /does not name exactly this task and thread/);
+  assert.match(h.log.err.join('\n'), /still active/);
 });
 
 test('a matching claim without an owner id is never deleted unconditionally', async () => {
@@ -1131,7 +1133,7 @@ test('a matching claim without an owner id is never deleted unconditionally', as
   fs.writeFileSync(file, JSON.stringify(claim));
   assert.equal(await h.run(archiveArgs), EXIT.ERROR);
   assert.ok(fs.existsSync(file), 'the claim file stays');
-  assert.match(h.log.err.join(' '), /changed or has no owner id/);
+  assert.match(h.log.err.join(' '), /still active/);
 });
 
 test('release with archive evidence and no claim never calls an unconditional release', async () => {

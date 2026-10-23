@@ -80,6 +80,11 @@ intentionally hold the claim; a failed Handoff check never takes a claim.
 - The GitHub Handoff must explicitly attest readiness, exact thread hash and request
   ID. This checks the real comment, but no tool can infer whether the agent's assertion
   of "no more work" is true. The dispatcher is responsible.
+- Known limitation: nothing persists which Prodex run created a thread, so the tool cannot prove
+  by itself that a thread was not a personal chat; that attestation is the Handoff (task, thread
+  hash, request ID) written by the dispatcher. Persisting a run-to-thread registry is a follow-up.
+- A `run` that still holds a slot claim blocks archive-on-release for that slot; `run` refuses
+  `--continue/--continue-task`, and `skip` shares the per-thread lock with the archive.
 - Active/unknown competing claims, held send lock, wrong/hidden tab, unsent draft,
   pending generation, missing thread row or ambiguous Archive menu block the action.
 - Mouse input is generated using fresh DOM element positions, not fixed coordinates.
