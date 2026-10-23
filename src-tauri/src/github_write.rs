@@ -1972,6 +1972,9 @@ mod tests {
             "> example\nCloses #12",
             "Closes\n    ignored code\n#12",
             "Closes\n\tignored code\n#12",
+            "escaped \\` literal and `Closes #12`",
+            "\\` x\n`start\nCloses #12\nend`",
+            "stray ` backtick\nCloses #12",
         ] {
             let accept_gh = FakeGh::new(vec![Ok(pr_value(SHA, body, vec![], true, "OPEN"))]);
             let accepted = accept(&accept_gh, &args).await;
