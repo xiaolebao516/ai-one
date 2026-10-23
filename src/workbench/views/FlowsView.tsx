@@ -1,17 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { LocalStoreFs } from '../../host/localStore';
 import type { Locale } from '../../i18n/resolve';
-import { Badge, Button, Card, LoadingState, Notice, SectionHeader } from '../../ui/v2';
+import { Badge, Button, Card, LoadingState, Notice } from '../../ui/v2';
 import {
   addStageToFlow,
-  builtinFlows,
-  builtinStages,
   canDeleteStage,
   duplicateFlow,
   duplicateStage,
   moveStageRef,
   removeStageRef,
-  stageUsage,
   type FlowDef,
   type FlowsFile,
   type StageDef,
@@ -42,7 +39,8 @@ type PendingAction =
   | { kind: 'remove-stage'; selection: StageSelection }
   | { kind: 'delete-flow'; flowId: string }
   | { kind: 'delete-stage'; stageId: string }
-  | { kind: 'copy-flow'; flowId: string };
+  | { kind: 'copy-flow'; flowId: string }
+  | { kind: 'import'; incoming: FlowsFile; resolution: Exclude<ImportResolution, 'cancel'> };
 
 type Feedback = { tone: 'neutral' | 'block'; message: string };
 
@@ -304,6 +302,14 @@ export function FlowsView({ locale, fs }: FlowsViewProps) {
       return;
     }
 
+    if (action.kind === 'import') {
+      const next = resolveImportChoice(source, action.incoming, action.resolution);
+      flows.updateFile(() => next);
+      setDraft(stageForSelection(next, selection));
+      setFeedback({ tone: 'neutral', message: text.t('importDone') });
+      return;
+    }
+
     const flow = source.flows.find((item) => item.id === action.flowId);
     if (!flow) return;
     const copied = duplicateFlow(flow, source.flows);
@@ -404,9 +410,7 @@ export function FlowsView({ locale, fs }: FlowsViewProps) {
 
   const handleImport = (incoming: FlowsFile, resolution: Exclude<ImportResolution, 'cancel'>) => {
     if (!file || mutationsDisabled) return;
-    const next = resolveImportChoice(file, incoming, resolution);
-    flows.updateFile(() => next);
-    setFeedback({ tone: 'neutral', message: text.t('importDone') });
+    requestAction({ kind: 'import', incoming, resolution });
   };
 
   const currentStageName = selectedStage ? itemLabel(selectedStage, locale) : '';
