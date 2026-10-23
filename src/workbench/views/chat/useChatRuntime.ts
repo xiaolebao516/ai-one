@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ALL_AI_PROVIDERS, AI_PROVIDERS } from '../../../../shared/constants';
 import type { AIProvider, BridgeMessage, ChatMode, ProviderState, WorkflowPresetId } from '../../../../shared/types';
 import { host as defaultHost } from '../../../host';
-import { startBridgePull as defaultStartBridgePull } from '../../../bridge/pull';
+import { resetProviderBootState, startBridgePull as defaultStartBridgePull } from '../../../bridge/pull';
 import { isRenderableResponseMessage } from '../../../bridge/render';
 import { mergePullBridgeState, type PullBridgeState } from '../../../appBridgeState';
 import { providerFromRoleAssignment } from '../../../ui/autoFocus';
@@ -10,6 +10,9 @@ import {
   buildConversationReplayContext,
   createActiveProviderResponse,
   createConversationMessageId,
+  ensureFreshProviderSessions,
+  pendingProviderSessionResets,
+  ProviderSessionResetError,
   type ActiveProviderResponse,
 } from '../../../ui/conversationContinuity';
 import {
@@ -24,6 +27,7 @@ import {
   type ConversationSessionMessage,
 } from '../../../ui/conversationSessions';
 import { defaultRolesForPreset } from '../../../ui/presetCatalogData';
+import { waitForProvidersSendable } from '../../../ui/targets';
 import { isSendable } from '../../../workflow/sendability';
 import { runWorkflow as defaultRunWorkflow, type RunWorkflowParams, type RunWorkflowResult } from '../../../workflow';
 import type { Locale } from '../../../i18n/resolve';
@@ -44,7 +48,7 @@ export interface ChatRuntimeHost {
   app: Pick<typeof defaultHost.app, 'isDesktop'>;
   connections: Pick<typeof defaultHost.connections, 'get' | 'onUpdate'>;
   bridge: Pick<typeof defaultHost.bridge, 'onMessage'>;
-  provider: Pick<typeof defaultHost.provider, 'open' | 'park'>;
+  provider: Pick<typeof defaultHost.provider, 'open' | 'park' | 'newSession'>;
 }
 
 export interface ChatRuntimeOptions {
@@ -203,6 +207,7 @@ export function useChatRuntime({
   const [sessions, setSessions] = useState<ConversationSession[]>(initial.sessions);
   const [activeSessionId, setActiveSessionId] = useState(initial.activeSessionId);
   const [providerStates, setProviderStates] = useState<Record<AIProvider, ProviderState>>(initialProviderStates);
+  const providerStatesRef = useRef(providerStates);
   const [replyStates, setReplyStates] = useState<Partial<Record<AIProvider, ProviderReplyState>>>(initial.replyStates);
   const [comparisonTargets, setComparisonTargets] = useState<AIProvider[]>(initial.comparisonTargets);
   const [selectedTargets, setSelectedTargets] = useState<AIProvider[]>([]);
@@ -221,6 +226,7 @@ export function useChatRuntime({
   const forwardedFromByProviderRef = useRef(new Map<AIProvider, AIProvider>());
   const requestByProviderRef = useRef(new Map<AIProvider, ProviderRequest>());
   const successfulByRunRef = useRef(new Map<string, Set<AIProvider>>());
+  const pendingProviderResetsRef = useRef(new Set<AIProvider>(CHAT_PROVIDERS));
 
   const activeSession = (sessions.find((session) => session.id === activeSessionId) ?? sessions[0])!;
   const busyProviders = Object.keys(busyStartedAt).filter((provider) => busyStartedAt[provider as AIProvider] !== undefined) as AIProvider[];
@@ -229,6 +235,10 @@ export function useChatRuntime({
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
+
+  useEffect(() => {
+    providerStatesRef.current = providerStates;
+  }, [providerStates]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -337,9 +347,10 @@ export function useChatRuntime({
       }
 
       if (!isFinal) return;
-      if (status === 'completed' && runId) {
+      if (runId) {
         const successful = successfulByRunRef.current.get(runId) ?? new Set<AIProvider>();
-        successful.add(provider);
+        if (status === 'completed') successful.add(provider);
+        else successful.delete(provider);
         successfulByRunRef.current.set(runId, successful);
       }
       activeResponsesRef.current.delete(provider);
@@ -663,6 +674,7 @@ export function useChatRuntime({
 
   const newConversation = useCallback(() => {
     const session = createConversationSession();
+    pendingProviderResetsRef.current = new Set(CHAT_PROVIDERS);
     setSessions((current) => upsertConversationSession(current, session));
     activeSessionIdRef.current = session.id;
     setActiveSessionId(session.id);
@@ -672,6 +684,7 @@ export function useChatRuntime({
   }, []);
 
   const selectSession = useCallback((session: ConversationSession) => {
+    if (activeSessionIdRef.current !== session.id) pendingProviderResetsRef.current = new Set(CHAT_PROVIDERS);
     activeSessionIdRef.current = session.id;
     setActiveSessionId(session.id);
     const hydrated = repliesFromSession(session.messages);
@@ -706,6 +719,7 @@ export function useChatRuntime({
       return;
     }
     const replacement = createConversationSession();
+    pendingProviderResetsRef.current = new Set(CHAT_PROVIDERS);
     setSessions([replacement]);
     activeSessionIdRef.current = replacement.id;
     setActiveSessionId(replacement.id);
