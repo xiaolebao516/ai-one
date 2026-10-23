@@ -4,7 +4,7 @@ import type { StageSelection, StageDraftScope } from '../flowEditor';
 import { canOverrideStageDraft } from '../flowEditor';
 import type { Locale } from '../../i18n/resolve';
 import { Badge, Button, Card, Notice, Select, cx } from '../../ui/v2';
-import type { FlowsText } from '../../workbench/views/flowsText';
+import { isChineseFlowsLocale, type FlowsText } from '../../workbench/views/flowsText';
 
 interface StageEditorProps {
   file: FlowsFile;
@@ -59,7 +59,7 @@ const FAIL_POLICIES: Array<{ value: StageDef['onFail']; key: 'failStopAndAsk' | 
 ];
 
 function label(stage: StageDef, locale: Locale): string {
-  return locale.toLowerCase().startsWith('zh') ? stage.name : stage.nameEn ?? stage.name;
+  return isChineseFlowsLocale(locale) ? stage.name : stage.nameEn ?? stage.name;
 }
 
 function textInputClass(): string {
