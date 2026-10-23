@@ -788,7 +788,7 @@ export function useChatRuntime({
     setActiveSessionId(session.id);
     const hydrated = repliesFromSession(session.messages);
     for (const provider of busyProvidersRef.current) {
-      if (runSessionByProviderRef.current.get(provider) === session.id) {
+      if (runSessionByProviderRef.current.get(provider) === session.id && activeResponsesRef.current.has(provider)) {
         hydrated[provider] = {
           status: 'generating',
           content: hydrated[provider]?.content ?? '',
