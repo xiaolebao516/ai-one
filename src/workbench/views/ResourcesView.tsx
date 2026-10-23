@@ -1,28 +1,33 @@
 import { useState, type ReactNode } from 'react';
 import { AI_PROVIDERS, ALL_AI_PROVIDERS } from '../../../shared/constants';
 import type { Locale } from '../../i18n/resolve';
-import { Badge, Button, Card, Icon, Notice, SectionHeader, cx } from '../../ui/v2';
+import { Badge, Button, Card, Icon, Notice, SectionHeader, cx, type V2BadgeTone } from '../../ui/v2';
 import { DispatchReceipts } from '../../ui/v2/DispatchReceipts';
 import type { ChannelSummary } from '../dispatchModel';
 import { CHANNEL_BADGE, channelView, type ChannelView } from '../dispatchView';
 import type { DispatchData } from '../useDispatchData';
-import { workbenchText, type WorkbenchText } from '../workbenchText';
+import { deriveResources, type ResourceStatus } from '../../resources/registry';
+import type { QuotaHudData } from '../../resources/useQuotaHud';
+import { workbenchText, type WorkbenchText, type WorkbenchTextKey } from '../workbenchText';
 
 export interface ResourcesViewProps {
   locale: Locale;
   dispatch: DispatchData;
+  quotaHud: QuotaHudData;
   repoPath: string;
   onSetRepo: (input: string) => 'saved' | 'cleared' | 'invalid';
   onOpenClassic: () => void;
 }
 
 /**
- * Resources page (Spec #98, design `12-resources`). Only the Prodex channel has a real source today;
- * logins, agent state and quota say "not checked" / "unknown" until the resources line (#82) lands.
+ * Resources page (Spec #98, design `12-resources`). The local agents use the shared HUD snapshot;
+ * web-chat quota remains unknown because there is no reliable page-level source.
  */
-export function ResourcesView({ locale, dispatch, repoPath, onSetRepo, onOpenClassic }: ResourcesViewProps) {
+export function ResourcesView({ locale, dispatch, quotaHud, repoPath, onSetRepo, onOpenClassic }: ResourcesViewProps) {
   const text = workbenchText(locale);
   const channel = channelView(dispatch);
+  const reading = quotaHud.reading ?? { state: 'unavailable' as const, heartbeatAgeSeconds: null, snapshot: null, readAt: null };
+  const resources = deriveResources(reading, Date.now());
   return (
     <div className="mx-auto grid max-w-[1180px] gap-v2-section p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:p-v2-page">
       <header>
@@ -31,11 +36,13 @@ export function ResourcesView({ locale, dispatch, repoPath, onSetRepo, onOpenCla
       </header>
 
       <QuotaLegend text={text} />
+      <QuotaHudNotice text={text} quotaHud={quotaHud} />
 
       <section aria-labelledby="resources-agents" className="grid gap-v2-sm">
         <SectionHeader id="resources-agents" title={text.t('agentsTitle')} description={text.t('agentsHint')} />
-        <ResourceCard avatar="CC" color="#C15F3C" name="Claude Code" kind={text.t('agentKind')} note={text.t('agentNotProbed')} text={text} />
-        <ResourceCard avatar="Cx" color="#2B2A27" name="Codex CLI" kind={text.t('agentKind')} note={text.t('agentNotProbed')} text={text} />
+        {resources.map((resource) => (
+          <AgentResourceCard key={resource.id} resource={resource} locale={locale} text={text} />
+        ))}
       </section>
 
       <section aria-labelledby="resources-channel" className="grid gap-v2-sm">
@@ -93,7 +100,7 @@ function QuotaBar({ kind }: { kind: 'known' | 'estimate' | 'unknown' }) {
 function QuotaLegend({ text }: { text: WorkbenchText }) {
   const items: Array<{ key: string; title: string; hint: string; mark: ReactNode }> = [
     { key: 'known', title: text.t('quotaKnown'), hint: text.t('quotaKnownHint'), mark: <QuotaBar kind="known" /> },
-    { key: 'hint', title: text.t('quotaHint'), hint: text.t('quotaHintHint'), mark: <span aria-hidden="true" className="h-2 w-2 rounded-full bg-v2-you" /> },
+    { key: 'hint', title: text.t('quotaHint'), hint: text.t('quotaHintHint'), mark: <span aria-hidden="true" className="h-2 w-2 rounded-full bg-v2-unknown" /> },
     { key: 'estimate', title: text.t('quotaEstimate'), hint: text.t('quotaEstimateHint'), mark: <QuotaBar kind="estimate" /> },
     { key: 'unknown', title: text.t('quotaUnknown'), hint: text.t('quotaUnknownHint'), mark: <QuotaBar kind="unknown" /> },
   ];
@@ -113,6 +120,191 @@ function QuotaLegend({ text }: { text: WorkbenchText }) {
         ))}
       </ul>
       <p className="text-v2-meta text-v2-ink-3">{text.t('quotaAllUnknown')}</p>
+    </div>
+  );
+}
+
+
+const LOGIN_LABEL: Record<ResourceStatus['login'], WorkbenchTextKey> = {
+  ok: 'resourceLoginOk',
+  attention: 'resourceLoginAttention',
+  unknown: 'resourceLoginUnknown',
+  'not-detected': 'resourceLoginNotDetected',
+};
+const LOGIN_TONE: Record<ResourceStatus['login'], V2BadgeTone> = {
+  ok: 'done',
+  attention: 'block',
+  unknown: 'unknown',
+  'not-detected': 'unknown',
+};
+const ACTIVITY_LABEL: Record<ResourceStatus['activity'], WorkbenchTextKey> = {
+  busy: 'resourceActivityBusy',
+  waiting: 'resourceActivityWaiting',
+  idle: 'resourceActivityIdle',
+  unknown: 'resourceActivityUnknown',
+};
+const ACTIVITY_TONE: Record<ResourceStatus['activity'], V2BadgeTone> = {
+  busy: 'run',
+  waiting: 'you',
+  idle: 'paused',
+  unknown: 'unknown',
+};
+const QUOTA_BAR_CLASS: Record<ResourceStatus['quota']['windows'][number]['level'], string> = {
+  ok: 'bg-v2-done',
+  warn: 'bg-v2-you',
+  critical: 'bg-v2-block',
+  unknown: '',
+};
+
+function formatPercent(value: number): string {
+  return Number(value.toFixed(1)).toString() + '%';
+}
+
+function formatClock(value: string, locale: Locale): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false })
+    : '';
+}
+
+function formatResetTime(value: string, locale: Locale): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? date.toLocaleString(locale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+    : '';
+}
+
+function QuotaHudNotice({ text, quotaHud }: { text: WorkbenchText; quotaHud: QuotaHudData }) {
+  const [starting, setStarting] = useState(false);
+  const [startFailed, setStartFailed] = useState(false);
+  const reading = quotaHud.reading;
+  const browserUnavailable = quotaHud.state === 'unavailable' || reading?.state === 'unavailable';
+  const running = quotaHud.state === 'ready' && reading?.state === 'running';
+  if (running && reading?.snapshot) return null;
+
+  const messageKey: WorkbenchTextKey =
+    quotaHud.state === 'loading'
+      ? 'quotaHudLoading'
+      : browserUnavailable
+        ? 'quotaHudBrowserUnavailable'
+        : quotaHud.state === 'error'
+          ? 'quotaHudReadError'
+          : reading?.state === 'running'
+            ? 'quotaHudNoSnapshot'
+            : reading?.state === 'stopped'
+              ? 'quotaHudStopped'
+              : reading?.state === 'unreadable'
+                ? 'quotaHudUnreadable'
+                : 'quotaHudAbsent';
+  const canStart = !browserUnavailable && quotaHud.state !== 'loading' && reading?.state !== 'running';
+  const startHud = async () => {
+    setStarting(true);
+    setStartFailed(false);
+    try {
+      await quotaHud.start();
+    } catch {
+      setStartFailed(true);
+    } finally {
+      setStarting(false);
+    }
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-v2-sm" data-testid="quota-hud-notice">
+      <div className="min-w-0 flex-1">
+        <Notice tone={quotaHud.state === 'error' || reading?.state === 'unreadable' ? 'block' : 'unknown'}>
+          {text.t(messageKey)}
+        </Notice>
+        {startFailed ? <p role="alert" className="mt-1 text-v2-meta text-v2-block">{text.t('quotaHudStartError')}</p> : null}
+      </div>
+      {canStart ? (
+        <Button size="sm" loading={starting} onClick={() => void startHud()}>
+          {text.t(starting ? 'quotaHudStarting' : 'quotaHudStart')}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+function AgentResourceCard({ resource, locale, text }: { resource: ResourceStatus; locale: Locale; text: WorkbenchText }) {
+  const avatar = resource.id === 'claude-code' ? 'CC' : 'Cx';
+  const color = resource.id === 'claude-code' ? '#C15F3C' : '#2B2A27';
+  const quotaLabel = resource.quota.stale && resource.quota.windows.length > 0
+    ? 'quotaExpiredShort'
+    : resource.quota.source === 'known'
+      ? 'quotaKnown'
+      : 'quotaUnknown';
+  return (
+    <Card data-testid={'resource-' + resource.id} className="grid items-start gap-v2-md min-[1100px]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="flex min-w-0 items-start gap-v2-md">
+        <Avatar label={avatar} color={color} />
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-v2-sm">
+            <span className="font-semibold text-v2-ink">{resource.name}</span>
+            <Badge tone={LOGIN_TONE[resource.login]}>{text.t(LOGIN_LABEL[resource.login])}</Badge>
+            <Badge tone={ACTIVITY_TONE[resource.activity]}>{text.t(ACTIVITY_LABEL[resource.activity])}</Badge>
+          </div>
+          <p className="text-v2-meta text-v2-ink-3">{text.t('agentKind')}</p>
+          {resource.loginNotice ? <p className="mt-1 text-v2-meta text-v2-ink-2">{resource.loginNotice}</p> : null}
+        </div>
+      </div>
+      <div className="grid min-w-0 gap-v2-sm">
+        <div className="flex flex-wrap items-center justify-between gap-v2-sm">
+          <span className="text-v2-meta text-v2-ink-2">{text.t('quotaLabel')}</span>
+          <Badge tone={resource.quota.source === 'known' && !resource.quota.stale ? 'done' : 'unknown'}>
+            {text.t(quotaLabel)}
+          </Badge>
+        </div>
+        {resource.quota.windows.length > 0 ? (
+          <div className="grid gap-v2-sm">
+            {resource.quota.windows.map((window, index) => (
+              <QuotaWindowRow key={window.id ?? window.name + '-' + index} window={window} quota={resource.quota} locale={locale} text={text} />
+            ))}
+          </div>
+        ) : (
+          <div className="grid gap-1">
+            <span className="text-v2-meta text-v2-ink-3">{text.t('quotaUnknown')}</span>
+            <span className="block h-1.5 w-full rounded-full border border-dashed border-v2-line-strong" aria-hidden="true" />
+          </div>
+        )}
+        {resource.quota.stale && resource.quota.windows.length > 0
+          ? <p className="text-v2-meta text-v2-ink-3">{resource.quota.observedAt ? text.t('quotaExpired', { time: formatClock(resource.quota.observedAt, locale) }) : text.t('quotaExpiredUnknownTime')}</p>
+          : resource.quota.observedAt
+            ? <p className="text-v2-meta text-v2-ink-3">{text.t('quotaObserved', { time: formatClock(resource.quota.observedAt, locale) })}</p>
+            : null}
+      </div>
+    </Card>
+  );
+}
+
+function QuotaWindowRow({
+  window,
+  quota,
+  locale,
+  text,
+}: {
+  window: ResourceStatus['quota']['windows'][number];
+  quota: ResourceStatus['quota'];
+  locale: Locale;
+  text: WorkbenchText;
+}) {
+  const level = quota.source === 'known' && !quota.stale ? window.level : 'unknown';
+  const usedPercent = window.usedPercent;
+  return (
+    <div className="grid gap-1" data-testid="quota-window">
+      <div className="flex items-center justify-between gap-v2-sm text-v2-meta">
+        <span className="min-w-0 truncate text-v2-ink-2">{window.name || text.t('quotaWindowUnknown')}</span>
+        <span className="shrink-0 text-v2-ink">{usedPercent === null ? text.t('quotaUnknown') : formatPercent(usedPercent)}</span>
+      </div>
+      <span
+        aria-hidden="true"
+        data-testid="quota-window-bar"
+        className={cx('relative block h-1.5 w-full overflow-hidden rounded-full', level === 'unknown' ? 'border border-dashed border-v2-line-strong' : 'bg-v2-line')}
+      >
+        {level !== 'unknown' && usedPercent !== null ? (
+          <span className={cx('absolute inset-y-0 left-0 rounded-full', QUOTA_BAR_CLASS[level])} style={{ width: Math.min(100, Math.max(0, usedPercent)) + '%' }} />
+        ) : null}
+      </span>
+      {window.resetAt ? <span className="text-v2-micro text-v2-ink-3">{text.t('quotaResetAt', { time: formatResetTime(window.resetAt, locale) })}</span> : null}
     </div>
   );
 }

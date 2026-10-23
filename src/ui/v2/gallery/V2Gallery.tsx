@@ -360,6 +360,74 @@ function GallerySections({ skin, mode, compact }: { skin: V2SkinId; mode: V2Mode
 
       <Divider />
 
+      <Section id={ids('resources-hud')} title="资源 HUD（额度按钮 + 资源卡）" note="静态示例；百分比与状态均为虚构数据，随当前浅 / 深色令牌变化">
+        <Card className="grid gap-v2-md">
+          <div className="flex flex-wrap items-center justify-between gap-v2-md">
+            <span className="font-semibold text-v2-ink">ai-one · 标题栏</span>
+            <div className="flex items-center gap-v2-sm">
+              <div className="flex h-7 items-center gap-v2-sm rounded-v2-md border border-v2-line px-v2-sm text-v2-meta text-v2-ink-2">
+                <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-v2-block" />
+                额度 92%
+              </div>
+              <div className="flex h-7 items-center gap-v2-sm rounded-v2-md px-v2-sm text-v2-meta text-v2-ink-2">
+                <span aria-hidden="true" className="relative flex h-6 w-6 items-center justify-center rounded-v2-sm bg-v2-primary text-v2-micro font-semibold text-v2-on-primary">
+                  Px
+                  <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-v2-unknown ring-2 ring-v2-bg" />
+                </span>
+                Prodex
+              </div>
+            </div>
+          </div>
+          <div className="grid gap-v2-md md:grid-cols-2">
+            <Card variant="flat" className="grid gap-v2-sm">
+              <div className="flex items-start gap-v2-sm">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-v2-md bg-v2-primary text-v2-body font-semibold text-v2-on-primary">CC</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-v2-sm">
+                    <span className="font-semibold text-v2-ink">Claude Code</span>
+                    <Badge tone="unknown">额度不可用</Badge>
+                    <Badge tone="paused">空闲</Badge>
+                  </div>
+                  <p className="text-v2-meta text-v2-ink-2">当前登录方式没有订阅额度（示例）</p>
+                </div>
+              </div>
+              <div className="grid gap-1">
+                <div className="flex justify-between text-v2-meta"><span>5h limit</span><span>未知</span></div>
+                <span className="block h-1.5 rounded-full border border-dashed border-v2-line-strong" />
+              </div>
+            </Card>
+            <Card variant="flat" className="grid gap-v2-sm">
+              <div className="flex items-start gap-v2-sm">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-v2-md bg-v2-primary text-v2-body font-semibold text-v2-on-primary">Cx</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-v2-sm">
+                    <span className="font-semibold text-v2-ink">Codex CLI</span>
+                    <Badge tone="done">登录正常</Badge>
+                    <Badge tone="run">忙碌</Badge>
+                  </div>
+                  <p className="text-v2-meta text-v2-ink-2">额度来源：本机 HUD 快照（示例）</p>
+                </div>
+              </div>
+              <div className="grid gap-v2-sm">
+                <div className="grid gap-1">
+                  <div className="flex justify-between text-v2-meta"><span>5h limit</span><span>69.9%</span></div>
+                  <span className="block h-1.5 overflow-hidden rounded-full bg-v2-line"><span className="block h-full rounded-full bg-v2-done" style={{ width: '69.9%' }} /></span>
+                  <span className="text-v2-micro text-v2-ink-3">重置于 10/23 17:00 · 观察于 12:00</span>
+                </div>
+                <div className="grid gap-1">
+                  <div className="flex justify-between text-v2-meta"><span>Weekly limit</span><span>92%</span></div>
+                  <span className="block h-1.5 overflow-hidden rounded-full bg-v2-line"><span className="block h-full rounded-full bg-v2-block" style={{ width: '92%' }} /></span>
+                  <span className="text-v2-micro text-v2-ink-3">重置于 10/27 00:00 · 观察于 12:00</span>
+                </div>
+              </div>
+            </Card>
+          </div>
+          <Notice tone="unknown">额度快照过期时保留上次读到的数字，但使用虚线空条，不显示为当前已知额度。</Notice>
+        </Card>
+      </Section>
+
+      <Divider />
+
       <Section id={ids('nav')} title="导航与筛选" note="方向键 / Home / End 可切换">
         <Tabs
           label="示例标签页"

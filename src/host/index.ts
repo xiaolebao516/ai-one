@@ -320,6 +320,10 @@ export const host = {
       }
     },
   },
+  quotaHud: {
+    read: (): Promise<unknown> => invoke<string>('quota_hud_read'),
+    start: (): Promise<unknown> => invoke<string>('quota_hud_start'),
+  },
   share: {
     exportMarkdown: (suggestedName: string, content: string): Promise<string | null> =>
       invoke('export_markdown', { suggestedName, content }),

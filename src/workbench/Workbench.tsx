@@ -7,6 +7,8 @@ import { taskHudText } from '../ui/taskHudText';
 import { Badge, Button, Icon, IconButton, Notice, SegmentedControl, StatusIndicator, V2Scope, cx, type V2IconName } from '../ui/v2';
 import { CommandPalette } from './CommandPalette';
 import { channelView, type ChannelView } from './dispatchView';
+import { deriveResources, quotaTitleView, type QuotaTitleLevel } from '../resources/registry';
+import { useQuotaHud, type QuotaHudData, type QuotaHudLoader, type QuotaHudStarter } from '../resources/useQuotaHud';
 import { NAV_KEY, paletteCommands } from './paletteCommands';
 import { useDispatchData, type DispatchLoader } from './useDispatchData';
 import { categoryHealth, countLabel, isExact, observedAt, repoNotices, useWorkbenchData, type DataHealth, type GitHubLoader, type WorkbenchData } from './useWorkbenchData';
@@ -54,14 +56,19 @@ export interface WorkbenchProps {
   dispatchLoader?: DispatchLoader;
   /** Overrides the desktop check for local reads (tests). */
   isDesktop?: boolean;
+  /** Reads the shared quota HUD snapshot; tests pass a controllable loader. */
+  quotaHudLoader?: QuotaHudLoader;
+  /** Starts the local quota HUD; tests can inject a no-op. */
+  quotaHudStarter?: QuotaHudStarter;
 }
 
 /** The new ai-one front end (Spec #79 v2). The classic chat UI is only a capability library now. */
-export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoader, acceptanceWriter, dispatchLoader, isDesktop }: WorkbenchProps) {
+export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoader, acceptanceWriter, dispatchLoader, isDesktop, quotaHudLoader, quotaHudStarter }: WorkbenchProps) {
   const text = workbenchText(locale);
   const data = useWorkbenchData(githubLoader);
   const acceptance = useUserAcceptance(data.prefs.source, data.prefs.repos, data.github.results, acceptanceLoader, acceptanceWriter);
   const dispatch = useDispatchData({ source: data.prefs.source, repoPath: data.prefs.dispatchRepo, loader: dispatchLoader, isDesktop });
+  const quotaHud = useQuotaHud({ loader: quotaHudLoader, starter: quotaHudStarter, isDesktop });
   const channel = channelView(dispatch);
   const [route, setRoute] = useState<WorkbenchRoute>(HOME_ROUTE);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -212,7 +219,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
       />
     );
   } else {
-    view = <ResourcesView locale={locale} dispatch={dispatch} repoPath={data.prefs.dispatchRepo} onSetRepo={data.setDispatchRepo} onOpenClassic={openClassic} />;
+    view = <ResourcesView locale={locale} dispatch={dispatch} quotaHud={quotaHud} repoPath={data.prefs.dispatchRepo} onSetRepo={data.setDispatchRepo} onOpenClassic={openClassic} />;
   }
 
   return (
@@ -223,6 +230,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
         health={data.health}
         acceptance={acceptance}
         channel={channel}
+        quotaHud={quotaHud}
         onPalette={() => setPaletteOpen(true)}
         onShowTasks={() => go({ view: 'tasks' })}
         onShowAcceptances={() => go({ view: 'home' })}
@@ -269,6 +277,7 @@ interface TitleBarProps {
   health: DataHealth;
   channel: ChannelView;
   acceptance: AcceptanceState;
+  quotaHud: QuotaHudData;
   onPalette: () => void;
   onShowTasks: () => void;
   onShowAcceptances: () => void;
@@ -284,7 +293,7 @@ const CHANNEL_DOT: Record<ChannelView['tone'], string> = {
   failed: 'bg-v2-block',
 };
 
-function TitleBar({ text, tasks, health, acceptance, channel, onPalette, onShowTasks, onShowAcceptances, onShowResources }: TitleBarProps) {
+function TitleBar({ text, tasks, health, acceptance, channel, quotaHud, onPalette, onShowTasks, onShowAcceptances, onShowResources }: TitleBarProps) {
   const summary = summarize(tasks);
   // The island shows counts by state, so unreadable task states make them "at least" too.
   const byState = categoryHealth(health, tasks);
@@ -331,10 +340,46 @@ function TitleBar({ text, tasks, health, acceptance, channel, onPalette, onShowT
           {acceptLabel}
         </button>
       </div>
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-v2-sm">
+        <QuotaButton text={text} quotaHud={quotaHud} onClick={onShowResources} />
         <ChannelButton text={text} channel={channel} onClick={onShowResources} />
       </div>
     </header>
+  );
+}
+
+
+const QUOTA_DOT: Record<QuotaTitleLevel, string> = {
+  ok: 'bg-v2-done',
+  warn: 'bg-v2-you',
+  critical: 'bg-v2-block',
+  unknown: 'bg-v2-unknown',
+};
+
+function quotaPercentLabel(value: number): string {
+  return Number(value.toFixed(1)).toString();
+}
+
+function QuotaButton({ text, quotaHud, onClick }: { text: WorkbenchText; quotaHud: QuotaHudData; onClick: () => void }) {
+  const reading = quotaHud.reading ?? { state: 'unavailable' as const, heartbeatAgeSeconds: null, snapshot: null, readAt: null };
+  const summary = quotaTitleView(deriveResources(reading, Date.now()));
+  const value = summary.usedPercent === null
+    ? text.t('quotaButtonUnknown')
+    : text.t('quotaButtonValue', { percent: quotaPercentLabel(summary.usedPercent) });
+  const label = text.t('quotaButtonAria', { value });
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      data-testid="quota-button"
+      data-tone={summary.level}
+      className="flex h-7 items-center gap-v2-sm rounded-v2-md px-v2-sm text-v2-meta text-v2-ink-2 hover:bg-v2-hover"
+    >
+      <span data-testid="quota-button-dot" aria-hidden="true" className={cx('h-1.5 w-1.5 rounded-full', QUOTA_DOT[summary.level])} />
+      <span>{value}</span>
+    </button>
   );
 }
 
