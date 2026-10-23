@@ -127,14 +127,19 @@ const providerApi = {
     try {
       raw = await invoke<string>('provider_eval_with_callback', { provider, js: drainAndDispatchScript(message, expiresAt) });
     } catch (error) {
-      throw new Error(`${provider} send rejected: outbox drain result unknown (${error instanceof Error ? error.message : String(error)}); the page will not dispatch after its expiry`);
+      // The script may still have dispatched (it only expires later), so whether the message was sent is
+      // unknown. Quarantine the page like an unconfirmed stop: no further send until it is reloaded, so a
+      // late reply to this message can never be taken for the answer to the next one.
+      providersWithUnconfirmedStop.add(provider);
+      throw new Error(`${provider} send rejected: outbox drain result unknown (${error instanceof Error ? error.message : String(error)}); reload the provider page before retrying`);
     }
     let result: unknown;
     try {
       result = JSON.parse(raw) as unknown;
       if (typeof result === 'string') result = JSON.parse(result) as unknown;
     } catch {
-      throw new Error(`${provider} send rejected: unreadable outbox drain result`);
+      providersWithUnconfirmedStop.add(provider); // an unreadable result is equally unknown
+      throw new Error(`${provider} send rejected: unreadable outbox drain result; reload the provider page before retrying`);
     }
     const outcome = result as { sent?: unknown; reason?: unknown } | null;
     if (!outcome || outcome.sent !== true) {

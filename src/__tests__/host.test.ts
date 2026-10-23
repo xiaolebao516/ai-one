@@ -394,6 +394,8 @@ describe('host send with outbox draining (#143)', () => {
     await expect(host.provider.send('chatgpt#2', 'x', { drainOutbox: true })).rejects.toThrow(/could not be drained \(round cap reached\)/);
     invokeMock.mockResolvedValue('not json');
     await expect(host.provider.send('chatgpt#2', 'x', { drainOutbox: true })).rejects.toThrow(/unreadable outbox drain result/);
+    invokeMock.mockResolvedValue(undefined);
+    await host.provider.reload('chatgpt#2'); // an unreadable result quarantines the page; clear it for the next tests
   });
 
   it('refuses to dispatch once its expiry has passed (the host stops waiting after 5 s and cannot recall a queued script)', async () => {
@@ -427,9 +429,29 @@ describe('host send with outbox draining (#143)', () => {
     }
   });
 
-  it('rejects, reporting an unknown result, when the callback itself fails or times out', async () => {
-    invokeMock.mockRejectedValue(new Error('provider eval callback timed out'));
-    await expect(host.provider.send('chatgpt#2', 'x', { drainOutbox: true })).rejects.toThrow(/drain result unknown/);
+  it('quarantines the page when the callback result is unknown: no further send until it is reloaded', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('provider eval callback timed out'));
+    await expect(host.provider.send('chatgpt#2', 'A', { drainOutbox: true })).rejects.toThrow(/drain result unknown/);
+
+    // The first message may have been dispatched; the next send must not be allowed to collect its reply.
+    invokeMock.mockResolvedValue(JSON.stringify({ sent: true }));
+    const before = invokeMock.mock.calls.length;
+    await expect(host.provider.send('chatgpt#2', 'B', { drainOutbox: true })).rejects.toThrow(/reload provider page/);
+    await expect(host.provider.send('chatgpt#2', 'B', { drainOutbox: false })).rejects.toThrow(/reload provider page/);
+    expect(invokeMock.mock.calls.length).toBe(before); // nothing was sent to the page
+
+    // Other instances are unaffected, and an explicit reload clears the quarantine.
+    await expect(host.provider.send('chatgpt#3', 'C', { drainOutbox: true })).resolves.toBeUndefined();
+    await host.provider.reload('chatgpt#2');
+    await expect(host.provider.send('chatgpt#2', 'D', { drainOutbox: true })).resolves.toBeUndefined();
+  });
+
+  it('treats an unreadable callback result as unknown too', async () => {
+    invokeMock.mockResolvedValueOnce('not json');
+    await expect(host.provider.send('chatgpt#3', 'A', { drainOutbox: true })).rejects.toThrow(/unreadable outbox drain result/);
+    await expect(host.provider.send('chatgpt#3', 'B', { drainOutbox: true })).rejects.toThrow(/reload provider page/);
+    invokeMock.mockResolvedValue(undefined);
+    await host.provider.reload('chatgpt#3');
   });
 
   it('keeps the plain send unchanged when draining is not requested', async () => {
