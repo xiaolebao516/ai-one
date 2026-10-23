@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import type { LocalStoreFs } from '../host/localStore';
 import type { Locale } from '../i18n/resolve';
 import type { FlowDef, FlowsFile, StageDef, ValidationIssue } from './flowModel';
-import { sameStage, stageForSelection, type StageDraftScope, type StageSelection } from './flowEditor';
+import { canOverrideStageDraft, sameStage, stageForSelection, type StageDraftScope, type StageSelection } from './flowEditor';
 import { useFlows, type FlowsLoadStatus } from './useFlows';
-import { createFlowsEditorActions, type EditorFeedback, type PendingEditorAction } from './useFlowsEditorActions';
+import { createFlowsEditorActions } from './useFlowsEditorActions';
+import type { EditorFeedback, PendingEditorAction } from './flows/flowEditorTypes';
 import { flowsText } from '../workbench/views/flowsText';
 
 export interface FlowsEditorController {
@@ -99,17 +100,7 @@ export function useFlowsEditor(locale: Locale, fs?: LocalStoreFs): FlowsEditorCo
   const usageFlows = file && baseStage
     ? file.flows.filter((flow) => flow.stages.some((ref) => ref.stageId === baseStage.id))
     : [];
-  const scopeCanFlow = Boolean(baseStage && draft && !(
-    draft.id !== baseStage.id ||
-    draft.name !== baseStage.name ||
-    draft.nameEn !== baseStage.nameEn ||
-    draft.description !== baseStage.description ||
-    draft.descriptionEn !== baseStage.descriptionEn ||
-    draft.command !== baseStage.command ||
-    draft.collaboration !== baseStage.collaboration ||
-    draft.builtin !== baseStage.builtin ||
-    (baseStage.reworkLimit !== undefined && draft.reworkLimit === undefined)
-  ));
+  const scopeCanFlow = Boolean(baseStage && draft && canOverrideStageDraft(baseStage, draft));
   const mutationsDisabled = flows.loading || flows.saving || flows.status === 'error';
 
   useEffect(() => {
