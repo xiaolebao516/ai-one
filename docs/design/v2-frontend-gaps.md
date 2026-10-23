@@ -100,15 +100,15 @@
 
 ```
 ┌ 输入框：描述要做的事…（多行，Ctrl+Enter 提交）──────────────┐
-│ [聊天] [想需求 /grill] [交给 CC] [流程]      [仓库 ▾] [主按钮] │
+│ [聊天] [想需求 /grill] [交给 CC] [流程] [Chat 主导]  [仓库 ▾] [主按钮] │
 │ ── 模式说明区（随模式变化，见下） ───────────────────────────  │
 └──────────────────────────────────────────────────────────┘
 ```
 
-- 四个选项是 `SegmentedControl`；输入框里以 `/` 开头可直接选：`/chat`、`/grill`、`/lead`（交给 CC）、`/flow`，以及内置阶段命令 `/plan`、`/split`、`/build`、`/ship`。输入 `/grill 需求文字` 自动切到想需求并把后面的文字当正文。**阶段命令的独立触发**（Spec #32 允许跳过阶段、直接执行某一阶段）：`/plan`、`/split`、`/build`、`/ship` 走“交给 CC”路径，Issue 正文的「任务与范围」里写“只做这一个阶段：<阶段定义>，不要执行其他阶段”，CC 只执行该阶段；`/grill` 仍由 ai-one 内置讨论引擎直接运行；聊天页只支持 `/grill`，其余阶段命令只在总览输入框可用。解析是纯函数，放 `src/workbench/composerModel.ts`，要有单元测试。
+- 五个选项是 `SegmentedControl`（聊天 / 想需求 / 交给 CC / 流程 / Chat 主导）；输入框里以 `/` 开头可直接选：`/chat`、`/grill`、`/lead`（交给 CC）、`/flow`、`/chat-led`（Chat 主导），以及内置阶段命令 `/plan`、`/split`、`/build`、`/ship`。输入 `/grill 需求文字` 自动切到想需求并把后面的文字当正文。**阶段命令的独立触发**（Spec #32 允许跳过阶段、直接执行某一阶段）：`/plan`、`/split`、`/build`、`/ship` 走“交给 CC”路径，Issue 正文的「任务与范围」里写“只做这一个阶段：<阶段定义>，不要执行其他阶段”，CC 只执行该阶段；`/grill` 仍由 ai-one 内置讨论引擎直接运行；聊天页只支持 `/grill`，其余阶段命令只在总览输入框可用。解析是纯函数，放 `src/workbench/composerModel.ts`，要有单元测试。
 - 选了仓库时默认“交给 CC”；没选仓库默认“聊天”。
 - 仓库下拉的候选来自 GitHub 数据源里已读到的仓库；没有候选时只显示“手动输入 owner/repo”。
-- 主按钮文案随模式：`发送` / `开始讨论` / `交给 CC` / `开始流程`。输入为空时按钮不可用并提示“先写要做的事”。
+- 主按钮文案随模式：`发送` / `开始讨论` / `交给 CC` / `开始流程` / `开始 Chat 主导`。输入为空时按钮不可用并提示“先写要做的事”。
 - 提交后按钮进入“处理中”，**完成前不重复提交**；失败显示行内错误，保留输入内容。
 
 ### 3.2 聊天
@@ -130,7 +130,7 @@
 - 说明区：`CC 协调` 标记 + 一行“经 Prodex 派 GPT 执行/审计，需要时请 Argon、Opus”。
 - 说明区第二行写清楚后果：“点‘交给 CC’后，ai-one 会建一个 Task Issue，并把接手指令放进剪贴板，你粘贴给 Claude Code。”
 - 点「交给 CC」后的步骤（行内进度，不弹窗）：
-  1. 建 Task Issue。正文**按 `.github/ISSUE_TEMPLATE/task.md` 生成**，字段如下：`关联 / 派工`（Parent Spec：用户选了才填，否则“无”；**写入桥不建立 GitHub 原生 Sub-issue 关系**，正文写明“原生子 Issue 关系待 CC 接手时建立（工具不能建时报告待关联，不伪报完成）”；Reviewed Spec Revision：随父 Spec；Complexity：默认 `ROUTINE`；Owner：“待 CC 接手后登记”；Reviewer：“ChatGPT（独立审计，经 Prodex 新对话）”；Depends on：无）、`任务与范围`（**需求原文原样放这里**；非目标：“由 CC 与用户确认后补”）、`交付 / 验收标准`（写“**验收标准待 CC 在开工前补齐，补齐前不得开始实现**”并留空勾选项）、`实施与验证记录`（PR：待创建），末尾附「协调简报」（S6）与来源“由 ai-one 创建”；
+  1. 建 Task Issue。正文**按 `.github/ISSUE_TEMPLATE/task.md` 生成**，字段如下：`关联 / 派工`（Parent Spec：用户选了才填，否则“无”；选了父 Spec 时由写入桥在创建后建立**原生 Sub-issue 关系**（失败则结果为 `partial`，如实显示“Issue 已建、父子关系未建”，由 CC 接手时补）；Reviewed Spec Revision：随父 Spec；Complexity：默认 `ROUTINE`；Owner：“待 CC 接手后登记”；Reviewer：“ChatGPT（独立审计，经 Prodex 新对话）”；Depends on：无）、`任务与范围`（**需求原文原样放这里**；非目标：“由 CC 与用户确认后补”）、`交付 / 验收标准`（写“**验收标准待 CC 在开工前补齐，补齐前不得开始实现**”并留空勾选项）、`实施与验证记录`（PR：待创建），末尾附「协调简报」（S6）与来源“由 ai-one 创建”；
   2. **回读** Issue 确认已创建（拿到编号和链接）；
   3. 复制接手指令：`按 AGENTS.md 快速开发模式接手 <owner/repo> 的 Issue #<N>`；
   4. 显示结果卡：`已创建 #N · 接手指令已复制` + 「在 GitHub 打开」「再复制一次」「查看任务」。
@@ -145,10 +145,17 @@
 - 点「开始流程」：同 §3.4，建 Task Issue，正文里额外带“流程定义”（流程名 + 每个阶段的协作方式、参与者、结束条件、失败时），CC 照它推进。
 - 没有可用流程时，下拉只有「去阶段与流程页新建」。
 
-### 3.6 测试与验收要点
+### 3.6 Chat 主导（Spec #113）
+
+- 说明区：`协调者` chip（默认 ChatGPT 网页，可换；未登录/未探测按 §4.1 的三态规则显示）+ `被协调者` chip 多选（已登录的其他网页 AI）+ 一行小字：“协调者的回复里带 `ai-one-send` 指令块时，ai-one 才会转发；总轮数上限 8，到上限停下问你。”
+- 点「开始 Chat 主导」：在 ai-one 内**直接运行 Chat 主导引擎**（L9，不经 CC），创建一个 `kind: 'chat-led'` 的**本地任务**（§7 的 `LocalTask`，无仓库），跳到任务现场；现场主体是**转发时间线**（谁→谁、字数、状态、完整回复可展开）与顶部「暂停 / 接管」；协议解析失败、到上限、被协调者没登录都在时间线里如实显示并停下。
+- 结束后任务现场出现“清理对话”卡：显示将处理的对话清单（只含本任务创建的对话；能删除的标“删除，不可恢复”，不能删的标“归档”，都不行的标“需手动清理”），用户点「清理」才执行，执行后回读确认；转发记录先导出 Markdown。
+- 引擎与协议见 Spec #113；`composerModel` 只负责模式、校验与提交入口（调用 L9 提供的启动函数），L4 与 L9 在这个接口上对接。
+
+### 3.7 测试与验收要点
 
 - `composerModel`：斜杠解析、模式默认值、按钮可用性、提交状态机（空 / 处理中 / 失败 / 成功）有单元测试。
-- 失败路径有测试：建单成功回读失败；回读成功复制失败（Tauri 剪贴板不可用时，结果卡里显示可手动复制的文本框）。
+- 失败路径有测试：建单成功回读失败；建单成功但原生父子关系未建（`partial`）；回读成功复制失败（Tauri 剪贴板不可用时，结果卡里显示可手动复制的文本框）。
 - 真机：Windows Tauri 里完成一次“交给 CC”（对用户自己的测试仓库），截图进 PR；剪贴板内容可核对。
 
 ---
@@ -340,11 +347,11 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
 
 | 动作（命令名） | 参数 | GitHub 操作 | 前端入口 |
 |---|---|---|---|
-| `create_issue` | `repo`、`title`、`body` | 在用户指定的仓库建一个新 Issue（不加标签） | 总览「交给 CC」「开始流程」；汇总卡「转入定方案」 |
+| `create_issue` | `repo`、`title`、`body`、可选 `parentSpec`（父 Spec 编号） | 在用户指定的仓库建一个新 Issue（不加标签）；若带 `parentSpec`，建好后**由桥建立原生 Sub-issue 关系**（先建 Issue，后建关系；关系建立失败返回 `partial`，写明 Issue 已建但关系未建，不自动重试，不重复建单） | 总览「交给 CC」「开始流程」；汇总卡「转入定方案」 |
 | `comment` | `repo`、`issue`、`text` | 在指定 Issue 上发一条评论 | 「给 CC 留言」 |
 | `set_pause` | `repo`、`issue`、`state: "paused" \| "running"` | 发评论，正文格式见下方「评论统一格式」；中间一行：paused=“用户已暂停：请停止派发新工作，正在进行的一步可完成。” / running=“用户已恢复：可继续派发。” | 「暂停」「继续」 |
-| `accept` | `repo`、`issue`、`pr`、`expectedHead`（40 位 SHA） | **先重新读取该 PR 当前 HEAD，与 `expectedHead` 不一致就拒绝，不写任何东西**；一致才：①发评论“【ai-one】用户验收通过（针对 HEAD <SHA>）。” ②移除 `needs-user` 标签 | 「验收通过」 |
-| `request_changes` | `repo`、`issue`、`pr`、`expectedHead`、`text`（必填） | 同样先校验 HEAD；①发评论（用户意见 + HEAD）②加 `needs-review` 标签 | 「要求修改…」 |
+| `accept` | `repo`、`issue`、`pr`、`expectedHead`（40 位 SHA） | **先校验：①该 PR 为开放状态且属于 `repo`；②该 PR 与 `issue` 确有关联（`closingIssuesReferences` 含该 Issue，或 PR 正文含 `Closes/Fixes/Resolves #<issue>`），无关则拒绝；③重新读取该 PR 当前 HEAD，与 `expectedHead` 不一致就拒绝；任一不满足都不写任何东西**；全部满足才：①发评论“【ai-one】用户验收通过（针对 HEAD <SHA>）。” ②移除 `needs-user` 标签 | 「验收通过」 |
+| `request_changes` | `repo`、`issue`、`pr`、`expectedHead`、`text`（必填） | 同样先做上述三项校验；①发评论（用户意见 + HEAD）②加 `needs-review` 标签 | 「要求修改…」 |
 
 （“暂停/继续”是同一个动作 `set_pause` 的两个取值，所以仍是**五个动作**，测试按这五个命令名与上表参数形状实现。）
 
@@ -391,7 +398,7 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
 
 ### 6.8 测试与验收要点
 
-- 写入桥：白名单校验、参数校验（编号、HEAD 40 位）、模板文案、写后回读 `confirmed` / `partial` / `unconfirmed` / `failed` 四态有 Rust 与前端测试；确认**拒绝**非白名单动作、非法参数与 HEAD 不一致（用测试证明 HEAD 变化时不会写入）。
+- 写入桥：白名单校验、参数校验（编号、HEAD 40 位）、模板文案、写后回读 `confirmed` / `partial` / `unconfirmed` / `failed` 四态有 Rust 与前端测试；确认**拒绝**非白名单动作、非法参数、PR 与 Issue 无关联、PR 已关闭、HEAD 不一致（用测试证明这些情况都不会写入）。
 - 暂停状态派生（未暂停 / 已暂停 / 标记缺失或格式不对按未暂停）有测试。
 - 抽屉各标签空/有数据/读不到三态有测试；证据类型标注正确。
 - 真机：对用户自己的测试 Issue 做一遍“留言 → 暂停 → 继续 → 验收通过（HEAD 变化被拦）→ 要求修改”，**回读 GitHub 与界面一致**，截图进 PR。
@@ -402,10 +409,10 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
 
 - 组件已由 #81 交付（讨论矩阵、汇总卡、`/grill` 解析）。本项做**接入**，并先补一个前置：**本地讨论任务的数据模型**。
 - **本地任务模型**：[已核实] 当前 `useWorkbenchData` 的 tasks 只来自演示数据或 GitHub 回读，任务路由只在 `data.tasks` 里找 `HudTask`，所以必须扩展：
-  - 记录 `LocalTask`：`id`（`local:<uuid>`）、`kind: 'discussion'`、`title`、`createdAt`、`status`（进行中 / 待你 / 已完成 / 已结束）、`stage: '想需求'`、讨论引擎会话 id、汇总结果、来源对话 id（聊天页“转为任务”时带入，可空）。
+  - 记录 `LocalTask`：`id`（`local:<uuid>`）、`kind: 'discussion' | 'chat-led'`、`title`、`createdAt`、`status`（进行中 / 待你 / 已完成 / 已结束 / 已中断）、`stage`（discussion=“想需求”，chat-led=“Chat 主导”）、来源对话 id（聊天页“转为任务”时带入，可空）、**`rounds: Round[]`**：每一轮一条 `{ id, startedAt, endedAt?, trigger: 'initial' | 'follow-up' | 'restart', participants, steps: Step[], summary? }`，`Step` 保存环节名、发言者、**完整回复文本**（仅存本机 `localTasks.json`，不进 GitHub / 日志，见 §9 隐私边界）与状态；chat-led 的转发时间线就是它的 `steps`（谁→谁、字数、状态）。文件按任务分条保存，单任务超过大小上限（默认 5 MB）时提示并拒绝继续追加，**不静默截断**；删除任务即删除其全部记录。
   - 持久化：`localTasks.json`（§5.6 的受限命令，固定文件名枚举），带 `schemaVersion`；刷新或重启后恢复；“结束并保存”写入汇总并标记完成。
   - 接入：`WorkbenchData.tasks` = 演示 / GitHub 任务 ∪ 本地任务（本地任务带 `dataSource: 'local'`，任务列表里单独“讨论”分组，不混进仓库分组）；路由 `task/local:<uuid>` 从本地存储取；数据源切换（演示 ↔ GitHub）时本地任务始终显示（它们不属于任何数据源）。
-- 「想需求」任务的任务现场：阶段条只有一格“想需求”；主体用讨论矩阵（行=环节：独立思考、第 1 轮、审计、第 2 轮…；列=参与者；每格一句摘要，独立思考阶段两列同时“思考中，看不到对方”）；结束出现汇总卡。样式见原型 05。
+- 「想需求」/ Chat 主导任务的任务现场（Chat 主导的主体是转发时间线，见 §3.6）：阶段条只有一格“想需求”；主体用讨论矩阵（行=环节：独立思考、第 1 轮、审计、第 2 轮…；列=参与者；每格一句摘要，独立思考阶段两列同时“思考中，看不到对方”）；结束出现汇总卡。样式见原型 05。
 - 汇总卡的操作：
   - **转入定方案**：建一个 Task Issue（同 S1 §3.4，正文 = 汇总卡内容，模式预选“交给 CC”），不自动开跑；
   - **继续追问**：回到该讨论追加一轮；
@@ -502,7 +509,7 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
 | L5 任务现场补全 | 检查器抽屉 + 接管入口 + 留言/暂停/验收按钮 + 通知 | L1 | `src/workbench/views/TaskView.tsx`、`src/workbench/drawer/**` |
 | L6 聊天页 | S2 全部 | 无（仅复用旧界面发送能力） | `src/workbench/views/chat/**` |
 | L7 讨论接入 | S5 + 本地任务模型（§7） | #81（已合并）；受限文件命令（L2 先建） | `src/workbench/useWorkbenchData.ts`、`Workbench.tsx`（路由）、`workbenchModel.ts`、`localTasks`、`TaskView.tsx` 的讨论分支 |
-| L9 Chat 主导 | Spec #113：网页 AI 协调、程序转发、结束清理对话 | #94/#102（归档能力）；入口由 L4 决定 | `src/workflow/chatLed/**` |
+| L9 Chat 主导 | Spec #113：网页 AI 协调、程序转发、结束清理对话；入口为总览输入框第五个选项（§3.6） | #94/#102（归档能力）；本地任务模型（L7）；入口接线由 L4 的 `composerModel` 调用 L9 的启动函数 | `src/workflow/chatLed/**`、`src/workbench/views/` 的转发时间线 |
 
 建议合并顺序（与 §1.1 的开发优先级一致）：**L0 最先**（其余线都用它的令牌）→ L1 ∥ L2 ∥ L6（互不依赖，可并行）→ L5（依赖 L1）→ L3 → L7 → L4（依赖 L1、L2、L3，“想需求”入口依赖 L7）。L8、L9 独立并行。#98 / #82（资源）的非 HUD 部分与上述各线文件不重叠。冲突点：L4 与 L5/L7 都会改 `HomeView.tsx` / `TaskView.tsx`，L1 与 L8 共享 `src-tauri` 注册文件，由各线调度 agent 按合并顺序处理，不在同一分支同时写。
 
@@ -529,3 +536,5 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
 **需随 Spec #32 升 v2 一并记录的三处决议**：① 网页 Chat 主导提前（#113）；② 额度 HUD 移植（#82）并修订 AGENTS.md 对 Agent HUD Open 的表述；③ 合并口径以 AGENTS.md 快速开发模式为准，#32 第 6 条“最后合并请求用户”的旧表述更正。
 
 **第二轮审计（HEAD bda76ab，REVISE）处理（r3）**：① #32 正文第 6 条与变更记录统一，`v2-product-design.md` 顶部加指向说明；② #103 的 Reviewed Spec Revision 升 v2 并留重审评论；③ §3.4 写明原生 Sub-issue 关系由 CC 建；④ §1.1 与 §11 顺序统一，L4/L7 路由文件范围补全；⑤ 评论格式统一（前缀 + 模板 + 隐藏标记）；⑥ §7 补讨论恢复语义；⑦ §10.1 固定上游 SHA 并澄清 MCP 范围；⑧ `StageDef` 增加 `note` 字段。
+
+**第三轮审计（HEAD c9e3fac，REVISE）处理（r4）**：① Chat 主导入口：总览输入框新增第五个选项 `/chat-led`，并写 §3.6（本地任务、转发时间线、清理卡）；② 讨论 / Chat 主导任务的多轮持久化：`LocalTask.rounds`、保存完整回复文本的位置与大小上限（§7）；③ `create_issue` 增加 `parentSpec` 由桥建立原生 Sub-issue 关系，失败为 `partial`（§3.4、§6.3）；④ `accept` / `request_changes` 增加 PR 与 Issue 关联、PR 开放状态校验（§6.3）。

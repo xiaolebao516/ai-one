@@ -113,7 +113,7 @@ code{font-family:var(--mono);font-size:12px;background:var(--sunken);padding:1px
   <div class="body"><div class="card">
     <div class="ta" id="ph">描述要做的事…</div>
     <div class="row sp" style="margin-top:10px">
-      <div class="seg" id="seg"><button data-m="chat">聊天</button><button data-m="grill">想需求 /grill</button><button data-m="cc" class="on">交给 CC</button><button data-m="flow">流程</button></div>
+      <div class="seg" id="seg"><button data-m="chat">聊天</button><button data-m="grill">想需求 /grill</button><button data-m="cc" class="on">交给 CC</button><button data-m="flow">流程</button><button data-m="led">Chat 主导</button></div>
       <div class="row"><span class="chip" id="repo">仓库 ai-one ▾</span><button class="btn pri" id="go">交给 CC</button></div>
     </div>
     <div id="detail" style="margin-top:12px;display:grid;gap:8px"></div>
@@ -280,6 +280,9 @@ grill:{ph:'要讨论的需求或问题…',repo:false,go:'开始讨论',d:[
 cc:{ph:'描述要做的事。CC 会自己调查、派 GPT 执行或审计、安排返工…',repo:true,go:'交给 CC',d:[
  '<div class="row"><span class="chip">● CC 协调</span><span class="mut">经 Prodex 派 GPT 执行/审计，需要时请 Argon、Opus</span><span class="chip">调整协调偏好</span></div>',
  '<p class="mut">点「交给 CC」后：ai-one 建 Task Issue（需求原文 + 协调简报），再把接手指令放进剪贴板，你粘贴给 Claude Code。</p>']},
+led:{ph:'描述要让协调 Chat 去做的事…',repo:false,go:'开始 Chat 主导',d:[
+ '<div class="row"><span class="mut">协调者</span><span class="chip">● ChatGPT 网页</span><span class="mut">被协调者</span><span class="chip">● Claude</span><span class="chip off">○ Gemini 未登录</span></div>',
+ '<p class="mut">协调者的回复里带 ai-one-send 指令块时才转发；总轮数上限 8，到上限停下问你；转发在任务里逐条可见。结束后列出本任务创建的对话，你点「清理」才删除（不能删的归档）。</p>']},
 flow:{ph:'描述要做的事，流程会按阶段推进…',repo:true,go:'开始流程',d:[
  '<div class="row"><span class="mut">流程</span><span class="chip">快速开发 ▾</span><span class="mut">定方案 → 执行与审计 → 总结交付</span></div>',
  '<div class="row"><span class="mut">本次参与者</span><span class="chip">GPT</span><span class="chip">CC</span><span class="chip off">Argon</span><span class="chip">临时调整</span><span class="mut">（不改保存的流程，只写进这次的 Issue）</span></div>',
