@@ -33,6 +33,7 @@ export interface ProviderWebTabHost {
   provider: {
     open: (provider: AIProvider, bounds: DOMRectReadOnly) => Promise<unknown>;
     show: (provider: AIProvider) => Promise<unknown> | unknown;
+    hide: (provider: AIProvider) => Promise<unknown> | unknown;
     park: (provider: AIProvider, bounds: DOMRectReadOnly) => Promise<unknown> | unknown;
   };
   layout: {
@@ -62,7 +63,7 @@ export interface ProviderWebTabController {
 }
 
 const providerIntentVersions = new Map<AIProvider, number>();
-const providerCommandQueues = new Map<AIProvider, Promise<void>>();
+const providerCommandQueues = new Map<AIProvider, Promise<boolean>>();
 
 function nextProviderIntent(provider: AIProvider): number {
   const next = (providerIntentVersions.get(provider) ?? 0) + 1;
@@ -74,13 +75,15 @@ function isCurrentProviderIntent(provider: AIProvider, version: number): boolean
   return providerIntentVersions.get(provider) === version;
 }
 
-function enqueueProviderCommand(provider: AIProvider, command: () => Promise<void>): Promise<void> {
-  const previous = providerCommandQueues.get(provider) ?? Promise.resolve();
-  const pending = previous.catch(() => undefined).then(async () => {
+function enqueueProviderCommand(provider: AIProvider, command: () => Promise<void>): Promise<boolean> {
+  const previous = providerCommandQueues.get(provider) ?? Promise.resolve(true);
+  const pending = previous.catch(() => false).then(async () => {
     try {
       await command();
+      return true;
     } catch {
-      // Host failures are intentionally contained at this boundary.
+      // Keep the queue alive, but report failure so bounds deduplication can retry.
+      return false;
     }
   });
   providerCommandQueues.set(provider, pending);
@@ -142,13 +145,31 @@ export function createProviderWebTabController(
 
   const queuePark = (version: number) => {
     void enqueueProviderCommand(provider, async () => {
-      if (
-        !isCurrentProviderIntent(provider, version) ||
-        desiredVisible === true
-      ) {
+      const stillWantsPark = () => isCurrentProviderIntent(provider, version) && desiredVisible !== true;
+      if (!stillWantsPark()) return;
+
+      try {
+        await providerHost.provider.park(provider, HIDDEN_PROVIDER_LOAD_BOUNDS);
         return;
+      } catch {
+        // If setting offscreen bounds/show fails, hide is the safety fallback for native overlays.
       }
-      await providerHost.provider.park(provider, HIDDEN_PROVIDER_LOAD_BOUNDS);
+
+      if (!stillWantsPark()) return;
+      try {
+        await providerHost.provider.hide(provider);
+      } catch {
+        // Retry park below; if that fails too, make one final hide attempt.
+      }
+
+      if (!stillWantsPark()) return;
+      try {
+        await providerHost.provider.park(provider, HIDDEN_PROVIDER_LOAD_BOUNDS);
+        return;
+      } catch {
+        if (!stillWantsPark()) return;
+        await providerHost.provider.hide(provider);
+      }
     });
   };
 

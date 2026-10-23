@@ -51,7 +51,6 @@ export interface ChatViewProps {
   locale: Locale;
   runtime: ChatRuntime;
   onConvertToTask: (input: { text: string }) => void;
-  onStartGrill: (text: string) => void;
 }
 
 function presetForSession(runtime: ChatRuntime): ChatPresetId {
@@ -130,7 +129,7 @@ function replySummaries(replyStates: Partial<Record<AIProvider, ProviderReplySta
   });
 }
 
-export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: ChatViewProps) {
+export function ChatView({ locale, runtime, onConvertToTask }: ChatViewProps) {
   const text = workbenchText(locale);
   const [activeTab, setActiveTab] = useState('compare');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -154,7 +153,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
   const [attachmentBusy, setAttachmentBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentQuestion = lastUserQuestion(runtime.activeSession.messages);
-  const hasBusy = runtime.busyProviders.length > 0;
+  const hasBusy = runtime.busyProviders.length > 0 || runtime.replayRunning;
   const presetOptions = [
     { value: 'free', label: text.t('chatPresetFree') },
     { value: 'debate', label: text.t('chatPresetDebate') },
@@ -189,10 +188,14 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
     setActionNotice(undefined);
     const message = formatInsertedFilesPrompt(readyFiles, draft);
     if (!message.trim() || attachmentsReading || attachmentBusy) return;
+    if (runtime.replayRunning) {
+      setActionNotice(text.t('chatReplayBusy'));
+      return;
+    }
     if (presetId === 'deliberation') {
-      onStartGrill(message);
-      setDraft('');
-      setAttachments([]);
+      // L7 has not supplied the local discussion task model/route yet. Never discard the draft
+      // or pretend that the discussion started.
+      setActionNotice(text.t('chatDeliberationNotice'));
       return;
     }
     if (presetId === 'free' && sendTargets.length === 0) {
@@ -321,7 +324,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
             </Button>
             {menuOpen ? (
               <Card className="absolute right-0 top-full z-20 mt-v2-xs grid min-w-[190px] gap-v2-xs shadow-v2-float">
-                <Button size="sm" variant="secondary" onClick={() => { setShowReplay((value) => !value); setMenuOpen(false); }} disabled={!runtime.desktopAvailable} disabledReason={text.t('chatDesktopOnly')}>
+                <Button size="sm" variant="secondary" onClick={() => { setShowReplay((value) => !value); setMenuOpen(false); }} disabled={!runtime.desktopAvailable || hasBusy} disabledReason={hasBusy ? text.t('chatReplayBusy') : text.t('chatDesktopOnly')}>
                   {text.t('chatReplay')}
                 </Button>
                 <Button size="sm" variant="secondary" onClick={() => { try { downloadMarkdown(runtime, locale); } catch (error) { setActionNotice(error instanceof Error ? error.message : String(error)); } setMenuOpen(false); }}>
@@ -411,7 +414,18 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
                   onCancelForward={() => { setForwardSource(undefined); setActionNotice(undefined); }}
                   onSendForward={() => void sendForward()}
                   onQuote={(reply) => {
-                    const selectedText = typeof window === 'undefined' ? undefined : window.getSelection()?.toString();
+                    const card = document.querySelector<HTMLElement>(`article[data-chat-provider="${provider}"]`);
+                    const selection = typeof window === 'undefined' ? null : window.getSelection();
+                    const belongsToCard = Boolean(
+                      selection &&
+                      !selection.isCollapsed &&
+                      card &&
+                      selection.anchorNode &&
+                      selection.focusNode &&
+                      card.contains(selection.anchorNode) &&
+                      card.contains(selection.focusNode),
+                    );
+                    const selectedText = belongsToCard ? selection?.toString() : undefined;
                     setDraft((current) => insertMarkdownQuote(current, selectedText, reply));
                   }}
                   onViewWeb={() => setActiveTab(provider)}
@@ -449,11 +463,23 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
               <Button size="sm" variant="secondary" onClick={runtime.clearNotice}>{text.t('chatDismiss')}</Button>
             </Notice>
           ) : null}
+          {runtime.persistenceNotice ? (
+            <Notice tone={runtime.persistenceNotice.tone} live="polite">
+              {runtime.persistenceNotice.message}
+              <Button size="sm" variant="secondary" onClick={runtime.clearPersistenceNotice}>{text.t('chatDismiss')}</Button>
+            </Notice>
+          ) : null}
           {actionNotice ? <Notice tone="unknown" live="polite">{actionNotice}</Notice> : null}
 
           {showReplay ? (
             <Card>
-              <ReplayPanel locale={locale} activeProviders={[...CHAT_PROVIDERS]} />
+              <ReplayPanel
+                locale={locale}
+                activeProviders={[...CHAT_PROVIDERS]}
+                canStartReplay={() => !hasBusy}
+                runBlockedMessage={text.t('chatReplayBusy')}
+                onReplayStateChange={runtime.setReplayRunning}
+              />
             </Card>
           ) : null}
 
@@ -562,12 +588,16 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
               <Button
                 type="submit"
                 variant="primary"
-                disabled={attachmentsReading || attachmentBusy || (!draft.trim() && readyFiles.length === 0) || (presetId === 'free' && sendTargets.length === 0)}
-                disabledReason={presetId === 'free' && sendTargets.length === 0
-                  ? busySelectedTargets.length > 0
-                    ? text.t('chatBusyNotice', { providers: busySelectedTargets.map((provider) => AI_PROVIDERS[provider].name).join(', ') })
-                    : text.t('chatNoTarget')
-                  : undefined}
+                disabled={runtime.replayRunning || presetId === 'deliberation' || attachmentsReading || attachmentBusy || (!draft.trim() && readyFiles.length === 0) || (presetId === 'free' && sendTargets.length === 0)}
+                disabledReason={runtime.replayRunning
+                  ? text.t('chatReplayBusy')
+                  : presetId === 'deliberation'
+                    ? text.t('chatDeliberationNotice')
+                    : presetId === 'free' && sendTargets.length === 0
+                      ? busySelectedTargets.length > 0
+                        ? text.t('chatBusyNotice', { providers: busySelectedTargets.map((provider) => AI_PROVIDERS[provider].name).join(', ') })
+                        : text.t('chatNoTarget')
+                      : undefined}
                 loading={presetId === 'free' && sendTargets.length === 0 && busySelectedTargets.length > 0}
               >
                 {presetId === 'deliberation' ? text.t('chatStartDiscussion') : text.t('chatSend')}
@@ -618,7 +648,10 @@ function ReplyCard({
   const text = workbenchText(locale);
   const providerState = runtime.providerStates[provider];
   const login = deriveLoginState(providerState);
-  const busy = runtime.busyProviders.includes(provider);
+  const busy = runtime.busyProviders.includes(provider) || runtime.replayRunning;
+  const timeoutAction = runtime.timeoutActions[provider]?.sessionId === runtime.activeSessionId
+    ? runtime.timeoutActions[provider]
+    : undefined;
   const derived = deriveCardState({
     providerState,
     selected: runtime.comparisonTargets.includes(provider),
@@ -629,7 +662,7 @@ function ReplyCard({
   const summary = truncateReplySummary(content);
   const forwardedFrom = derived.status === 'notSent' ? undefined : derived.forwardedFrom;
   return (
-    <Card as="article" className="flex min-w-0 flex-col gap-v2-sm">
+    <Card as="article" data-chat-provider={provider} className="flex min-w-0 flex-col gap-v2-sm">
       <div className="flex items-start justify-between gap-v2-sm">
         <div className="min-w-0">
           <h2 className="truncate text-v2-heading font-semibold text-v2-ink">{AI_PROVIDERS[provider].name}</h2>
@@ -675,10 +708,12 @@ function ReplyCard({
         ) : null}
         {derived.status === 'failed' || derived.status === 'timedOut' ? (
           <>
-            <Button size="sm" variant="secondary" disabled={busy} disabledReason={text.t('chatBusy', { provider: AI_PROVIDERS[provider].name })} onClick={() => void runtime.retryProvider(provider)}>
+            <Button size="sm" variant="secondary" disabled={busy && !timeoutAction} disabledReason={text.t('chatBusy', { provider: AI_PROVIDERS[provider].name })} onClick={() => void runtime.retryProvider(provider)}>
               {text.t('chatRetry')}
             </Button>
-            <Button size="sm" variant="secondary" onClick={() => runtime.skipProvider(provider)}>{text.t('chatSkip')}</Button>
+            {timeoutAction?.skipAllowed === false ? null : (
+              <Button size="sm" variant="secondary" disabled={busy && !timeoutAction} disabledReason={text.t('chatBusy', { provider: AI_PROVIDERS[provider].name })} onClick={() => runtime.skipProvider(provider)}>{text.t('chatSkip')}</Button>
+            )}
           </>
         ) : null}
       </div>

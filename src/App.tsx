@@ -17,6 +17,7 @@ import { isSendable, onStepTimeoutEvent, runWorkflow } from './workflow';
 import { createResponseLanguagePolicy } from './workflow/responseLanguage';
 import type { PreflightResult } from './workflow/preflight';
 import { bubbleAuthorLabel } from './bubbleAuthorLabel';
+import { bubblesFromSession, conversationMessages, type LegacyConversationBubble } from './ui/legacyConversationAdapters';
 import {
   manualFocusLockForControl,
   pointerDebounceLock,
@@ -39,7 +40,6 @@ import {
   titleFromFirstUserMessage,
   upsertConversationSession,
   type ConversationSession,
-  type ConversationSessionMessage,
 } from './ui/conversationSessions';
 import {
   buildConversationReplayContext,
@@ -139,16 +139,7 @@ import {
 import { recordEventLog } from './diagnostics/eventLogStore';
 import { ReportPreviewDialog } from './ui/ReportPreviewDialog';
 
-interface Bubble {
-  id: string;
-  provider?: AIProvider | 'system' | (string & {});
-  authorLabel?: string;
-  role: 'user' | 'ai';
-  content: string;
-  final?: boolean;
-  truncated?: boolean;
-  modeRole?: string;
-}
+type Bubble = LegacyConversationBubble;
 
 const PROVIDERS = Object.keys(AI_PROVIDERS) as AIProvider[];
 
@@ -156,19 +147,6 @@ function initialConversationState(): { sessions: ConversationSession[]; active: 
   const loaded = loadConversationSessions();
   const active = loaded[0] ?? createConversationSession();
   return { sessions: upsertConversationSession(loaded, active), active };
-}
-
-function conversationMessages(messages: readonly Bubble[]): ConversationSessionMessage[] {
-  return messages.map((message) => ({
-    id: message.id,
-    role: message.role,
-    content: message.content,
-    ...(message.provider ? { provider: message.provider } : {}),
-    ...(message.authorLabel ? { authorLabel: message.authorLabel } : {}),
-    ...(message.modeRole ? { modeRole: message.modeRole } : {}),
-    ...(typeof message.final === 'boolean' ? { final: message.final } : {}),
-    ...(typeof message.truncated === 'boolean' ? { truncated: message.truncated } : {}),
-  }));
 }
 
 function persistConversationSessions(sessions: readonly ConversationSession[]): ConversationSession[] {
@@ -189,19 +167,6 @@ function persistConversationSessions(sessions: readonly ConversationSession[]): 
     });
   }
   return result.sessions;
-}
-
-function bubblesFromSession(session: ConversationSession): Bubble[] {
-  return session.messages.map((message) => ({
-    id: message.id,
-    role: message.role,
-    content: message.content,
-    ...(message.provider ? { provider: message.provider } : {}),
-    ...(message.authorLabel ? { authorLabel: message.authorLabel } : {}),
-    ...(message.modeRole ? { modeRole: message.modeRole } : {}),
-    ...(typeof message.final === 'boolean' ? { final: message.final } : {}),
-    ...(typeof message.truncated === 'boolean' ? { truncated: message.truncated } : {}),
-  }));
 }
 
 const presentationHost: PresentationCommandHost = {

@@ -46,6 +46,9 @@ export interface ReplayPanelProps {
   activeProviders?: readonly AIProvider[];
   onReplayWillRun?: (plan: ReplayPlan) => void;
   onReplaySettled?: () => void;
+  canStartReplay?: () => boolean;
+  runBlockedMessage?: string;
+  onReplayStateChange?: (running: boolean) => void;
   onSnapshotComplete?: (snapshot: ExecutionSnapshot) => void | Promise<void>;
   onOpenLogin?: (provider: AIProvider) => void | Promise<void>;
   onOpenSettings?: () => void;
@@ -75,6 +78,7 @@ export class ReplayPanel extends Component<ReplayPanelProps, ReplayPanelState> {
   state: ReplayPanelState = initialState;
 
   private mounted = false;
+  private replayRunning = false;
   private loginRequestGeneration = 0;
   private loginInFlight = false;
 
@@ -102,6 +106,13 @@ export class ReplayPanel extends Component<ReplayPanelProps, ReplayPanelState> {
   }
 
   async startReplay(source: ReplaySource, options: ReplayRunOptions = {}): Promise<ReplayResult | undefined> {
+    if (this.replayRunning || this.state.busyKey) return undefined;
+    if (!this.canStartReplay()) {
+      this.updateState({ notice: { kind: 'error', text: this.props.runBlockedMessage ?? 'A workflow is already running.' } });
+      return undefined;
+    }
+    this.replayRunning = true;
+    this.props.onReplayStateChange?.(true);
     this.loginRequestGeneration += 1;
     const busyKey = sourceKey(source);
     const question = options.question?.trim();
@@ -151,7 +162,9 @@ export class ReplayPanel extends Component<ReplayPanelProps, ReplayPanelState> {
       });
       return undefined;
     } finally {
+      this.replayRunning = false;
       this.updateState({ busyKey: undefined });
+      this.props.onReplayStateChange?.(false);
       this.props.onReplaySettled?.();
     }
   }
@@ -207,6 +220,7 @@ export class ReplayPanel extends Component<ReplayPanelProps, ReplayPanelState> {
     const lastSnapshot = getLastSnapshot();
     const { storedSnapshots, loadingStored, listError, busyKey, block, question, notice } = this.state;
     const retryLoginProvider = notice?.retryLoginProvider;
+    const canStartReplay = this.canStartReplay();
 
     return (
       <section aria-label={this.t('replay.snapshotReplay')} className="mt-4 border-t border-zinc-200 dark:border-zinc-800 pt-4">
@@ -230,7 +244,7 @@ export class ReplayPanel extends Component<ReplayPanelProps, ReplayPanelState> {
                 <button
                   type="button"
                   className="border border-emerald-300 dark:border-emerald-700 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-100 hover:bg-emerald-100 dark:hover:bg-emerald-950 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={Boolean(busyKey)}
+                  disabled={Boolean(busyKey) || !canStartReplay}
                   onClick={() => void this.startReplay({ kind: 'last', snapshot: lastSnapshot })}
                 >
                   {this.t('replay.lastRun')}
@@ -277,7 +291,7 @@ export class ReplayPanel extends Component<ReplayPanelProps, ReplayPanelState> {
                         <button
                           type="button"
                           className="border border-emerald-300 dark:border-emerald-700 px-2 py-1 text-emerald-700 dark:text-emerald-100 hover:bg-emerald-100 dark:hover:bg-emerald-950 disabled:cursor-not-allowed disabled:opacity-50"
-                          disabled={Boolean(busyKey)}
+                          disabled={Boolean(busyKey) || !canStartReplay}
                           onClick={() => void this.startReplay(replaySource)}
                         >
                           {this.t('replay.replay')}
@@ -321,6 +335,11 @@ export class ReplayPanel extends Component<ReplayPanelProps, ReplayPanelState> {
             ) : null}
           </div>
         ) : null}
+        {!canStartReplay && !this.replayRunning && this.props.runBlockedMessage ? (
+          <div role="status" className="mt-3 border border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+            {this.props.runBlockedMessage}
+          </div>
+        ) : null}
         {block ? this.renderBlock(block, question, busyKey) : null}
       </section>
     );
@@ -344,7 +363,7 @@ export class ReplayPanel extends Component<ReplayPanelProps, ReplayPanelState> {
             <button
               type="submit"
               className="border border-emerald-300 dark:border-emerald-700 px-3 py-1.5 text-emerald-700 dark:text-emerald-100 hover:bg-emerald-100 dark:hover:bg-emerald-950 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={Boolean(busyKey) || question.trim().length === 0}
+              disabled={Boolean(busyKey) || !this.canStartReplay() || question.trim().length === 0}
             >
               {this.t('replay.replay')}
             </button>
@@ -367,7 +386,7 @@ export class ReplayPanel extends Component<ReplayPanelProps, ReplayPanelState> {
           <button
             type="button"
             className="mt-3 border border-emerald-300 dark:border-emerald-700 px-3 py-1.5 text-emerald-700 dark:text-emerald-100 hover:bg-emerald-100 dark:hover:bg-emerald-950 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={Boolean(busyKey)}
+            disabled={Boolean(busyKey) || !this.canStartReplay()}
             onClick={() => void this.startReplay(block.source, { replayWithCurrentGraph: true })}
           >
             {this.t('replay.replayWithCurrentGraph')}
@@ -438,6 +457,14 @@ export class ReplayPanel extends Component<ReplayPanelProps, ReplayPanelState> {
         {this.t('replay.blocked')} {block.reason}.
       </div>
     );
+  }
+
+  private canStartReplay(): boolean {
+    try {
+      return this.props.canStartReplay?.() !== false;
+    } catch {
+      return false;
+    }
   }
 
   private locale(): Locale {

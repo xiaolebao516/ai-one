@@ -29,7 +29,7 @@ import {
 import { defaultRolesForPreset } from '../../../ui/presetCatalogData';
 import { waitForProvidersSendable } from '../../../ui/targets';
 import { isSendable } from '../../../workflow/sendability';
-import { runWorkflow as defaultRunWorkflow, type RunWorkflowParams, type RunWorkflowResult } from '../../../workflow';
+import { chooseStepTimeoutAction, onStepTimeoutEvent, runWorkflow as defaultRunWorkflow, type RunWorkflowParams, type RunWorkflowResult } from '../../../workflow';
 import type { Locale } from '../../../i18n/resolve';
 import { workbenchText } from '../../workbenchText';
 import {
@@ -65,6 +65,14 @@ export interface ChatRuntimeNotice {
   message: string;
 }
 
+export interface ChatTimeoutAction {
+  requestId: number;
+  runId: string;
+  sessionId: string;
+  skipAllowed: boolean;
+  failureKind?: 'timeout' | 'provider-error';
+}
+
 export interface ChatRuntime {
   providerStates: Record<AIProvider, ProviderState>;
   sessions: ConversationSession[];
@@ -74,8 +82,11 @@ export interface ChatRuntime {
   comparisonTargets: AIProvider[];
   selectedTargets: AIProvider[];
   busyProviders: AIProvider[];
+  timeoutActions: Partial<Record<AIProvider, ChatTimeoutAction>>;
+  replayRunning: boolean;
   now: number;
   notice?: ChatRuntimeNotice;
+  persistenceNotice?: ChatRuntimeNotice;
   setSelectedTargets: (targets: AIProvider[]) => void;
   clearNotice: () => void;
   newConversation: () => void;
@@ -86,6 +97,8 @@ export interface ChatRuntime {
   forwardMessage: (source: AIProvider, original: string, targets: AIProvider[], note: string) => Promise<boolean>;
   retryProvider: (provider: AIProvider) => Promise<boolean>;
   skipProvider: (provider: AIProvider) => void;
+  setReplayRunning: (running: boolean) => void;
+  clearPersistenceNotice: () => void;
   setPreset: (presetId: import('./chatModel').ChatPresetId) => void;
   desktopAvailable: boolean;
 }
@@ -218,8 +231,11 @@ export function useChatRuntime({
   const [comparisonTargets, setComparisonTargets] = useState<AIProvider[]>(initial.comparisonTargets);
   const [selectedTargets, setSelectedTargets] = useState<AIProvider[]>(initial.selectedTargets);
   const [busyStartedAt, setBusyStartedAt] = useState<Partial<Record<AIProvider, number>>>({});
+  const [timeoutActions, setTimeoutActions] = useState<Partial<Record<AIProvider, ChatTimeoutAction>>>({});
+  const [replayRunning, setReplayRunningState] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [notice, setNotice] = useState<ChatRuntimeNotice>();
+  const [persistenceNotice, setPersistenceNotice] = useState<ChatRuntimeNotice>();
   const [desktopAvailable, setDesktopAvailable] = useState(false);
   const sessionsRef = useRef(sessions);
   const sessionsDirtyRef = useRef(false);
@@ -229,6 +245,9 @@ export function useChatRuntime({
   const activeResponsesRef = useRef(new Map<AIProvider, ActiveProviderResponse>());
   const busyProvidersRef = useRef(new Set<AIProvider>());
   const activeWorkflowRunRef = useRef<string | undefined>(undefined);
+  const pendingTimeoutActionsRef = useRef(new Map<AIProvider, ChatTimeoutAction>());
+  const replayRunningRef = useRef(false);
+  const persistenceNoticeRef = useRef<'saveFailed' | 'quota' | undefined>(undefined);
   const busyStartedAtRef = useRef(new Map<AIProvider, number>());
   const runSessionByProviderRef = useRef(new Map<AIProvider, string>());
   const runIdByProviderRef = useRef(new Map<AIProvider, string>());
@@ -256,16 +275,43 @@ export function useChatRuntime({
 
   useEffect(() => {
     if (!enabled) return;
-    const timer = globalThis.setInterval(() => {
+
+    const persistDirtySessions = () => {
       if (!sessionsDirtyRef.current) return;
+      const result = saveConversationSessionsWithQuotaRecovery(sessionsRef.current);
+      if (!result.saved) {
+        // Keep dirty set so the next interval retries instead of silently losing local history.
+        sessionsDirtyRef.current = true;
+        persistenceNoticeRef.current = 'saveFailed';
+        setPersistenceNotice({
+          tone: 'block',
+          message: workbenchText(locale).t('chatSaveFailed'),
+        });
+        return;
+      }
+
       sessionsDirtyRef.current = false;
-      saveConversationSessionsWithQuotaRecovery(sessionsRef.current);
-    }, 250);
+      if (result.evictedSessionIds.length > 0) {
+        // Match the classic UI: quota recovery's reduced session list becomes the live list too.
+        sessionsRef.current = result.sessions;
+        setSessions(result.sessions);
+        persistenceNoticeRef.current = 'quota';
+        setPersistenceNotice({
+          tone: 'unknown',
+          message: workbenchText(locale).t('chatQuotaEvicted', { count: result.evictedSessionIds.length }),
+        });
+      } else if (persistenceNoticeRef.current === 'saveFailed') {
+        persistenceNoticeRef.current = undefined;
+        setPersistenceNotice(undefined);
+      }
+    };
+
+    const timer = globalThis.setInterval(persistDirtySessions, 250);
     return () => {
       globalThis.clearInterval(timer);
-      if (sessionsDirtyRef.current) saveConversationSessionsWithQuotaRecovery(sessionsRef.current);
+      persistDirtySessions();
     };
-  }, [enabled]);
+  }, [enabled, locale]);
 
   useEffect(() => {
     if (!enabled || !hasBusyProviders) return;
@@ -313,6 +359,8 @@ export function useChatRuntime({
       if (message.action === 'ROLE_ASSIGNMENT') {
         const provider = providerFromRoleAssignment(message);
         if (!provider) return;
+        const runId = runIdByProviderRef.current.get(provider);
+        if (!runId || !runSessionByProviderRef.current.has(provider) || activeWorkflowRunRef.current !== runId) return;
         const payload = message.payload as { label?: unknown } | undefined;
         activeResponsesRef.current.set(
           provider,
@@ -322,6 +370,12 @@ export function useChatRuntime({
       }
       if (!isRenderableResponseMessage(message) || !message.provider) return;
       const provider = message.provider;
+      if (!isProvider(provider)) return;
+      const runId = runIdByProviderRef.current.get(provider);
+      const sessionId = runSessionByProviderRef.current.get(provider);
+      // Bridge messages carry no run id; accept them only while this runtime owns this provider
+      // for an explicit session in a live local run. Replay and unrelated events are ignored.
+      if (!runId || !sessionId || activeWorkflowRunRef.current !== runId) return;
       let active = activeResponsesRef.current.get(provider);
       if (!active) {
         active = createActiveProviderResponse(provider);
@@ -330,8 +384,6 @@ export function useChatRuntime({
       const { content, truncated } = renderablePayload(message.payload);
       const isFinal = message.action === 'RESPONSE_DONE';
       const forwardedFrom = forwardedFromByProviderRef.current.get(provider);
-      const runId = runIdByProviderRef.current.get(provider);
-      const sessionId = runSessionByProviderRef.current.get(provider) ?? activeSessionIdRef.current;
       const status = isFinal ? classifyResponseContent(content) : 'generating';
       const startedAt = busyStartedAtRef.current.get(provider) ?? Date.now();
 
@@ -416,6 +468,43 @@ export function useChatRuntime({
     };
   }, [enabled, isDesktopOverride, runtimeHost, startPull]);
 
+  useEffect(() => {
+    if (!enabled) return;
+    return onStepTimeoutEvent((event) => {
+      if (!event.timedOut || event.requestId === undefined || !isProvider(event.provider)) return;
+      const provider = event.provider;
+      const runId = runIdByProviderRef.current.get(provider);
+      const sessionId = runSessionByProviderRef.current.get(provider);
+      if (!runId || !sessionId || activeWorkflowRunRef.current !== runId) return;
+
+      const pending: ChatTimeoutAction = {
+        requestId: event.requestId,
+        runId,
+        sessionId,
+        skipAllowed: event.skipAllowed !== false,
+        ...(event.failureKind ? { failureKind: event.failureKind } : {}),
+      };
+      pendingTimeoutActionsRef.current.set(provider, pending);
+      setTimeoutActions((current) => ({ ...current, [provider]: pending }));
+      setNow(Date.now());
+      setReplyStates((current) => {
+        if (activeSessionIdRef.current !== sessionId) return current;
+        const previous = current[provider] ?? {
+          status: 'generating' as const,
+          content: '',
+          startedAt: busyStartedAtRef.current.get(provider),
+        };
+        return {
+          ...current,
+          [provider]: {
+            ...previous,
+            status: event.failureKind === 'provider-error' ? 'failed' : 'timedOut',
+          },
+        };
+      });
+    });
+  }, [enabled]);
+
   const appendMessage = useCallback((sessionId: string, message: ConversationSessionMessage) => {
     setSessions((current) => {
       const session = current.find((candidate) => candidate.id === sessionId);
@@ -428,9 +517,32 @@ export function useChatRuntime({
     });
   }, []);
 
+  const clearTimeoutAction = useCallback((provider: AIProvider, runId?: string) => {
+    const pending = pendingTimeoutActionsRef.current.get(provider);
+    if (!pending || (runId && pending.runId !== runId)) return;
+    pendingTimeoutActionsRef.current.delete(provider);
+    setTimeoutActions((current) => {
+      if (current[provider]?.requestId !== pending.requestId) return current;
+      const next = { ...current };
+      delete next[provider];
+      return next;
+    });
+  }, []);
+
+  const resolvePendingTimeoutAction = useCallback((provider: AIProvider, action: 'retry' | 'skip'): boolean | undefined => {
+    const pending = pendingTimeoutActionsRef.current.get(provider);
+    if (!pending) return undefined;
+    if (pending.runId !== activeWorkflowRunRef.current || pending.sessionId !== activeSessionIdRef.current) return false;
+    const accepted = chooseStepTimeoutAction(action, pending.requestId);
+    if (!accepted) return false;
+    clearTimeoutAction(provider, pending.runId);
+    return true;
+  }, [clearTimeoutAction]);
+
   const clearRun = useCallback((runId: string, providers: readonly AIProvider[]) => {
     const released: AIProvider[] = [];
     for (const provider of providers) {
+      clearTimeoutAction(provider, runId);
       if (runIdByProviderRef.current.get(provider) !== runId) continue;
       busyProvidersRef.current.delete(provider);
       busyStartedAtRef.current.delete(provider);
@@ -447,6 +559,16 @@ export function useChatRuntime({
         return next;
       });
     }
+  }, [clearTimeoutAction]);
+
+  const setReplayRunning = useCallback((running: boolean) => {
+    replayRunningRef.current = running;
+    setReplayRunningState(running);
+  }, []);
+
+  const clearPersistenceNotice = useCallback(() => {
+    persistenceNoticeRef.current = undefined;
+    setPersistenceNotice(undefined);
   }, []);
 
   const runSend = useCallback(async (
@@ -463,6 +585,10 @@ export function useChatRuntime({
     }
     if (!desktopAvailableRef.current) {
       setNotice({ tone: 'unknown', message: workbenchText(locale).t('chatDesktopOnly') });
+      return false;
+    }
+    if (replayRunningRef.current) {
+      setNotice({ tone: 'unknown', message: workbenchText(locale).t('chatReplayBusy') });
       return false;
     }
     const mode: ChatMode = presetId;
@@ -778,6 +904,19 @@ export function useChatRuntime({
   );
 
   const retryProvider = useCallback((provider: AIProvider) => {
+    const pending = pendingTimeoutActionsRef.current.get(provider);
+    if (pending) {
+      const accepted = resolvePendingTimeoutAction(provider, 'retry');
+      if (!accepted) return Promise.resolve(false);
+      setReplyStates((current) => {
+        if (activeSessionIdRef.current !== pending.sessionId) return current;
+        const previous = current[provider] ?? { status: 'generating' as const, content: '' };
+        return { ...current, [provider]: { ...previous, status: 'generating', startedAt: Date.now() } };
+      });
+      setNow(Date.now());
+      return Promise.resolve(true);
+    }
+
     const request = requestByProviderRef.current.get(provider);
     if (!request || request.sessionId !== activeSessionId) {
       const lastUserMessage = [...activeSession.messages].reverse().find((message) => message.role === 'user');
@@ -797,16 +936,18 @@ export function useChatRuntime({
     }
     if (request.forwardedFrom) return runSend(request.text, [provider], 'free', { forwardedFrom: request.forwardedFrom, preserveComparison: true });
     return runSend(request.text, request.presetId === 'free' ? [provider] : CHAT_PROVIDERS.filter((candidate) => comparisonTargets.includes(candidate)), request.presetId);
-  }, [activeSession.messages, activeSession.mode, activeSession.presetId, activeSessionId, comparisonTargets, runSend]);
+  }, [activeSession.messages, activeSession.mode, activeSession.presetId, activeSessionId, comparisonTargets, resolvePendingTimeoutAction, runSend]);
 
   const skipProvider = useCallback((provider: AIProvider) => {
+    const pending = pendingTimeoutActionsRef.current.get(provider);
+    if (pending && !resolvePendingTimeoutAction(provider, 'skip')) return;
     setSelectedTargets((current) => current.filter((candidate) => candidate !== provider));
     setComparisonTargets((current) => current.filter((candidate) => candidate !== provider));
     setReplyStates((current) => ({
       ...current,
       [provider]: { status: 'notSent', content: '', notSentReason: 'not-selected' },
     }));
-  }, []);
+  }, [resolvePendingTimeoutAction]);
 
   const newConversation = useCallback(() => {
     const session = createConversationSession();
@@ -826,7 +967,16 @@ export function useChatRuntime({
     const hydrated = repliesFromSession(session.messages);
     const busyForSession = [...busyProvidersRef.current].filter((provider) => runSessionByProviderRef.current.get(provider) === session.id);
     for (const provider of busyForSession) {
-      if (activeResponsesRef.current.has(provider)) {
+      const pendingTimeout = pendingTimeoutActionsRef.current.get(provider);
+      if (pendingTimeout?.sessionId === session.id) {
+        hydrated[provider] = {
+          status: pendingTimeout.failureKind === 'provider-error' ? 'failed' : 'timedOut',
+          content: hydrated[provider]?.content ?? '',
+          startedAt: busyStartedAtRef.current.get(provider) ?? Date.now(),
+          ...(pendingTimeout.failureKind === 'provider-error' ? { error: hydrated[provider]?.content ?? '' } : {}),
+          ...(forwardedFromByProviderRef.current.get(provider) ? { forwardedFrom: forwardedFromByProviderRef.current.get(provider) } : {}),
+        };
+      } else if (activeResponsesRef.current.has(provider)) {
         hydrated[provider] = {
           status: 'generating',
           content: hydrated[provider]?.content ?? '',
@@ -888,8 +1038,11 @@ export function useChatRuntime({
     comparisonTargets,
     selectedTargets,
     busyProviders,
+    timeoutActions,
+    replayRunning,
     now,
     notice,
+    persistenceNotice,
     setSelectedTargets: updateSelectedTargets,
     clearNotice,
     newConversation,
@@ -900,6 +1053,8 @@ export function useChatRuntime({
     forwardMessage,
     retryProvider,
     skipProvider,
+    setReplayRunning,
+    clearPersistenceNotice,
     setPreset,
     desktopAvailable,
   };

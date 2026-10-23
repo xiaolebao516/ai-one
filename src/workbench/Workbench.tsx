@@ -156,11 +156,6 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
           setComposerPrefill({ text: prefillText, mode: 'grill' });
           setRoute({ view: 'home' });
         }}
-        onStartGrill={(text) => {
-          // Task dispatch is owned by another implementation line; keep this callback intentionally inert.
-          void text;
-          go({ view: 'tasks' });
-        }}
       />
     );
   } else if (current.view === 'chatled') {

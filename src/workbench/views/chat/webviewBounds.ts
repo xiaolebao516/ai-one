@@ -33,6 +33,9 @@ export function createWebviewBoundsSyncController(options: WebviewBoundsSyncOpti
   let frameId: number | null = null;
   let lastBoundsKey: string | null = null;
   let disposed = false;
+  let generation = 0;
+  let requestSequence = 0;
+  const pendingBoundsKeys = new Map<string, number>();
 
   const flush = () => {
     frameId = null;
@@ -47,23 +50,40 @@ export function createWebviewBoundsSyncController(options: WebviewBoundsSyncOpti
 
     if (!rect) {
       lastBoundsKey = null;
+      generation += 1;
+      pendingBoundsKeys.clear();
       return;
     }
 
     const key = JSON.stringify([rect.x, rect.y, rect.width, rect.height]);
-    if (key === lastBoundsKey) return;
-    lastBoundsKey = key;
+    if (key === lastBoundsKey || pendingBoundsKeys.has(key)) return;
 
+    const requestGeneration = generation;
+    const requestId = ++requestSequence;
+    pendingBoundsKeys.set(key, requestId);
+    let result: void | Promise<unknown>;
     try {
-      void Promise.resolve(options.setBounds(rect)).catch(() => undefined);
+      result = options.setBounds(rect);
     } catch {
-      // A transient host failure must not create a retry loop.
+      pendingBoundsKeys.delete(key);
+      return;
     }
+
+    void Promise.resolve(result)
+      .then((value) => {
+        // A host may explicitly report failure without rejecting. Leave the key unconfirmed so
+        // the next layout tick can retry the same rectangle.
+        if (value === false) return;
+        if (!disposed && generation === requestGeneration && requestId === requestSequence) lastBoundsKey = key;
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (pendingBoundsKeys.get(key) === requestId) pendingBoundsKeys.delete(key);
+      });
   };
 
   const schedule = () => {
     if (disposed || frameId !== null) return;
-
     try {
       frameId = options.window.requestAnimationFrame(flush);
     } catch {
@@ -72,6 +92,7 @@ export function createWebviewBoundsSyncController(options: WebviewBoundsSyncOpti
   };
 
   const reset = () => {
+    generation += 1;
     if (frameId !== null) {
       try {
         options.window.cancelAnimationFrame(frameId);
@@ -81,6 +102,7 @@ export function createWebviewBoundsSyncController(options: WebviewBoundsSyncOpti
     }
     frameId = null;
     lastBoundsKey = null;
+    pendingBoundsKeys.clear();
   };
 
   const dispose = () => {
