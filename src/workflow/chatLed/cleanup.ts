@@ -84,6 +84,19 @@ export function planCleanup(
       url: conversation.url,
       ...(conversation.title === undefined ? {} : { title: conversation.title }),
     };
+
+    // Records saved before ownership checkpoints existed (or left uncertain) may point at a page the
+    // user switched to; only a confirmed registration may ever reach a destructive cleaner.
+    if (conversation.registrationStatus !== 'confirmed') {
+      plan.push({
+        ...base,
+        action: 'manual',
+        irreversible: false,
+        reason: 'Ownership of this conversation was not confirmed; clean it up manually.',
+      });
+      continue;
+    }
+
     const match = matchCleaner(conversation.provider, conversation.url, cleaners);
 
     if (!match.cleaner) {

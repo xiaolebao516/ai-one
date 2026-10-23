@@ -20,6 +20,7 @@ function conversation(url: string, title = 'Created conversation'): RegisteredCo
     url,
     title,
     createdByAiOne: true,
+    registrationStatus: 'confirmed',
     registeredAt: 100,
   };
 }
@@ -113,6 +114,19 @@ describe('chat-led cleanup planning', () => {
 
     expect(plan[0].action).toBe('archive');
     expect(plan[0].irreversible).toBe(false);
+  });
+
+  it('never lets a legacy or unconfirmed record reach a destructive cleaner', () => {
+    const legacy = { ...conversation(FIRST_URL), registrationStatus: undefined } as RegisteredConversation;
+    const manual = { ...conversation(ORIGINAL_URL), registrationStatus: 'manual' } as RegisteredConversation;
+    const cleaner = makeCleaner({ supports: { delete: true, archive: true } });
+
+    const plan = planCleanup(makeRun([legacy, manual]), [cleaner]);
+
+    expect(plan.map((item) => item.action)).toEqual(['manual', 'manual']);
+    expect(plan.every((item) => item.irreversible === false)).toBe(true);
+    expect(plan[0].reason).toContain('not confirmed');
+    expect(cleaner.matchesConversationUrl).not.toHaveBeenCalled();
   });
 
   it('creates no action for a user-owned conversation', () => {
