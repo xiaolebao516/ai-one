@@ -29,6 +29,7 @@ import {
 import { workbenchText, type WorkbenchText } from './workbenchText';
 import { HomeView } from './views/HomeView';
 import { ChatLedPage } from './views/ChatLedPage';
+import { FlowsView } from './views/FlowsView';
 import { PlannedView } from './views/PlannedView';
 import { ResourcesView } from './views/ResourcesView';
 import { TaskView } from './views/TaskView';
@@ -145,7 +146,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
   } else if (current.view === 'chatled') {
     view = <ChatLedPage locale={locale} />;
   } else if (current.view === 'flows') {
-    view = <PlannedView title={text.t('flowsTitle')} body={text.t('flowsBody')} badge={text.t('plannedBadge')} />;
+    view = <FlowsView locale={locale} />;
   } else {
     view = <ResourcesView locale={locale} dispatch={dispatch} repoPath={data.prefs.dispatchRepo} onSetRepo={data.setDispatchRepo} onOpenClassic={onOpenClassic} />;
   }
