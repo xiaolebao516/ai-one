@@ -94,6 +94,22 @@ describe('ChatGPT page scripts', () => {
   });
 
 
+
+  it('refuses destructive actions when only a generic conversation label can be proven', () => {
+    window.history.replaceState({}, '', CONVERSATION_PATH);
+    document.body.innerHTML = [
+      '<nav aria-label="History"><div><a href="' + CONVERSATION_PATH + '">Conversation</a><button data-testid="conversation-options-menu" id="trigger" aria-expanded="true" aria-controls="menu-1">Options</button></div></nav>',
+      '<div role="menu" id="menu-1"><button data-testid="delete-chat-button" id="delete">Delete</button></div>',
+    ].join('');
+    const click = vi.fn();
+    document.getElementById('delete')?.addEventListener('click', click);
+
+    const result = JSON.parse(runPageScript(buildDeleteScript(CONVERSATION_PATH))) as { ok: boolean };
+
+    expect(result.ok).toBe(false);
+    expect(click).not.toHaveBeenCalled();
+  });
+
   it('fails closed when pointerdown does not actually open the target menu', () => {
     window.history.replaceState({}, '', CONVERSATION_PATH);
     document.body.innerHTML = '<h1>Mine</h1><button data-testid="conversation-options-menu" id="trigger" aria-expanded="false">Options</button>';
