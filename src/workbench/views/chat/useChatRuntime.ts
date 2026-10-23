@@ -520,11 +520,19 @@ export function useChatRuntime({
             setProviderStates((states) => ({ ...states, [provider]: mergePullBridgeState(current, pullBridgeRef.current.get(provider)) }));
           }
           await runtimeHost.provider.park(provider, OFFSCREEN_BOUNDS);
-          return { provider, error: undefined as unknown };
+          return { provider, error: undefined as unknown, state: current };
         } catch (error) {
-          return { provider, error };
+          return { provider, error, state: undefined as ProviderState | undefined };
         }
       }));
+      for (const item of preparation) {
+        if (!item.error && item.state) {
+          latestStates = {
+            ...latestStates,
+            [item.provider]: mergePullBridgeState(item.state, pullBridgeRef.current.get(item.provider)),
+          };
+        }
+      }
       const openFailures = preparation.filter((item) => item.error !== undefined);
       if (openFailures.length > 0) {
         const failed = new Set(openFailures.map((item) => item.provider));
@@ -555,10 +563,72 @@ export function useChatRuntime({
 
       try {
         const snapshot = await runtimeHost.connections.get();
-        latestStates = latestProviderStates(snapshot, latestStates, pullBridgeRef.current);
+        const refreshed = latestProviderStates(snapshot, latestStates, pullBridgeRef.current);
+        for (const item of preparation) {
+          if (!item.error && item.state?.webview === 'loaded' && refreshed[item.provider].webview !== 'loaded') {
+            refreshed[item.provider] = { ...refreshed[item.provider], webview: 'loaded' };
+          }
+        }
+        latestStates = refreshed;
         setProviderStates(latestStates);
       } catch {
         // Keep the last known snapshot; the workflow preflight will report what it cannot confirm.
+      }
+
+      const freshenTargets = pendingProviderSessionResets(
+        pendingProviderResetsRef.current,
+        runTargets,
+        (provider) => latestStates[provider]?.webview === 'loaded',
+      );
+      if (freshenTargets.length > 0) {
+        setNotice({ tone: 'neutral', message: workbenchText(locale).t('chatPreparingSession') });
+        let freshened: AIProvider[] = [];
+        let resetFailures = new Set<AIProvider>();
+        try {
+          await ensureFreshProviderSessions(freshenTargets, {
+            resetBootState: resetProviderBootState,
+            newSession: (provider) => runtimeHost.provider.newSession(provider),
+          });
+          freshened = [...freshenTargets];
+        } catch (error) {
+          if (error instanceof ProviderSessionResetError) {
+            freshened = error.completedProviders;
+            resetFailures = new Set(error.failures.map((failure) => failure.provider));
+            setNotice({
+              tone: 'block',
+              message: workbenchText(locale).t('chatSessionResetFailed', {
+                providers: error.failures.map((failure) => AI_PROVIDERS[failure.provider].name).join(', '),
+              }),
+            });
+          } else {
+            resetFailures = new Set(freshenTargets);
+            setNotice({ tone: 'block', message: error instanceof Error ? error.message : String(error) });
+          }
+        }
+        for (const provider of freshened) pendingProviderResetsRef.current.delete(provider);
+        if (resetFailures.size > 0) {
+          setReplyStates((current) => {
+            const next = { ...current };
+            for (const provider of resetFailures) {
+              next[provider] = { status: 'failed', content: '', error: workbenchText(locale).t('chatSessionResetFailed', { providers: AI_PROVIDERS[provider].name }) };
+            }
+            if (presetId !== 'free') {
+              for (const provider of participants) {
+                if (!resetFailures.has(provider)) next[provider] = { status: 'notSent', content: '', notSentReason: 'not-ready' };
+              }
+            }
+            return next;
+          });
+          runTargets = presetId === 'free' ? runTargets.filter((provider) => !resetFailures.has(provider)) : [];
+        }
+        await waitForProvidersSendable(freshened, () => providerStatesRef.current);
+        try {
+          const snapshot = await runtimeHost.connections.get();
+          latestStates = latestProviderStates(snapshot, latestStates, pullBridgeRef.current);
+          setProviderStates(latestStates);
+        } catch {
+          // Keep the last observed state and let the sendability gate below decide per provider.
+        }
       }
 
       if (presetId === 'free') {
