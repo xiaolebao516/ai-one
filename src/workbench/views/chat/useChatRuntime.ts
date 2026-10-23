@@ -61,7 +61,7 @@ export interface ChatRuntimeOptions {
 }
 
 export interface ChatRuntimeNotice {
-  tone: 'neutral' | 'unknown' | 'block' | 'done';
+  tone: 'run' | 'unknown' | 'block' | 'done';
   message: string;
 }
 
@@ -615,7 +615,7 @@ export function useChatRuntime({
         (provider) => latestStates[provider]?.webview === 'loaded',
       );
       if (freshenTargets.length > 0) {
-        setNotice({ tone: 'neutral', message: workbenchText(locale).t('chatPreparingSession') });
+        setNotice({ tone: 'run', message: workbenchText(locale).t('chatPreparingSession') });
         let freshened: AIProvider[] = [];
         let resetFailures = new Set<AIProvider>();
         try {
