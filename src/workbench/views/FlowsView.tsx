@@ -14,7 +14,7 @@ export interface FlowsViewProps {
 
 export function FlowsView({ locale, fs }: FlowsViewProps) {
   const text = flowsText(locale);
-  const editor = useFlowsEditor(locale, fs, text);
+  const editor = useFlowsEditor(locale, fs);
 
   return (
     <div className="mx-auto grid min-h-full max-w-[1800px] gap-v2-lg p-v2-page">
