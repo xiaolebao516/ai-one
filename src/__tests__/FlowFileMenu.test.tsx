@@ -137,6 +137,7 @@ describe('FlowFileMenu import preview', () => {
     const root = createRoot(container);
     mounted.push({ root, container });
     await act(async () => root.render(<Combined />));
+    await act(async () => editor!.selectFlow('flow.current'));
 
     const incoming = file([
       { ...customStage('stage.b', 'New'), note: 'Imported B' },

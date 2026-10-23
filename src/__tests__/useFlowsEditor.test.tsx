@@ -88,7 +88,7 @@ describe('useFlowsEditor actions', () => {
     await act(async () => current!.copyFlow());
     const flowId = current!.selectedFlowId;
     await act(async () => current!.createStage());
-    const stageId = current!.selection?.kind === 'library' ? current.selection.stageId : '';
+    const stageId = current!.selection?.kind === 'library' ? current!.selection.stageId : '';
     await act(async () => current!.selectFlow(flowId));
     await act(async () => {
       current!.openInsert(current!.selectedFlow!.stages.length);

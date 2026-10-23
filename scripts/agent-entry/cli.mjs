@@ -44,7 +44,7 @@ export function parseMeta(body = '') {
 
 export function toolOf(agent = '') {
   // Only the tool part ("Codex / session 3" -> "codex"): session ids may contain other tools' aliases.
-  const lower = agent.split(/[\/:@]/)[0].toLowerCase();
+  const lower = agent.split(/[/:@]/)[0].toLowerCase();
   return Object.keys(TOOL_ALIASES).find((tool) => TOOL_ALIASES[tool].some((alias) => new RegExp(`(^|[^a-z])${alias}([^a-z]|$)`).test(lower)));
 }
 
