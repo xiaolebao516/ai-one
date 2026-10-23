@@ -778,7 +778,7 @@ fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
                 continue;
             }
             for reference in &references {
-                if lower[cursor..].starts_with(reference) {
+                if lower[cursor..].starts_with(reference.as_str()) {
                     let end = cursor + reference.len();
                     if end == bytes.len() || !bytes[end].is_ascii_digit() {
                         return true;
@@ -838,10 +838,14 @@ async fn precheck_pr<G: GhApi>(
                 .is_some_and(|name| name.eq_ignore_ascii_case(repo))
     });
     let body_matches = body_links_issue(&pr.body, repo, issue);
-    // If GraphQL reports more than 100 closing references, never guess from a partial list:
-    // the body is the only fallback; otherwise the action is rejected.
-    let _references_truncated = pr.has_next_page && !closing_ref_matches;
-    if !closing_ref_matches && !body_matches {
+    // If GraphQL reports more than 100 closing references, only an explicit body link may
+    // substitute for a missing match in the returned nodes; never guess from the truncated list.
+    let association_missing = if pr.has_next_page {
+        !closing_ref_matches && !body_matches
+    } else {
+        !(closing_ref_matches || body_matches)
+    };
+    if association_missing {
         return Err(simple_result(
             GithubWriteState::Failed,
             GithubWriteCode::PrIssueMismatch,
