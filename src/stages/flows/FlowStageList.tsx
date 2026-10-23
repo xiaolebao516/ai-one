@@ -142,7 +142,7 @@ export function FlowStageList({
       </header>
 
       {flow.stages.length === 0 ? (
-        <EmptyState tone={flowIssues.length ? 'unknown' : 'neutral'} title={text.t('flowEmpty')} description={flowIssues.length ? flowIssues.map((issue) => issue.message).join(' · ') : undefined} />
+        <EmptyState tone={flowIssues.length ? 'unknown' : 'neutral'} title={text.t('flowEmpty')} />
       ) : null}
 
       <ol className="grid min-w-0 gap-v2-xs" aria-label={label(flow, locale)}>
