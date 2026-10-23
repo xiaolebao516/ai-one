@@ -227,6 +227,15 @@ function invalidResult(): GithubWriteResult {
   return failedResult('invalid_input');
 }
 
+function unconfirmedResult(): GithubWriteResult {
+  return {
+    status: 'unconfirmed',
+    code: 'unconfirmed',
+    message: MESSAGES.unconfirmed,
+    steps: [],
+  };
+}
+
 function validStep(value: unknown): value is GithubWriteStep {
   return isRecord(value)
     && hasExactKeys(value, ['step', 'state'])
@@ -249,12 +258,12 @@ function normalizeResult(value: unknown): GithubWriteResult {
     || !Array.isArray(value.steps)
     || !value.steps.every(validStep)
   ) {
-    return failedResult();
+    return unconfirmedResult();
   }
-  if (value.issueNumber !== undefined && !validNumber(value.issueNumber)) return failedResult();
-  if (value.url !== undefined && typeof value.url !== 'string') return failedResult();
-  if (value.commentUrl !== undefined && typeof value.commentUrl !== 'string') return failedResult();
-  if (value.currentHead !== undefined && !validSha(value.currentHead)) return failedResult();
+  if (value.issueNumber !== undefined && !validNumber(value.issueNumber)) return unconfirmedResult();
+  if (value.url !== undefined && typeof value.url !== 'string') return unconfirmedResult();
+  if (value.commentUrl !== undefined && typeof value.commentUrl !== 'string') return unconfirmedResult();
+  if (value.currentHead !== undefined && !validSha(value.currentHead)) return unconfirmedResult();
 
   return {
     status: value.status as GithubWriteResult['status'],
@@ -272,7 +281,7 @@ async function invokeResult(command: string, args: Record<string, unknown>): Pro
   try {
     return normalizeResult(await invoke<unknown>(command, args));
   } catch {
-    return failedResult();
+    return unconfirmedResult();
   }
 }
 

@@ -12,6 +12,8 @@
 
 Rust 端重新校验所有参数。前端不能指定路径或 HTTP 方法。JSON 请求体经 stdin 传给 `gh api --input -`，不经过 shell。评论和新 Issue 都会回读；HEAD 或关联校验失败时不会发送写请求。
 
+公开的 host.githubWrite 对动作参数执行 exact-key 校验，额外属性会在调用 invoke 前被拒绝。Rust 的 Tauri 命令使用逐字段参数，不接收并校验完整 IPC 参数对象，因此不能声称 IPC 边界会拒绝额外键；原始 invoke 中的额外键不会影响固定命令路由、HTTP 方法或请求体，后者由 Rust 命令参数与固定实现决定。
+
 ## 评论格式
 
 所有代用户发出的评论都以 `【ai-one 代用户发出】` 开头，最后一行是动作标记：

@@ -94,13 +94,17 @@ describe('host GitHub write bridge', () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
-  it('normalizes thrown errors and malformed results without exposing their text', async () => {
+  it('marks invoke rejection and malformed write results unconfirmed without retrying or exposing error text', async () => {
     invokeMock.mockRejectedValueOnce('PRIVATE_TOKEN_AND_SERVER_ERROR');
     const thrown = await host.githubWrite.comment({ repo: 'owner/repo', issue: 12, text: 'hello' });
-    expect(thrown).toMatchObject({
-      status: 'failed',
-      code: 'github_failed',
-      message: 'GitHub 操作失败，请检查权限、网络和 API 限额',
+    expect(thrown).toEqual({
+      status: 'unconfirmed',
+      code: 'unconfirmed',
+      message: '已发出，但没能确认；请先回读，不要重试',
+      steps: [],
+    });
+    expect(invokeMock).toHaveBeenCalledExactlyOnceWith('github_write_comment', {
+      repo: 'owner/repo', issue: 12, text: 'hello',
     });
     expect(JSON.stringify(thrown)).not.toContain('PRIVATE_TOKEN');
 
@@ -111,7 +115,16 @@ describe('host GitHub write bridge', () => {
       steps: [],
     });
     const malformed = await host.githubWrite.comment({ repo: 'owner/repo', issue: 12, text: 'hello' });
-    expect(malformed.code).toBe('github_failed');
+    expect(malformed).toEqual({
+      status: 'unconfirmed',
+      code: 'unconfirmed',
+      message: '已发出，但没能确认；请先回读，不要重试',
+      steps: [],
+    });
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock).toHaveBeenLastCalledWith('github_write_comment', {
+      repo: 'owner/repo', issue: 12, text: 'hello',
+    });
     expect(JSON.stringify(malformed)).not.toContain('PRIVATE_SERVER_ERROR');
   });
 

@@ -765,6 +765,7 @@ async fn load_pr<G: GhApi>(gh: &G, repo: &str, number: u64) -> Result<Option<PrI
 fn strip_fenced_code_and_quotes(body: &str) -> String {
     let mut prose = Vec::new();
     let mut fence: Option<(u8, usize)> = None;
+    let mut in_quote = false;
 
     for line in body.lines() {
         let leading_spaces = line.bytes().take_while(|byte| *byte == b' ').count();
@@ -778,6 +779,35 @@ fn strip_fenced_code_and_quotes(body: &str) -> String {
                     fence = None;
                 }
             }
+            prose.push("");
+            continue;
+        }
+
+        if in_quote {
+            if line.trim().is_empty() {
+                in_quote = false;
+                prose.push(line);
+            } else {
+                // A non-empty line after a quote marker is a lazy quote continuation.
+                prose.push("");
+            }
+            continue;
+        }
+
+        if line.trim().is_empty() {
+            prose.push("");
+            continue;
+        }
+
+        if line.starts_with('\t') || leading_spaces >= 4 {
+            // Indented code is not a real PR-to-Issue association.
+            prose.push("");
+            continue;
+        }
+
+        if leading_spaces <= 3 && candidate.starts_with('>') {
+            in_quote = true;
+            prose.push("");
             continue;
         }
 
@@ -788,19 +818,16 @@ fn strip_fenced_code_and_quotes(body: &str) -> String {
             let run = bytes.iter().take_while(|byte| **byte == fence_char).count();
             if run >= 3 {
                 fence = Some((fence_char, run));
+                prose.push("");
                 continue;
             }
         }
 
-        if line.trim_start().starts_with('>') {
-            continue;
-        }
         prose.push(line);
     }
 
     prose.join("\n")
 }
-
 fn strip_html_comments(body: &str) -> String {
     let mut output = String::new();
     let mut cursor = 0;
@@ -884,7 +911,6 @@ fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
     let prose = strip_fenced_code_and_quotes(body);
     let prose = strip_html_comments(&prose);
     let prose = strip_inline_code(&prose);
-    let lower = prose.to_ascii_lowercase();
     let Some((owner, name)) = repo.split_once('/') else {
         return false;
     };
@@ -893,50 +919,55 @@ fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
         "closes", "closed", "close", "fixes", "fixed", "fix", "resolves", "resolved", "resolve",
     ];
 
-    for verb in verbs {
-        for (start, _) in lower.match_indices(verb) {
-            if lower[..start]
-                .chars()
-                .next_back()
-                .is_some_and(is_word_character)
-            {
-                continue;
-            }
+    // Match each original line independently: removed Markdown lines must never join
+    // a keyword and an issue number into a new closing statement.
+    for line in prose.lines() {
+        let lower = line.to_ascii_lowercase();
+        for verb in verbs.iter().copied() {
+            for (start, _) in lower.match_indices(verb) {
+                if lower[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(is_word_character)
+                {
+                    continue;
+                }
 
-            let mut cursor = start + verb.len();
-            if lower[cursor..]
-                .chars()
-                .next()
-                .is_some_and(is_word_character)
-            {
-                continue;
-            }
+                let mut cursor = start + verb.len();
+                if lower[cursor..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word_character)
+                {
+                    continue;
+                }
 
-            let after_verb = cursor;
-            while cursor < lower.len() && lower.as_bytes()[cursor].is_ascii_whitespace() {
-                cursor += 1;
-            }
-            let mut has_separator = cursor > after_verb;
-            if cursor < lower.len() && lower.as_bytes()[cursor] == b':' {
-                cursor += 1;
-                has_separator = true;
+                let after_verb = cursor;
                 while cursor < lower.len() && lower.as_bytes()[cursor].is_ascii_whitespace() {
                     cursor += 1;
                 }
-            }
-            if !has_separator {
-                continue;
-            }
+                let mut has_separator = cursor > after_verb;
+                if cursor < lower.len() && lower.as_bytes()[cursor] == b':' {
+                    cursor += 1;
+                    has_separator = true;
+                    while cursor < lower.len() && lower.as_bytes()[cursor].is_ascii_whitespace() {
+                        cursor += 1;
+                    }
+                }
+                if !has_separator {
+                    continue;
+                }
 
-            for reference in &references {
-                if lower[cursor..].starts_with(reference) {
-                    let end = cursor + reference.len();
-                    if lower[end..]
-                        .chars()
-                        .next()
-                        .map_or(true, |ch| !ch.is_alphanumeric())
-                    {
-                        return true;
+                for reference in &references {
+                    if lower[cursor..].starts_with(reference) {
+                        let end = cursor + reference.len();
+                        if lower[end..]
+                            .chars()
+                            .next()
+                            .map_or(true, |ch| !ch.is_alphanumeric())
+                        {
+                            return true;
+                        }
                     }
                 }
             }
@@ -944,7 +975,6 @@ fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
     }
     false
 }
-
 async fn precheck_pr<G: GhApi>(
     gh: &G,
     repo: &str,
@@ -1023,11 +1053,14 @@ enum LabelOutcome {
 
 fn label_is_present(value: &Value, label: &str) -> Option<bool> {
     let labels = value.as_array()?;
-    Some(labels.iter().any(|item| {
-        item.get("name")
-            .and_then(Value::as_str)
-            .is_some_and(|name| name == label)
-    }))
+    let mut present = false;
+    for item in labels {
+        let name = item.get("name").and_then(Value::as_str)?;
+        if name == label {
+            present = true;
+        }
+    }
+    Some(present)
 }
 
 async fn ensure_label_state<G: GhApi>(
@@ -1867,7 +1900,14 @@ mod tests {
         assert!(!body_links_issue("Closes repo#12", REPO, 12));
         assert!(!body_links_issue("```markdown\nCloses #12\n```", REPO, 12));
         assert!(!body_links_issue("~~~text\nCloses #12\n~~~", REPO, 12));
+        assert!(!body_links_issue("    Closes #12", REPO, 12));
+        assert!(!body_links_issue("\tCloses #12", REPO, 12));
         assert!(!body_links_issue("> Closes #12", REPO, 12));
+        assert!(!body_links_issue("> example\nCloses #12", REPO, 12));
+        assert!(body_links_issue("> example\nCloses #12\n\nCloses #12", REPO, 12));
+        assert!(!body_links_issue("Closes\n#12", REPO, 12));
+        assert!(!body_links_issue("Closes\n    ignored code\n#12", REPO, 12));
+        assert!(!body_links_issue("Closes\n\tignored code\n#12", REPO, 12));
         assert!(!body_links_issue("`Closes #12`", REPO, 12));
         assert!(!body_links_issue("Closes `#12`", REPO, 12));
         assert!(!body_links_issue("`Closes\n#12`", REPO, 12));
@@ -1905,6 +1945,35 @@ mod tests {
             SHA, "", vec![linked_node(REPO, 12)], true, "OPEN",
         ))]);
         assert!(precheck_pr(&node_linked, REPO, 12, 4, SHA).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn pseudo_body_links_never_allow_review_writes_with_truncated_closing_refs() {
+        let args = valid_accept_args(SHA);
+        let changes_args = RequestChangesArgs {
+            repo: REPO.to_string(),
+            issue: 12,
+            pr: 4,
+            expected_head: SHA.to_string(),
+            text: "please fix".to_string(),
+        };
+        for body in [
+            "    Closes #12",
+            "\tCloses #12",
+            "> example\nCloses #12",
+            "Closes\n    ignored code\n#12",
+            "Closes\n\tignored code\n#12",
+        ] {
+            let accept_gh = FakeGh::new(vec![Ok(pr_value(SHA, body, vec![], true, "OPEN"))]);
+            let accepted = accept(&accept_gh, &args).await;
+            assert_eq!(accepted.code, GithubWriteCode::PrIssueMismatch, "body: {body:?}");
+            assert!(accept_gh.write_calls().is_empty(), "accept wrote for body: {body:?}");
+
+            let changes_gh = FakeGh::new(vec![Ok(pr_value(SHA, body, vec![], true, "OPEN"))]);
+            let changed = request_changes(&changes_gh, &changes_args).await;
+            assert_eq!(changed.code, GithubWriteCode::PrIssueMismatch, "body: {body:?}");
+            assert!(changes_gh.write_calls().is_empty(), "request_changes wrote for body: {body:?}");
+        }
     }
 
     #[tokio::test]
@@ -2071,6 +2140,8 @@ mod tests {
         for labels_response in [
             Err(GhError::Timeout),
             Ok(json!({ "unexpected": "not an array" })),
+            Ok(json!([{ "name": "needs-user" }, { "unexpected": "missing name" }])),
+            Ok(json!([{ "name": "needs-user" }, "not an object"])),
         ] {
             let body = accept_body(SHA);
             let gh = FakeGh::new(vec![
