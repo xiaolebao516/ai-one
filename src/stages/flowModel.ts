@@ -476,7 +476,8 @@ export function validateFile(file: FlowsFile): ValidationIssue[] {
 
   flows.forEach((flow, index) => {
     if (!isFlowShape(flow)) {
-      issues.push(issue('bad-shape', 'flows.' + index, undefined, isRecord(flow) && typeof flow.id === 'string' ? flow.id : undefined));
+      const raw: unknown = flow;
+      issues.push(issue('bad-shape', 'flows.' + index, undefined, isRecord(raw) && typeof raw.id === 'string' ? raw.id : undefined));
       return;
     }
     issues.push(...validateFlow(flow, stages));

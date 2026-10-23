@@ -39,6 +39,16 @@ fn file_name(name: &str) -> Result<&'static str, String> {
     }
 }
 
+/// Per-file write ceiling. A write above it is refused (never truncated) with a `too-large` error so
+/// callers can surface it; per-record limits (e.g. 5 MB per local task) are enforced by the caller.
+fn max_bytes(name: &str) -> usize {
+    match name {
+        "flows" => 2 * 1024 * 1024,
+        "coordination" => 1024 * 1024,
+        _ => 256 * 1024 * 1024,
+    }
+}
+
 fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|error| error.to_string())
 }
@@ -86,6 +96,9 @@ fn read_in_dir(dir: &Path, name: &str) -> Result<LocalStoreRead, String> {
 
 fn write_in_dir(dir: &Path, name: &str, json: &str) -> Result<(), String> {
     let filename = file_name(name)?;
+    if json.len() > max_bytes(name) {
+        return Err(format!("too-large: {} exceeds {} bytes", filename, max_bytes(name)));
+    }
     serde_json::from_str::<Value>(json).map_err(|_| "invalid JSON".to_string())?;
 
     let path = dir.join(filename);
@@ -322,6 +335,17 @@ mod tests {
         assert!(write_in_dir(&dir, "flows", "{").is_err());
         assert_eq!(std::fs::read_to_string(dir.join("flows.json")).expect("current"), "{\"version\":1}");
         assert!(!dir.join("flows.json.bak").exists());
+        clean_dir(&dir);
+    }
+
+    #[test]
+    fn oversized_write_is_refused_without_touching_existing_data() {
+        let dir = unique_dir("too-large");
+        write_in_dir(&dir, "coordination", "{\"v\":1}").expect("seed");
+        let big = format!("{{\"pad\":\"{}\"}}", "x".repeat(1024 * 1024));
+        let error = write_in_dir(&dir, "coordination", &big).unwrap_err();
+        assert!(error.starts_with("too-large"));
+        assert_eq!(std::fs::read_to_string(dir.join("coordination.json")).expect("current"), "{\"v\":1}");
         clean_dir(&dir);
     }
 

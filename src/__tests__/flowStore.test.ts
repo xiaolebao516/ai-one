@@ -53,6 +53,7 @@ describe('flow store recovery', () => {
     const fs = new MemoryFs();
     const file = validFile();
     file.stages = file.stages.filter((stage) => stage.id !== 'stage.grill');
+    file.flows = file.flows.filter((flow) => !flow.stages.some((ref) => ref.stageId === 'stage.grill'));
     file.flows[0].name = 'Tampered';
     fs.files.set('flows', JSON.stringify(file));
     const result = await loadFlows(fs);
