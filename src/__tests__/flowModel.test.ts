@@ -284,7 +284,7 @@ describe('flow import/export', () => {
     expect(validateFile(merged)).toEqual([]);
   });
 
-  it('keeps a name-only conflict instead of overwriting an unrelated ID', () => {
+  it('overwrites a same-name custom conflict while preserving the local ID', () => {
     const current: FlowsFile = {
       schemaVersion: 1,
       stages: [customStage('original', 'Same name')],
@@ -292,11 +292,11 @@ describe('flow import/export', () => {
     };
     const incoming: FlowsFile = {
       schemaVersion: 1,
-      stages: [customStage('different-id', 'Same name')],
+      stages: [{ ...customStage('different-id', 'Same name'), description: 'incoming definition' }],
       flows: [],
     };
     const merged = applyImport(current, incoming, 'overwrite');
     expect(merged.stages).toHaveLength(1);
-    expect(merged.stages[0].id).toBe('original');
+    expect(merged.stages[0]).toMatchObject({ id: 'original', description: 'incoming definition', builtin: false });
   });
 });
