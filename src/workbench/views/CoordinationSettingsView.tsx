@@ -1,10 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
+import type { Locale } from '../../i18n/resolve';
 import {
-  AUTH_EXPIRED_OPTIONS,
   DEFAULT_AI_PREFERENCES,
   DEFAULT_COORDINATION_SETTINGS,
-  EXCEED_LIMIT_OPTIONS,
-  QUOTA_TIGHT_OPTIONS,
   loadCoordination,
   loadCoordinationSettings,
   renderCoordinationBrief,
@@ -19,25 +17,63 @@ import {
 } from '../../stages/coordinationModel';
 import { getLocalStoreFs, type LocalStoreFs } from '../../host/localStore';
 import { Badge, Button, Card, Notice, SegmentedControl, Select } from '../../ui/v2';
+import { workbenchText } from '../workbenchText';
 
 export interface CoordinationSettingsViewProps {
+  locale?: Locale;
   storage?: StorageLike;
   fs?: LocalStoreFs;
   onSaved?: (settings: CoordinationSettings) => void;
   className?: string;
 }
 
-const REWORK_LIMIT_OPTIONS = Array.from({ length: 10 }, (_, i) => ({
-  value: String(i + 1),
-  label: `${i + 1} 轮`,
-}));
-
 /**
  * S6 CC Coordination Settings View (Spec #108 / Design gaps §8)
  *
  * Local preferences for Claude Code coordination, rendered into task brief markdown.
  */
-export function CoordinationSettingsView({ storage, fs: propFs, onSaved, className }: CoordinationSettingsViewProps) {
+export function CoordinationSettingsView({
+  locale = 'zh-CN',
+  storage,
+  fs: propFs,
+  onSaved,
+  className,
+}: CoordinationSettingsViewProps) {
+  const text = useMemo(() => workbenchText(locale), [locale]);
+
+  const reworkLimitOptions = useMemo(
+    () =>
+      Array.from({ length: 10 }, (_, i) => ({
+        value: String(i + 1),
+        label: text.t('coordinationReworkLimitRounds', { n: i + 1 }),
+      })),
+    [text],
+  );
+
+  const exceedLimitOptions = useMemo(
+    () => [
+      { value: 'ask_user', label: text.t('coordinationExceedAskUser') },
+      { value: 'consult_opus', label: text.t('coordinationExceedConsultOpus') },
+    ],
+    [text],
+  );
+
+  const quotaTightOptions = useMemo(
+    () => [
+      { value: 'auto_reassign', label: text.t('coordinationQuotaAutoReassign') },
+      { value: 'ask_user', label: text.t('coordinationQuotaAskUser') },
+    ],
+    [text],
+  );
+
+  const authExpiredOptions = useMemo(
+    () => [
+      { value: 'ask_user', label: text.t('coordinationAuthAskUser') },
+      { value: 'fallback_ai', label: text.t('coordinationAuthFallbackAi') },
+    ],
+    [text],
+  );
+
   // If storage is explicitly provided (for legacy sync tests), use it;
   // otherwise default to propFs ?? getLocalStoreFs() for production local store file operations
   const activeFs = useMemo(() => {
@@ -66,7 +102,7 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
           if (res.status === 'recovered') {
             setSaveStatus({
               tone: 'block',
-              message: `读取到损坏的设置文件，已安全隔离备份为 ${res.backup ?? '备份文件'}，已恢复默认设置`,
+              message: text.t('coordinationCorruptRecovered', { backup: res.backup ?? 'backup' }),
             });
           }
         })
@@ -77,7 +113,7 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
           setLoadError(msg);
           setSaveStatus({
             tone: 'block',
-            message: `加载本机设置失败：${msg}。为避免覆盖已有设置，当前已禁用保存。`,
+            message: text.t('coordinationLoadFailed', { error: msg }),
           });
         });
     } else {
@@ -87,7 +123,7 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
     return () => {
       active = false;
     };
-  }, [activeFs]);
+  }, [activeFs, text]);
 
   const isBlocked = loading || Boolean(loadError);
   const brief = renderCoordinationBrief(settings);
@@ -99,18 +135,18 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
     if (activeFs) {
       const result = await saveCoordination(next, activeFs);
       if (result.success) {
-        setSaveStatus({ tone: 'done', message: '已自动保存到本机设置' });
+        setSaveStatus({ tone: 'done', message: text.t('coordinationSaveSuccess') });
         onSaved?.(next);
       } else {
-        setSaveStatus({ tone: 'block', message: `保存失败：${result.error ?? '写入文件失败'}` });
+        setSaveStatus({ tone: 'block', message: text.t('coordinationSaveFailed', { error: result.error ?? 'error' }) });
       }
     } else {
       const result = saveCoordinationSettings(next, storage);
       if (result.success) {
-        setSaveStatus({ tone: 'done', message: '已自动保存到本机设置' });
+        setSaveStatus({ tone: 'done', message: text.t('coordinationSaveSuccess') });
         onSaved?.(next);
       } else {
-        setSaveStatus({ tone: 'block', message: `保存失败：${result.error ?? '存储不可用'}` });
+        setSaveStatus({ tone: 'block', message: text.t('coordinationSaveFailed', { error: result.error ?? 'error' }) });
       }
     }
   };
@@ -128,18 +164,18 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
     if (activeFs) {
       const result = await saveCoordination(reset, activeFs);
       if (result.success) {
-        setSaveStatus({ tone: 'done', message: '已恢复默认设置' });
+        setSaveStatus({ tone: 'done', message: text.t('coordinationResetSuccess') });
         onSaved?.(reset);
       } else {
-        setSaveStatus({ tone: 'block', message: `重置失败：${result.error ?? '写入文件失败'}` });
+        setSaveStatus({ tone: 'block', message: text.t('coordinationResetFailed', { error: result.error ?? 'error' }) });
       }
     } else {
       const result = saveCoordinationSettings(reset, storage);
       if (result.success) {
-        setSaveStatus({ tone: 'done', message: '已恢复默认设置' });
+        setSaveStatus({ tone: 'done', message: text.t('coordinationResetSuccess') });
         onSaved?.(reset);
       } else {
-        setSaveStatus({ tone: 'block', message: `重置失败：${result.error ?? '存储不可用'}` });
+        setSaveStatus({ tone: 'block', message: text.t('coordinationResetFailed', { error: result.error ?? 'error' }) });
       }
     }
   };
@@ -151,18 +187,18 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
     >
       <header className="grid gap-v2-xs">
         <div className="flex flex-wrap items-center gap-v2-sm">
-          <h1 className="font-v2-serif text-v2-title text-v2-ink">CC 协调设置</h1>
+          <h1 className="font-v2-serif text-v2-title text-v2-ink">{text.t('coordinationTitle')}</h1>
           <Badge tone={loadError ? 'block' : 'run'}>
-            {loading ? '正在加载...' : loadError ? '加载失败' : '本机设置'}
+            {loading ? text.t('coordinationBadgeLoading') : loadError ? text.t('coordinationBadgeFailed') : text.t('coordinationBadgeLocal')}
           </Badge>
         </div>
         <p className="text-v2-meta text-v2-ink-2">
-          这些偏好会写进交给 CC 的 Issue，由 CC 参照执行。ai-one 不直接指挥进程，通过 Issue 约定协调规则。
+          {text.t('coordinationSubtitle')}
         </p>
       </header>
 
       {loading ? (
-        <Notice tone="run">正在加载本机设置...</Notice>
+        <Notice tone="run">{text.t('coordinationLoadingNotice')}</Notice>
       ) : saveStatus ? (
         <Notice tone={saveStatus.tone} className="transition-opacity">
           {saveStatus.message}
@@ -174,15 +210,15 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
         <Card className="grid gap-v2-sm">
           <div className="flex flex-wrap items-center justify-between gap-v2-sm">
             <div>
-              <span className="font-semibold text-v2-body text-v2-ink">返工上限</span>
-              <p className="text-v2-meta text-v2-ink-3">审计 REVISE 返工超过这个数就停下来问你</p>
+              <span className="font-semibold text-v2-body text-v2-ink">{text.t('coordinationReworkLimitTitle')}</span>
+              <p className="text-v2-meta text-v2-ink-3">{text.t('coordinationReworkLimitDesc')}</p>
             </div>
             <Select
               id="rework-limit-select"
-              label="返工上限轮数"
+              label={text.t('coordinationReworkLimitTitle')}
               hideLabel
               value={String(settings.reworkLimit)}
-              options={REWORK_LIMIT_OPTIONS}
+              options={reworkLimitOptions}
               disabled={isBlocked}
               onChange={(val) => updateSetting('reworkLimit', Number(val))}
             />
@@ -192,53 +228,53 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
         {/* 超限后 */}
         <Card className="grid gap-v2-sm">
           <div>
-            <span className="font-semibold text-v2-body text-v2-ink">超限后</span>
-            <p className="text-v2-meta text-v2-ink-3">达到返工上限后的后续动作</p>
+            <span className="font-semibold text-v2-body text-v2-ink">{text.t('coordinationExceedTitle')}</span>
+            <p className="text-v2-meta text-v2-ink-3">{text.t('coordinationExceedDesc')}</p>
           </div>
           <SegmentedControl
             idBase="coordination-exceed"
-            label="超限后动作"
+            label={text.t('coordinationExceedTitle')}
             value={settings.onExceedLimit}
             onChange={(val) => updateSetting('onExceedLimit', val as ExceedLimitAction)}
-            options={EXCEED_LIMIT_OPTIONS.map((o) => ({ value: o.value, label: o.label, disabled: isBlocked }))}
+            options={exceedLimitOptions.map((o) => ({ value: o.value, label: o.label, disabled: isBlocked }))}
           />
         </Card>
 
         {/* 额度紧张时 */}
         <Card className="grid gap-v2-sm">
           <div>
-            <span className="font-semibold text-v2-body text-v2-ink">额度紧张时</span>
-            <p className="text-v2-meta text-v2-ink-3">模型配额受限或耗尽时的协调策略</p>
+            <span className="font-semibold text-v2-body text-v2-ink">{text.t('coordinationQuotaTitle')}</span>
+            <p className="text-v2-meta text-v2-ink-3">{text.t('coordinationQuotaDesc')}</p>
           </div>
           <SegmentedControl
             idBase="coordination-quota"
-            label="额度紧张策略"
+            label={text.t('coordinationQuotaTitle')}
             value={settings.onQuotaTight}
             onChange={(val) => updateSetting('onQuotaTight', val as QuotaTightAction)}
-            options={QUOTA_TIGHT_OPTIONS.map((o) => ({ value: o.value, label: o.label, disabled: isBlocked }))}
+            options={quotaTightOptions.map((o) => ({ value: o.value, label: o.label, disabled: isBlocked }))}
           />
         </Card>
 
         {/* 登录失效时 */}
         <Card className="grid gap-v2-sm">
           <div>
-            <span className="font-semibold text-v2-body text-v2-ink">登录失效时</span>
-            <p className="text-v2-meta text-v2-ink-3">真实账号会话过期或需验证时的处理方式</p>
+            <span className="font-semibold text-v2-body text-v2-ink">{text.t('coordinationAuthTitle')}</span>
+            <p className="text-v2-meta text-v2-ink-3">{text.t('coordinationAuthDesc')}</p>
           </div>
           <SegmentedControl
             idBase="coordination-auth"
-            label="登录失效策略"
+            label={text.t('coordinationAuthTitle')}
             value={settings.onAuthExpired}
             onChange={(val) => updateSetting('onAuthExpired', val as AuthExpiredAction)}
-            options={AUTH_EXPIRED_OPTIONS.map((o) => ({ value: o.value, label: o.label, disabled: isBlocked }))}
+            options={authExpiredOptions.map((o) => ({ value: o.value, label: o.label, disabled: isBlocked }))}
           />
         </Card>
 
         {/* 优先使用（标注）可编辑 */}
         <Card className="grid gap-v2-sm">
           <div>
-            <span className="font-semibold text-v2-body text-v2-ink">优先使用（你的标注）</span>
-            <p className="text-v2-meta text-v2-ink-3">标明各 AI 的擅长分工（可直接修改），写进简报供调度参考</p>
+            <span className="font-semibold text-v2-body text-v2-ink">{text.t('coordinationAiPrefTitle')}</span>
+            <p className="text-v2-meta text-v2-ink-3">{text.t('coordinationAiPrefDesc')}</p>
           </div>
           <div className="grid gap-v2-xs">
             {Object.entries(settings.aiPreferences).map(([ai, role]) => (
@@ -250,7 +286,7 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
                   disabled={isBlocked}
                   onChange={(e) => updateAiPreference(ai, e.target.value)}
                   className="h-7 flex-1 rounded-v2-sm border border-v2-line bg-v2-surface px-v2-sm text-v2-meta text-v2-ink disabled:opacity-50"
-                  placeholder="分工或擅长领域，如：执行、审计"
+                  placeholder={text.t('coordinationAiPrefPlaceholder')}
                   maxLength={50}
                 />
               </div>
@@ -261,8 +297,8 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
         {/* 简报预览 */}
         <Card className="grid gap-v2-sm border-v2-line bg-v2-surface">
           <div className="flex items-center justify-between">
-            <span className="font-semibold text-v2-body text-v2-ink">简报预览（建 Issue 时写入正文）</span>
-            <Badge tone="run">实时预览</Badge>
+            <span className="font-semibold text-v2-body text-v2-ink">{text.t('coordinationPreviewTitle')}</span>
+            <Badge tone="run">{text.t('coordinationPreviewBadge')}</Badge>
           </div>
           <pre
             data-testid="brief-preview"
@@ -271,9 +307,9 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
             {brief}
           </pre>
           <div className="flex items-center justify-between pt-v2-xs">
-            <span className="text-v2-micro text-v2-ink-3">由 CC 参照执行</span>
+            <span className="text-v2-micro text-v2-ink-3">{text.t('coordinationPreviewFooter')}</span>
             <Button size="sm" variant="ghost" disabled={isBlocked} onClick={handleReset}>
-              恢复默认设置
+              {text.t('coordinationResetButton')}
             </Button>
           </div>
         </Card>

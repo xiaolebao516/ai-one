@@ -93,4 +93,22 @@ describe('CoordinationSettingsView', () => {
     expect(html).toContain('CC 自动改派并通知我');
     expect(html).toContain('用其他 AI 代替并通知我');
   });
+
+  it('renders fully in English when locale is en', () => {
+    const storage = createMemoryStorage();
+    const html = renderToStaticMarkup(<CoordinationSettingsView locale="en" storage={storage} />);
+
+    expect(html).toContain('CC coordination settings');
+    expect(html).toContain('Followed by Claude Code');
+    expect(html).toContain('Rework limit');
+    expect(html).toContain('When limit exceeded');
+    expect(html).toContain('When quota is tight');
+    expect(html).toContain('When login expires');
+    expect(html).toContain('Preferred AI roles (your annotations)');
+    expect(html).toContain('Brief preview (written into Issue body)');
+    expect(html).toContain('Reset to defaults');
+    expect(html).toContain('Local settings');
+    expect(html).toContain('Live preview');
+    expect(html).toContain('3 rounds');
+  });
 });
