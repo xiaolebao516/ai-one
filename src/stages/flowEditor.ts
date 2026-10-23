@@ -87,8 +87,23 @@ export function applyStageDraft(
       // Empty text is the serializable way to suppress a library note for this flow only.
       overrides.note = '';
     } else {
-      // reworkLimit is kept as an optional number; undefined is valid in the v1 schema.
-      overrides[key] = draftValue as never;
+      switch (key) {
+        case 'participants':
+          overrides.participants = draft.participants.map((participant) => ({ ...participant }));
+          break;
+        case 'endCondition':
+          overrides.endCondition = draft.endCondition;
+          break;
+        case 'onFail':
+          overrides.onFail = draft.onFail;
+          break;
+        case 'reworkLimit':
+          overrides.reworkLimit = draft.reworkLimit;
+          break;
+        case 'note':
+          overrides.note = draft.note ?? '';
+          break;
+      }
     }
   }
 
@@ -106,14 +121,19 @@ export function applyStageDraft(
   };
 }
 
+export function stageMoveTarget(index: number, key: string, altKey: boolean): number | null {
+  if (!altKey || (key !== 'ArrowUp' && key !== 'ArrowDown')) return null;
+  return index + (key === 'ArrowUp' ? -1 : 1);
+}
+
 export function moveStageFromShortcut(
   flow: FlowDef,
   index: number,
   key: string,
   altKey: boolean,
 ): FlowDef {
-  if (!altKey || (key !== 'ArrowUp' && key !== 'ArrowDown')) return flow;
-  return moveStageRef(flow, index, index + (key === 'ArrowUp' ? -1 : 1));
+  const target = stageMoveTarget(index, key, altKey);
+  return target === null ? flow : moveStageRef(flow, index, target);
 }
 
 export function resolveImportChoice(
