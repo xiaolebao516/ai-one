@@ -1092,7 +1092,7 @@ test('a claim that belongs to another task or thread blocks the archive release'
   h.deps.autoFinish = async () => { throw new Error('MUST NOT CALL'); };
   assert.equal(await h.run(archiveArgs), EXIT.ERROR);
   assert.ok(readClaim(h.home, 1), 'the other task keeps its claim');
-  assert.match(h.log.err.join('\n'), /different task or thread/);
+  assert.match(h.log.err.join('\n'), /does not name exactly this task and thread/);
 });
 
 test('with the real archive tool and a manual policy, release frees the slot and archives nothing', async () => {
@@ -1102,4 +1102,20 @@ test('with the real archive tool and a manual policy, release frees the slot and
   await setArchivePolicy(h.home, 'manual');
   assert.equal(await h.run(archiveArgs), EXIT.OK);
   assert.match(h.log.err.join('\n'), /archive: archive policy is manual; no archive attempted/);
+});
+
+test('archive release needs a registered slot and an exact claim match, and releases conditionally', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  h.deps.autoFinish = async () => { throw new Error('MUST NOT CALL'); };
+  const closed = (n) => path.join(h.home, 'slot-claims', `slot-${n}.closed.json`);
+  // slot that is not registered
+  assert.equal(await h.run(archiveArgs.map((x) => (x === '1' ? '9' : x))), EXIT.ERROR);
+  assert.ok(!fs.existsSync(closed(9)));
+  // claim without a thread is not an exact match
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71' } });
+  assert.equal(await h.run(archiveArgs), EXIT.ERROR);
+  assert.ok(readClaim(h.home, 1), 'partial ownership keeps its claim');
+  assert.ok(!fs.existsSync(closed(1)));
+  assert.match(h.log.err.join('\n'), /does not name exactly this task and thread/);
 });

@@ -170,11 +170,11 @@ function otherClaims(home, ownSlot, url) {
     if (slot.id === ownSlot) continue;
     const claim = readClaim(home, slot.id);
     if (!claim) continue;
-    // Every slot is its own browser and the archive acts only on this slot's exact tab, so another
-    // slot busy with some other (or not yet registered) chat is no conflict. Only a claim that
-    // names this same thread is.
-    if (claimOwnership(claim).threadUrl === url)
-      throw new Error('Other slot has an active claim on this thread; refuse archive');
+    // Fail closed: a competing claim that names this thread, or no thread at all, may be someone
+    // using it right now, so archiving waits until that claim is gone.
+    const thread = claimOwnership(claim).threadUrl;
+    if (!thread || thread === url)
+      throw new Error('Other slot has active or unknown thread ownership; refuse archive (retry when that slot is idle)');
   }
 }
 export function validateFinish({ task, slot, threadUrl, requestId, handoffUrl }) {

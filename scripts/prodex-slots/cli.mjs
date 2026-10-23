@@ -415,16 +415,24 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
       // Ownership and note were validated in parseArgs, so nothing below can reject after the
       // claim is already gone.
       const had = readClaim(deps.home, options.slot);
-      if (options.requestId !== undefined && had) {
-        // A live claim says which task/thread this slot serves; archiving a different one is refused
-        // before anything changes.
-        const owner = claimOwnership(had);
-        const wanted = options.ownership;
-        if ((owner.task && owner.task !== wanted.task) || (owner.threadUrl && owner.threadUrl !== wanted.threadUrl)) {
-          throw new Error('The slot claim belongs to a different task or thread than the one to archive; nothing was released or archived');
+      const archiving = options.requestId !== undefined;
+      if (archiving) {
+        // Fail closed before anything changes: the slot must be registered, and a live claim must
+        // name exactly this task and thread (unknown or partial ownership is not a match).
+        if (!loadConfig(deps.home).slots.some((slot) => slot.id === options.slot)) {
+          throw new Error(`Slot ${options.slot} is not registered; nothing was released or archived`);
+        }
+        if (had) {
+          const owner = claimOwnership(had);
+          if (owner.task !== options.ownership.task || owner.threadUrl !== options.ownership.threadUrl) {
+            throw new Error('The slot claim does not name exactly this task and thread; nothing was released or archived');
+          }
         }
       }
-      releaseClaim(deps.home, options.slot);
+      // Release only the claim that was checked above; a claim that appeared in between stays.
+      if (releaseClaim(deps.home, options.slot, had ? had.owner : null) !== true) {
+        throw new Error('The slot claim changed while releasing; nothing was archived. Run `list` and retry');
+      }
       const record = writeClosure(deps.home, options.slot, { ownership: options.ownership, note: options.note });
       err(`prodex-slots: released slot ${options.slot}${had ? ' (claim removed)' : ' (no claim was present)'}; closed record written (${record.task ?? 'no task'}${record.note ? `, "${record.note}"` : ''}). The slot is reusable.`);
       await archiveOnRelease(options, deps, err);
