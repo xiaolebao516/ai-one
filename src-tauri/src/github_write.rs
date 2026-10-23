@@ -842,7 +842,7 @@ fn strip_inline_code(line: &str) -> String {
         output.push_str(&line[cursor..opening]);
 
         let mut opening_end = opening;
-        while opening_end < bytes.len() && bytes[opening_end] == b'`' as u8 {
+        while opening_end < bytes.len() && bytes[opening_end] == b'`' {
             opening_end += 1;
         }
         let delimiter_len = opening_end - opening;
@@ -855,7 +855,7 @@ fn strip_inline_code(line: &str) -> String {
             };
             let closing_start = search + offset;
             let mut run_end = closing_start;
-            while run_end < bytes.len() && bytes[run_end] == b'`' as u8 {
+            while run_end < bytes.len() && bytes[run_end] == b'`' {
                 run_end += 1;
             }
             if run_end - closing_start == delimiter_len {
