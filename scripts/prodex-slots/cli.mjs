@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { validateFinish } from '../prodex-archive/archive.mjs';
+import { statusFor, validateFinish } from '../prodex-archive/archive.mjs';
 import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeNote, normalizeOwnership, parseCheck, processAlive, readClaim, readClosure, releaseClaim, slotEnv, slotsHome, sweepSlots, writeClosure } from './slots.mjs';
 
 // Argument mistakes (bad flags, missing values, unknown commands) are usage errors: the reason
@@ -308,6 +308,14 @@ async function runCommand(options, passthrough, deps, err, sweepReport = []) {
         continue;
       }
       if (claim.warning) err(`prodex-slots: slot ${slot.id}: ${claim.warning} (the claim itself is fine; the sweep collects the leftover)`);
+      // Archive and run each write their marker (journal "pending" / this claim) and then read the
+      // other's, so one of them always sees the other: a run never starts on a thread that is being
+      // archived right now.
+      if (options.ownership.threadUrl && statusFor(deps.home, options.ownership.threadUrl)?.status === 'pending') {
+        claim.release();
+        err(`prodex-slots: slot ${slot.id}: this thread is being archived right now; not starting a new ask on it`);
+        return EXIT.ERROR;
+      }
       try {
         const { state } = await checkWithRestore(slot, deps);
         if (state === 'busy') { anyReadyButBusy = true; continue; }
@@ -436,8 +444,6 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
         if (typeof had.owner !== 'string' || !had.owner || releaseClaim(deps.home, options.slot, had.owner) !== true) {
           throw new Error('The slot claim changed or has no owner id; nothing was archived. Run `list` and retry');
         }
-      } else if (!archiving) {
-        releaseClaim(deps.home, options.slot);
       }
       const record = writeClosure(deps.home, options.slot, { ownership: options.ownership, note: options.note });
       err(`prodex-slots: released slot ${options.slot}${had ? ' (claim removed)' : ' (no claim was present)'}; closed record written (${record.task ?? 'no task'}${record.note ? `, "${record.note}"` : ''}). The slot is reusable.`);

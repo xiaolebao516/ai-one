@@ -238,3 +238,12 @@ test('CLI requires explicit completion evidence and refuses ambiguous options', 
   assert.throws(() => parseArgs(['finish', '--task', '94']), /Incorrect/);
   assert.throws(() => parseArgs(args.concat(['--slot', '2'])), /Duplicate/);
 });
+
+test('an unreadable claim file on another slot blocks archive', async () => {
+  const home = temp();
+  addSlots(home, 1);
+  fs.mkdirSync(path.join(home, 'slot-claims'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'slot-claims', 'slot-2.json'), '{not json');
+  await assert.rejects(finish(input(), { home, verify: () => true, archive: async () => {
+    throw new Error('MUST NOT CALL'); } }), /unreadable claim/);
+});

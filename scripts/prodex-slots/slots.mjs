@@ -383,6 +383,7 @@ export function readClosure(home, id) {
   return record;
 }
 
+export function claimFilePresent(home, id) { return fs.existsSync(claimFile(home, id)); }
 function claimFile(home, id) {
   return path.join(home, 'slot-claims', `slot-${id}.json`);
 }

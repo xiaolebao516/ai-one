@@ -1144,3 +1144,22 @@ test('release with archive evidence and no claim never calls an unconditional re
   assert.ok(readClaim(h.home, 1));
   taken.release();
 });
+
+test('a run never starts on a thread whose archive is pending, and gives its claim back', async () => {
+  const h = harness();
+  const { setStatus } = await import('../../prodex-archive/archive.mjs');
+  await setStatus(h.home, THREAD, { status: 'pending', task: '71', slot: 1 });
+  assert.equal(await h.run(['run', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--', '--target-url', THREAD]), EXIT.ERROR);
+  assert.equal(h.log.asks.length, 0, 'no ask was sent');
+  assert.equal(readClaim(h.home, 1), null, 'the claim was released');
+  assert.match(h.log.err.join(' '), /being archived right now/);
+});
+
+test('a plain release with no claim read leaves a claim that appears afterwards alone', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  assert.equal(await h.run(['release', '--slot', '1', '--task', '71']), EXIT.OK);
+  const taken = claimSlot(h.home, 1, { pid: 222, alive: () => true, meta: { task: '72' } });
+  assert.ok(readClaim(h.home, 1));
+  taken.release();
+});

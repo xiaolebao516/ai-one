@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { claimSlot, claimOwnership, loadConfig, normalizeOwnership, readClaim, slotsHome, slotDefinition, writeClosure } from '../prodex-slots/slots.mjs';
+import { claimFilePresent, claimSlot, claimOwnership, loadConfig, normalizeOwnership, readClaim, slotsHome, slotDefinition, writeClosure } from '../prodex-slots/slots.mjs';
 import { archiveConversation } from './browser-ui.mjs';
 
 export const digest = (url) => crypto.createHash('sha256').update(url).digest('hex');
@@ -169,6 +169,8 @@ function otherClaims(home, ownSlot, url) {
   for (const slot of loadConfig(home).slots) {
     if (slot.id === ownSlot) continue;
     const claim = readClaim(home, slot.id);
+    // A claim file that exists but cannot be read is an unknown occupant, not an empty slot.
+    if (!claim && claimFilePresent(home, slot.id)) throw new Error('Other slot has an unreadable claim; refuse archive (retry when it is cleared)');
     if (!claim) continue;
     // Fail closed: a competing claim that names this thread, or no thread at all, may be someone
     // using it right now, so archiving waits until that claim is gone.
