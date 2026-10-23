@@ -31,6 +31,7 @@ import { workbenchText } from '../../workbenchText';
 import {
   CHAT_PROVIDERS,
   busyTargets,
+  buildForwardMessage,
   classifyResponseContent,
   deriveLoginState,
   settlePendingTargets,
@@ -79,6 +80,8 @@ export interface ChatRuntime {
   forwardMessage: (source: AIProvider, original: string, targets: AIProvider[], note: string) => Promise<boolean>;
   retryProvider: (provider: AIProvider) => Promise<boolean>;
   skipProvider: (provider: AIProvider) => void;
+  setPreset: (presetId: import('./chatModel').ChatPresetId) => void;
+  desktopAvailable: boolean;
 }
 
 interface SendOptions {
@@ -137,7 +140,7 @@ function repliesFromSession(messages: readonly ConversationSessionMessage[]): Pa
   const replies: Partial<Record<AIProvider, ProviderReplyState>> = {};
   for (const message of messages.slice(questionIndex + 1)) {
     if (message.role !== 'ai' || !isProvider(message.provider)) continue;
-    const status = message.final === false ? 'generating' : classifyResponseContent(message.content);
+    const status = message.final === false ? 'failed' : classifyResponseContent(message.content);
     replies[message.provider] = {
       status,
       content: message.content,
@@ -202,6 +205,7 @@ export function useChatRuntime({
   const [busyStartedAt, setBusyStartedAt] = useState<Partial<Record<AIProvider, number>>>({});
   const [now, setNow] = useState(() => Date.now());
   const [notice, setNotice] = useState<ChatRuntimeNotice>();
+  const [desktopAvailable, setDesktopAvailable] = useState(false);
   const activeSessionIdRef = useRef(activeSessionId);
   const desktopAvailableRef = useRef(false);
   const pullBridgeRef = useRef(new Map<AIProvider, PullBridgeState>());
@@ -214,7 +218,7 @@ export function useChatRuntime({
   const requestByProviderRef = useRef(new Map<AIProvider, ProviderRequest>());
   const successfulByRunRef = useRef(new Map<string, Set<AIProvider>>());
 
-  const activeSession = sessions.find((session) => session.id === activeSessionId) ?? sessions[0];
+  const activeSession = (sessions.find((session) => session.id === activeSessionId) ?? sessions[0])!;
   const busyProviders = Object.keys(busyStartedAt).filter((provider) => busyStartedAt[provider as AIProvider] !== undefined) as AIProvider[];
   const hasBusyProviders = busyProviders.length > 0;
 
@@ -246,6 +250,9 @@ export function useChatRuntime({
       desktop = false;
     }
     desktopAvailableRef.current = desktop;
+    void Promise.resolve().then(() => {
+      if (!disposed) setDesktopAvailable(desktop);
+    });
     if (!desktop) return () => { desktopAvailableRef.current = false; };
 
     const handleBridgeMessage = (message: BridgeMessage) => {
@@ -532,6 +539,13 @@ export function useChatRuntime({
         });
         if (presetId !== 'free') {
           runTargets = [];
+          setReplyStates((current) => {
+            const next = { ...current };
+            for (const provider of participants) {
+              if (!failed.has(provider)) next[provider] = { status: 'notSent', content: '', notSentReason: 'not-ready' };
+            }
+            return next;
+          });
         } else {
           runTargets = runTargets.filter((provider) => !failed.has(provider));
         }
@@ -634,11 +648,7 @@ export function useChatRuntime({
 
   const forwardMessage = useCallback(
     (source: AIProvider, original: string, targets: AIProvider[], note: string) => {
-      const message = [
-        '以下是另一位 AI 的新回复（完整内容，本对话尚未收到过）：',
-        `独立初答 · ${AI_PROVIDERS[source].name}\n${original}`,
-        ...(note.trim() ? [`附言：\n${note.trim()}`] : []),
-      ].join('\n\n');
+      const message = buildForwardMessage(AI_PROVIDERS[source].name, original, note);
       return runSend(message, targets, 'free', { forwardedFrom: source, preserveComparison: true });
     },
     [runSend],
@@ -712,6 +722,17 @@ export function useChatRuntime({
 
   const clearNotice = useCallback(() => setNotice(undefined), []);
   const updateSelectedTargets = useCallback((targets: AIProvider[]) => setSelectedTargets([...new Set(targets)]), []);
+  const setPreset = useCallback((presetId: import('./chatModel').ChatPresetId) => {
+    setSessions((current) => {
+      const session = current.find((candidate) => candidate.id === activeSessionId);
+      if (!session) return current;
+      const mode: ChatMode = presetId === 'deliberation' ? 'consult' : presetId;
+      const next: ConversationSession = { ...session, mode, updatedAt: Date.now() };
+      if (presetId === 'deliberation') next.presetId = 'deliberation';
+      else delete next.presetId;
+      return upsertConversationSession(current, next);
+    });
+  }, [activeSessionId]);
 
   return {
     providerStates,
@@ -734,5 +755,7 @@ export function useChatRuntime({
     forwardMessage,
     retryProvider,
     skipProvider,
+    setPreset,
+    desktopAvailable,
   };
 }
