@@ -115,34 +115,6 @@ importers:
         specifier: 'catalog:'
         version: 8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)
 
-  src/apps/mcp:
-    dependencies:
-      '@agent-hud/engine-client':
-        specifier: workspace:*
-        version: link:../../packages/engine-client
-      '@agent-hud/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
-      '@modelcontextprotocol/server':
-        specifier: 2.3.1
-        version: 2.3.1
-      zod:
-        specifier: 4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@modelcontextprotocol/client':
-        specifier: 2.3.1
-        version: 2.3.1
-      '@types/node':
-        specifier: 'catalog:'
-        version: 26.6.5
-      tsx:
-        specifier: 4.23.15
-        version: 4.23.15
-      typescript:
-        specifier: 'catalog:'
-        version: 7.0.2
-
   src/packages/app:
     dependencies:
       '@agent-hud/hud':

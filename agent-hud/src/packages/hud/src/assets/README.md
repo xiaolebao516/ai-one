@@ -1,5 +1,10 @@
 # Original Agent HUD artwork
 
+> **ai-one change:** `clawd-sprites.json` (Anthropic's Clawd artwork, copyrighted and not
+> licensed for redistribution) is **not included** in this repository. Claude's mark uses the
+> procedural bot instead (the renderer falls back when the sprite table cannot be loaded).
+> Everything below describes the upstream tree.
+
 These files are unchanged copies from
 `agent-hud-native-open/Sources/AgentHUDDesktop/Resources/`.
 

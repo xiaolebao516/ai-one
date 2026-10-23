@@ -1,4 +1,5 @@
 [workspace]
+# ai-one change: explicit members, without src/crates/lan (iPhone/Watch remote, not ported).
 members = [
   "src/crates/agents",
   "src/crates/core",
@@ -32,6 +33,7 @@ agent-hud-core = { path = "src/crates/core" }
 agent-hud-host = { path = "src/crates/host" }
 agent-hud-hud = { path = "src/crates/hud" }
 agent-hud-l10n = { path = "src/crates/l10n" }
+# ai-one change: agent-hud-lan removed (crate not ported).
 agent-hud-platform = { path = "src/crates/platform" }
 agent-hud-runtime = { path = "src/crates/runtime" }
 

@@ -15,8 +15,8 @@ use serde_json::{json, Value};
 use std::{
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -29,7 +29,52 @@ const SESSION_LIMIT: usize = 40;
 
 pub struct AiOneExport {
     directory: Option<PathBuf>,
-    stopped: Arc<AtomicBool>,
+    status: Arc<Status>,
+}
+
+/// The heartbeat file's owner. The heartbeat thread and `stop()` both write
+/// `hud-status.json`; the lock makes every write whole and, once stopped, a
+/// heartbeat that was already on its way can no longer write `running: true`
+/// over the final `running: false`.
+pub struct Status {
+    /// `true` once stopped.
+    stopped: Mutex<bool>,
+}
+
+impl Status {
+    fn new() -> Self {
+        Self {
+            stopped: Mutex::new(false),
+        }
+    }
+
+    /// Write a running heartbeat; false once stopped.
+    fn beat(&self, directory: &Path) -> bool {
+        let Ok(stopped) = self.stopped.lock() else {
+            return false;
+        };
+        if *stopped {
+            return false;
+        }
+        let _ = write_atomic(directory, STATUS_FILE, &status_value(true));
+        true
+    }
+
+    /// Write the final `running: false`. Later heartbeats write nothing.
+    fn stop(&self, directory: &Path) {
+        if let Ok(mut stopped) = self.stopped.lock() {
+            *stopped = true;
+            let _ = write_atomic(directory, STATUS_FILE, &status_value(false));
+        }
+    }
+}
+
+fn status_value(running: bool) -> Value {
+    json!({
+        "pid": std::process::id(),
+        "heartbeatAt": chrono::Utc::now().to_rfc3339(),
+        "running": running,
+    })
 }
 
 impl AiOneExport {
@@ -39,7 +84,7 @@ impl AiOneExport {
             .filter(|path| !path.as_os_str().is_empty());
         Self {
             directory,
-            stopped: Arc::new(AtomicBool::new(false)),
+            status: Arc::new(Status::new()),
         }
     }
 }
@@ -47,7 +92,13 @@ impl AiOneExport {
 /// Write `value` to `directory/name` through a temp file in the same folder.
 fn write_atomic(directory: &Path, name: &str, value: &Value) -> Result<(), String> {
     let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
-    let temporary = directory.join(format!(".{name}.{}.tmp", std::process::id()));
+    // One temp name per write, so two writers never share a temp file.
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let temporary = directory.join(format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
     std::fs::rename(&temporary, directory.join(name)).map_err(|error| {
         let _ = std::fs::remove_file(&temporary);
@@ -104,20 +155,11 @@ impl ProductExtension for AiOneExport {
             return Ok(());
         };
         std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-        let stopped = Arc::clone(&self.stopped);
+        let status = Arc::clone(&self.status);
         std::thread::Builder::new()
             .name("ai-one-hud-heartbeat".into())
             .spawn(move || {
-                while !stopped.load(Ordering::Acquire) {
-                    let _ = write_atomic(
-                        &directory,
-                        STATUS_FILE,
-                        &json!({
-                            "pid": std::process::id(),
-                            "heartbeatAt": chrono::Utc::now().to_rfc3339(),
-                            "running": true,
-                        }),
-                    );
+                while status.beat(&directory) {
                     std::thread::sleep(HEARTBEAT);
                 }
             })
@@ -136,17 +178,8 @@ impl ProductExtension for AiOneExport {
     }
 
     fn stop(&self) {
-        self.stopped.store(true, Ordering::Release);
         if let Some(directory) = &self.directory {
-            let _ = write_atomic(
-                directory,
-                STATUS_FILE,
-                &json!({
-                    "pid": std::process::id(),
-                    "heartbeatAt": chrono::Utc::now().to_rfc3339(),
-                    "running": false,
-                }),
-            );
+            self.status.stop(directory);
         }
     }
 }
@@ -182,9 +215,29 @@ mod tests {
         let _ = std::fs::remove_dir_all(&directory);
     }
 
+    #[test]
+    fn a_heartbeat_after_stop_cannot_overwrite_the_final_status() {
+        let directory = tempfile_dir();
+        let status = Status::new();
+        assert!(status.beat(&directory));
+        status.stop(&directory);
+        assert!(!status.beat(&directory), "no heartbeat once stopped");
+        let text = std::fs::read_to_string(directory.join(STATUS_FILE)).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&text).unwrap()["running"],
+            false
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
     fn tempfile_dir() -> PathBuf {
-        let directory =
-            std::env::temp_dir().join(format!("ai-one-hud-export-{}", std::process::id()));
+        let directory = std::env::temp_dir().join(format!(
+            "ai-one-hud-export-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
         std::fs::create_dir_all(&directory).unwrap();
         directory
     }
