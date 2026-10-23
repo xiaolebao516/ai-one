@@ -127,7 +127,7 @@ describe.each(cases)('$name cleaner URL and unverified capability', (site) => {
   });
 
   it('stays manual-only and never navigates or clicks before real DOM read-only calibration', async () => {
-    const evalInPage = vi.fn(async () => JSON.stringify({ ok: true }));
+    const evalInPage = vi.fn(async (_script: string) => JSON.stringify({ ok: true }));
     const navigate = vi.fn(async () => undefined);
     const cleaner = site.factory({ evalInPage, navigate, sleep: vi.fn(async () => undefined) });
     expect(cleaner.provider).toBe(site.config.provider);
@@ -225,7 +225,7 @@ describe.each(cases)('$name cleaner guarded page scripts (synthetic selectors on
     expect(run(buildProviderCleanerScript(fixture(site), site.path, 'check-archive', ['/missing'])).ok).toBe(false);
     document.querySelector('.history-row')?.remove();
     document.body.insertAdjacentHTML('beforeend', '<main><h1>404</h1></main>');
-    expect(run(buildProviderCleanerScript(fixture(site), site.path, 'check-delete')).toMatchObject({ ok: false });
+    expect(run(buildProviderCleanerScript(fixture(site), site.path, 'check-delete'))).toMatchObject({ ok: false });
     expect(run(buildProviderCleanerScript(fixture(site), site.path, 'check-delete', [site.peer])).ok).toBe(false);
     document.body.innerHTML = '<main><h1>Conversation not found</h1></main>';
     expect(run(buildProviderCleanerScript(fixture(site), site.path, 'check-delete')).ok).toBe(false);
@@ -255,7 +255,7 @@ describe.each(cases)('$name cleaner guarded page scripts (synthetic selectors on
 
   it('does not act when the initial target snapshot never succeeds', async () => {
     const config = fixture(site);
-    const evalInPage = vi.fn(async () => JSON.stringify({ ok: false }));
+    const evalInPage = vi.fn(async (_script: string) => JSON.stringify({ ok: false }));
     const navigate = vi.fn(async () => undefined);
     const cleaner = createProviderCleaner(config, {
       evalInPage, navigate, reload: vi.fn(async () => undefined), sleep: vi.fn(async () => undefined),
