@@ -396,9 +396,15 @@ export function ChatLedView({
                   <Button
                     size="sm"
                     variant="primary"
-                    disabled={cleanup.running}
+                    disabled={cleanup.running || !hasExportedPath}
                     loading={cleanup.running}
-                    disabledReason={cleanup.running ? text.t("chatLedCleanupInProgress") : undefined}
+                    disabledReason={
+                      cleanup.running
+                        ? text.t("chatLedCleanupInProgress")
+                        : !hasExportedPath
+                          ? text.t("chatLedExportFirst")
+                          : undefined
+                    }
                     onClick={onCleanup}
                   >
                     {cleanup.running ? text.t("chatLedCleanupInProgress") : text.t("chatLedCleanupButton")}

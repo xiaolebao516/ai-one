@@ -176,4 +176,86 @@ describe('ChatLedController', () => {
     expect(env.stop).toHaveBeenCalledWith('claude');
     expect(run.conversations.map((c) => c.provider).sort()).toEqual(['chatgpt', 'claude']);
   });
+
+  it('does not send when stop arrives while newSession is still pending, and keeps that session known', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [DONE('never')] });
+    let finishSession: () => void = () => undefined;
+    env.newSession = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSession = resolve;
+        }),
+    );
+    const controller = await create(env);
+    const finished = controller.start();
+    await vi.waitFor(() => expect(env.newSession).toHaveBeenCalled());
+    const stopping = controller.stop();
+    finishSession();
+    await stopping;
+    await finished;
+    expect(calls).toHaveLength(0);
+    expect(controller.getRun().phase).toBe('stopped');
+    expect(controller.getRun().conversations.map((c) => c.provider)).toEqual(['chatgpt']);
+  });
+
+  it('does not send while paused during prepare; resumes afterwards', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [DONE('ok')] });
+    let finishPrepare: () => void = () => undefined;
+    env.prepare = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishPrepare = resolve;
+        }),
+    );
+    const controller = await create(env);
+    const finished = controller.start();
+    await vi.waitFor(() => expect(env.prepare).toHaveBeenCalled());
+    controller.pause();
+    finishPrepare();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls).toHaveLength(0);
+    controller.resume();
+    await finished;
+    expect(calls).toHaveLength(1);
+    expect(controller.getRun().phase).toBe('finished');
+  });
+
+  it('stopping while the coordinator is paused still asks the coordinator page to stop', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [] });
+    env.send = vi.fn(async (provider: AIProvider, text: string) => {
+      calls.push({ provider, text });
+      return new Promise<string>(() => undefined);
+    });
+    const controller = await create(env);
+    const finished = controller.start();
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    controller.pause();
+    await controller.stop();
+    await finished;
+    expect(env.stop).toHaveBeenCalledWith('chatgpt');
+  });
+
+  it('registers the target conversation even when the send fails', async () => {
+    const { env } = makeEnv({
+      chatgpt: [SEND(['claude'], 'hi'), DONE('done anyway')],
+      claude: [new Error('send blew up')],
+    });
+    const controller = await create(env);
+    await controller.start();
+    const run = controller.getRun();
+    expect(run.forwards[0].status).toBe('failed');
+    expect(run.phase).toBe('finished');
+    expect(run.conversations.map((c) => c.provider).sort()).toEqual(['chatgpt', 'claude']);
+  });
+
+  it('records the export and the cleanup outcome once', async () => {
+    const { env } = makeEnv({ chatgpt: [DONE('ok')] });
+    const controller = await create(env);
+    await controller.start();
+    controller.markExported();
+    expect(controller.getRun().exportedAt).toBeDefined();
+    controller.recordCleanupResults([{ provider: 'chatgpt', outcome: 'deleted', note: 'x' }]);
+    controller.recordCleanupResults([{ provider: 'chatgpt', outcome: 'manual', note: 'overwrite attempt' }]);
+    expect(controller.getRun().cleanupResults).toEqual([{ provider: 'chatgpt', outcome: 'deleted', note: 'x' }]);
+  });
 });

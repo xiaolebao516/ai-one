@@ -3,6 +3,8 @@ import {
   applyCoordinatorReply,
   closeRun,
   createRun,
+  recordCleanup,
+  recordExport,
   extendRoundLimit,
   failProvider,
   pauseRun,
@@ -15,7 +17,7 @@ import {
   updateForward,
 } from './machine';
 import { buildFeedbackPrompt, buildIntroPrompt, buildViolationReminder, PROVIDER_LABELS } from './protocol';
-import type { ChatLedRun, ForwardRecord } from './types';
+import type { ChatLedRun, CleanupItemResult, ForwardRecord } from './types';
 import { DEFAULT_COORDINATOR, DEFAULT_ROUND_LIMIT } from './types';
 
 /**
@@ -140,7 +142,9 @@ export class ChatLedController {
   /** Ends the run. In-flight providers are asked to stop; their late replies are ignored. */
   async stop(): Promise<void> {
     const inFlight = this.run.forwards.filter((f) => f.status === 'sending' || f.status === 'waiting').map((f) => f.to);
-    const coordinatorBusy = this.run.phase === 'coordinator-thinking';
+    const coordinatorBusy =
+      this.run.phase === 'coordinator-thinking' ||
+      (this.run.phase === 'paused' && this.run.pausedFrom === 'coordinator-thinking');
     this.generation += 1;
     // Register the conversations created so far before the run turns terminal (a terminal run
     // refuses new registrations), so cleanup still knows about them.
@@ -176,6 +180,14 @@ export class ChatLedController {
     await this.drive(buildViolationReminder('no-directive'));
   }
 
+  markExported(): void {
+    this.set(recordExport(this.run, this.env.now()));
+  }
+
+  recordCleanupResults(results: CleanupItemResult[]): void {
+    this.set(recordCleanup(this.run, results, this.env.now()));
+  }
+
   markClosed(exportedMarkdown: boolean): void {
     this.set(closeRun(this.run, exportedMarkdown, this.env.now()));
   }
@@ -201,7 +213,7 @@ export class ChatLedController {
         const coordinator = this.run.coordinator;
         let reply: string;
         try {
-          reply = await this.sendOwned(coordinator, text);
+          reply = await this.sendOwned(coordinator, text, live);
         } catch (error) {
           if (!live()) return;
           this.set(failProvider(this.run, coordinator, errorMessage(error), this.env.now()));
@@ -241,7 +253,7 @@ export class ChatLedController {
       const sendable = await this.env.sendableProviders();
       if (!sendable.includes(forward.to)) throw new Error('Target AI is not logged in or its page is not ready.');
       patch({ status: 'waiting' });
-      const reply = await this.sendOwned(forward.to, forward.message);
+      const reply = await this.sendOwned(forward.to, forward.message, live);
       if (!live()) return;
       await this.registerUrl(forward.to);
       patch({ status: 'done', reply, replyChars: reply.length, finishedAt: this.env.now() });
@@ -250,22 +262,45 @@ export class ChatLedController {
     }
   }
 
-  /** prepare (idle gate) -> own new session on first use -> send -> complete reply. */
-  private async sendOwned(provider: AIProvider, text: string): Promise<string> {
-    await this.env.prepare(provider);
-    if (!this.started.has(provider)) {
-      await this.env.newSession(provider);
-      this.started.add(provider);
-    }
-    // A stopped run must not wait for a page that will never answer.
+  /**
+   * prepare (idle gate) -> own new session on first use -> send -> complete reply.
+   * Every async boundary re-checks "still live" and waits out a pause, so stop/pause during
+   * prepare or newSession can never lead to a send. The stop waiter is registered first.
+   */
+  private async sendOwned(provider: AIProvider, text: string, live: () => boolean): Promise<string> {
     const stopped = new Promise<never>((_, reject) => {
       this.stopWaiters.push(() => reject(new Error('Run stopped by user')));
     });
-    return Promise.race([this.env.send(provider, text), stopped]);
+    const work = (async (): Promise<string> => {
+      const proceed = async (): Promise<void> => {
+        if (!(await this.waitWhilePaused()) || !live()) throw new Error('Run stopped by user');
+      };
+      await proceed();
+      await this.env.prepare(provider);
+      await proceed();
+      if (!this.started.has(provider)) {
+        await this.env.newSession(provider);
+        this.started.add(provider);
+        if (!live()) {
+          // The session exists now: keep it known so cleanup can list it.
+          await this.registerUrl(provider);
+        }
+        await proceed();
+      }
+      try {
+        return await this.env.send(provider, text);
+      } catch (error) {
+        // The conversation was created by this run even though the send failed.
+        if (live()) await this.registerUrl(provider);
+        throw error;
+      }
+    })();
+    work.catch(() => undefined);
+    return Promise.race([work, stopped]);
   }
 
   private async registerUrl(provider: AIProvider): Promise<void> {
-    if (this.run.conversations.some((c) => c.provider === provider)) return;
+    if (this.run.conversations.some((c) => c.provider === provider && hasConversationPath(c.url))) return;
     let url: string | undefined;
     try {
       url = await this.env.readConversationUrl(provider);
@@ -290,4 +325,13 @@ function resumeAfterForwarding(run: ChatLedRun, now: number): ChatLedRun {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** A bare site address (no path) is not a conversation address. */
+function hasConversationPath(url: string): boolean {
+  try {
+    return new URL(url).pathname.length > 1;
+  } catch {
+    return false;
+  }
 }

@@ -100,10 +100,18 @@ function guardedScript(path: string, body: string): string {
     '    const node = element;',
     '    return [node.getAttribute("aria-label"), node.getAttribute("title"), node.innerText, node.textContent].filter((value) => typeof value === "string" && value.length > 0).join(" ").replace(/\\s+/g, " ").trim();',
     '  };',
-    '  const findCandidate = (selectors, labelPattern, testIdPattern) => {',
+    '  const SIDEBAR = "nav, aside, [data-testid=\\"history\\"], [data-testid=\\"history-list\\"]";',
+    '  const inSidebar = (element) => element.closest(SIDEBAR) !== null;',
+    '  const hrefPath = (anchor) => { try { return new URL(anchor.getAttribute("href") || "", window.location.origin).pathname; } catch (error) { return ""; } };',
+    '  const targetRow = () => {',
+    '    const anchor = Array.from(window.document.querySelectorAll("a[href]")).find((node) => inSidebar(node) && hrefPath(node) === expectedPath);',
+    '    return anchor ? (anchor.closest("li") || anchor.parentElement) : null;',
+    '  };',
+    '  const onlyRoot = (selector) => { const roots = window.document.querySelectorAll(selector); return roots.length === 1 ? roots[0] : null; };',
+    '  const findCandidate = (selectors, labelPattern, testIdPattern, root) => {',
     '    const seen = new Set();',
     '    for (const selector of selectors) {',
-    '      const elements = window.document.querySelectorAll(selector);',
+    '      const elements = (root || window.document).querySelectorAll(selector);',
     '      for (const element of elements) {',
     '        if (seen.has(element)) continue;',
     '        seen.add(element);',
@@ -121,8 +129,15 @@ function guardedScript(path: string, body: string): string {
 
 export function buildOpenMenuScript(path: string): string {
   return guardedScript(path, [
-    '  const element = findCandidate(SELECTORS.menuButtons, /more|option|对话选项|聊天选项|更多/i, /conversation-options-menu|conversation-menu-trigger/i);',
-    '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Options menu not found or disabled" });',
+    '  const row = targetRow();',
+    '  let element = null;',
+    '  if (row) element = findCandidate(["button"], /more|option|menu|对话选项|聊天选项|更多|选项/i, /options|menu/i, row);',
+    '  if (!element) {',
+    '    // Header options of the open conversation: never a button that lives in the sidebar.',
+    '    const buttons = Array.from(window.document.querySelectorAll("button")).filter((node) => !inSidebar(node));',
+    '    element = buttons.find((node) => /conversation-options-menu|conversation-menu-trigger/i.test(node.getAttribute("data-testid") || "") || /conversation options|chat options|对话选项|聊天选项/i.test(accessibleName(node))) || null;',
+    '  }',
+    '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Options menu of the registered conversation not found or disabled" });',
     '  element.click();',
     '  return JSON.stringify({ ok: true, note: "Options menu opened" });',
   ].join('\n'));
@@ -130,7 +145,9 @@ export function buildOpenMenuScript(path: string): string {
 
 export function buildDeleteScript(path: string): string {
   return guardedScript(path, [
-    '  const element = findCandidate(SELECTORS.actionCandidates, /delete|remove|删除/i, /delete/i);',
+    '  const menu = onlyRoot("[role=\\"menu\\"]");',
+    '  if (!menu) return JSON.stringify({ ok: false, note: "Expected exactly one open options menu" });',
+    '  const element = findCandidate(SELECTORS.actionCandidates, /delete|remove|删除/i, /delete/i, menu);',
     '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Delete action not found or disabled" });',
     '  element.click();',
     '  return JSON.stringify({ ok: true, note: "Delete action selected" });',
@@ -139,7 +156,9 @@ export function buildDeleteScript(path: string): string {
 
 export function buildArchiveScript(path: string): string {
   return guardedScript(path, [
-    '  const element = findCandidate(SELECTORS.actionCandidates, /archive|归档/i, /archive/i);',
+    '  const menu = onlyRoot("[role=\\"menu\\"]");',
+    '  if (!menu) return JSON.stringify({ ok: false, note: "Expected exactly one open options menu" });',
+    '  const element = findCandidate(SELECTORS.actionCandidates, /archive|归档/i, /archive/i, menu);',
     '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Archive action not found or disabled" });',
     '  element.click();',
     '  return JSON.stringify({ ok: true, note: "Archive action selected" });',
@@ -154,8 +173,10 @@ export function buildConfirmScript(path: string, action: 'delete' | 'archive'): 
 
   return guardedScript(path, [
     '  const action = ' + JSON.stringify(action) + ';',
-    '  const element = findCandidate(SELECTORS.confirmationCandidates, ' + labelPattern + ', ' + testIdPattern + ');',
-    '  if (!element && action === "archive") return JSON.stringify({ ok: true, note: "No archive confirmation dialog required" });',
+    '  const dialogs = window.document.querySelectorAll("[role=\\"dialog\\"], [role=\\"alertdialog\\"]");',
+    '  if (dialogs.length === 0 && action === "archive") return JSON.stringify({ ok: true, note: "No archive confirmation dialog required" });',
+    '  if (dialogs.length !== 1) return JSON.stringify({ ok: false, note: "Expected exactly one confirmation dialog" });',
+    '  const element = findCandidate(["button"], ' + labelPattern + ', ' + testIdPattern + ', dialogs[0]);',
     '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Confirmation button not found or disabled" });',
     '  element.click();',
     '  return JSON.stringify({ ok: true, note: "Confirmation clicked" });',
@@ -189,6 +210,7 @@ function buildSidebarCheckScript(id: string, requireGonePage: boolean): string {
     '  if (!sidebar) return JSON.stringify({ ok: false, note: "History sidebar not found" });',
     '  const links = sidebar.querySelectorAll(SELECTORS.sidebarLinks.join(","));',
     '  const targetPath = "/c/" + targetId;',
+    ...(requireGonePage ? [] : ['  if (links.length === 0) return JSON.stringify({ ok: false, note: "History list is empty or not loaded; cannot confirm" });']),
     '  const stillListed = Array.from(links).some((link) => (link.getAttribute("href") || "").toLowerCase().includes(targetPath));',
     ...pageCondition,
     '  const confirmed = ' + confirmedExpression + ';',

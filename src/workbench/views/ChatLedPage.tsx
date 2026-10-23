@@ -9,7 +9,7 @@ import { executeCleanup, planCleanup, type CleanupPlanItem } from '../../workflo
 import { createChatGptCleaner } from '../../workflow/chatLed/drivers/chatgpt';
 import { createRealChatLedEnv } from '../../workflow/chatLed/env';
 import { exportRunMarkdown } from '../../workflow/chatLed/exportMarkdown';
-import { closeRun } from '../../workflow/chatLed/machine';
+import { closeRun, recordCleanup, recordExport } from '../../workflow/chatLed/machine';
 import { loadRuns, saveRun } from '../../workflow/chatLed/store';
 import type { ChatLedRun, CleanupItemResult } from '../../workflow/chatLed/types';
 import { workbenchText } from '../workbenchText';
@@ -63,7 +63,6 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [takeover, setTakeover] = useState<AIProvider | undefined>();
-  const [exported, setExported] = useState<Record<string, string>>({});
   const [cleanup, setCleanup] = useState<Record<string, { results: CleanupItemResult[] | null; running: boolean }>>({});
   const controllers = useRef(new Map<string, ChatLedController>());
   const runsRef = useRef(runs);
@@ -184,8 +183,11 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
 
   const controller = controllers.current.get(selected.id);
   const state = cleanup[selected.id] ?? { results: null, running: false };
+  // A closed run, or one whose cleanup outcome is already stored, is read-only: never offered again.
+  const cleanupDone = Boolean(selected.closed) || selected.cleanupResults !== undefined;
   const plan: CleanupPlanItem[] | null =
-    selected.phase === 'finished' || selected.phase === 'stopped' ? planCleanup(selected, cleaners) : null;
+    !cleanupDone && (selected.phase === 'finished' || selected.phase === 'stopped') ? planCleanup(selected, cleaners) : null;
+  const exportFile = selected.exportedAt ? `ai-one-chat-led-${selected.id}.md` : undefined;
 
   const doExport = () => {
     const markdown = exportRunMarkdown(selected, text.zh ? 'zh' : 'en');
@@ -199,28 +201,42 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
       anchor.click();
       anchor.remove();
       globalThis.setTimeout(() => URL.revokeObjectURL(url), 10_000);
-      setExported((current) => ({ ...current, [selected.id]: file }));
+      if (controller) controller.markExported();
+      else persist(recordExport(selected, Date.now()));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
   const doCleanup = async () => {
-    if (!plan || state.running) return;
+    // Cleanup is irreversible: it needs the click, a plan, and an exported log (checked again here).
+    if (!plan || state.running || !selected.exportedAt) return;
     setCleanup((current) => ({ ...current, [selected.id]: { results: null, running: true } }));
     let results: CleanupItemResult[] = [];
     try {
       // Only the user's click on "Clean up" reaches this point. The page must exist and be idle.
       await createRealChatLedEnv().prepare('chatgpt').catch(() => undefined);
       results = await executeCleanup(plan, cleaners);
+    } catch (cause) {
+      // Unexpected failure: nothing is confirmed, so every planned item is left for manual cleanup.
+      results = plan.map((item) => ({
+        provider: item.provider,
+        url: item.url,
+        title: item.title,
+        outcome: 'manual' as const,
+        note: cause instanceof Error ? cause.message : String(cause),
+      }));
     } finally {
-      setCleanup((current) => ({ ...current, [selected.id]: { results, running: false } }));
+      setCleanup((current) => ({ ...current, [selected.id]: { results: null, running: false } }));
     }
+    // Persist the outcome so a reload or reopen never offers cleanup again.
+    if (controller) controller.recordCleanupResults(results);
+    else persist(recordCleanup(selected, results, Date.now()));
   };
 
   const doClose = () => {
-    if (controller) controller.markClosed(Boolean(exported[selected.id]));
-    else persist(closeRun(selected, Boolean(exported[selected.id]), Date.now()));
+    if (controller) controller.markClosed(Boolean(selected.exportedAt));
+    else persist(closeRun(selected, Boolean(selected.exportedAt), Date.now()));
   };
 
   const doTakeOver = async (provider: AIProvider) => {
@@ -259,8 +275,8 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
         locale={locale}
         run={selected}
         providerLabels={PROVIDER_LABELS}
-        cleanup={{ plan, results: state.results, running: state.running }}
-        exportedPath={exported[selected.id]}
+        cleanup={{ plan, results: selected.cleanupResults ?? null, running: state.running }}
+        exportedPath={exportFile}
         onPause={() => controller?.pause()}
         onResume={() => controller?.resume()}
         onStop={() => void controller?.stop()}

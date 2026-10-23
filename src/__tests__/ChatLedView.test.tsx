@@ -288,12 +288,42 @@ describe("ChatLedView timeline and cleanup", () => {
         results: null,
         running: false,
       },
+      exportedPath: "ai-one-chat-led-run.md",
       onCleanup,
     });
 
     expect(onCleanup).not.toHaveBeenCalled();
     await clickButton(container, "Clean up");
     expect(onCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps cleanup disabled until the forwarding log was exported", async () => {
+    const onCleanup = vi.fn();
+    const container = await renderView({
+      run: makeRun({ phase: "finished" }),
+      cleanup: {
+        plan: [
+          {
+            provider: "chatgpt",
+            url: "https://chatgpt.com/c/123e4567-e89b-42d3-a456-426614174000",
+            action: "delete",
+            irreversible: true,
+            reason: "Created by this run",
+          },
+        ],
+        results: null,
+        running: false,
+      },
+      onCleanup,
+    });
+    const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
+      candidate.textContent?.includes("Clean up"),
+    );
+    expect(button?.hasAttribute("disabled")).toBe(true);
+    await act(async () => {
+      button?.click();
+    });
+    expect(onCleanup).not.toHaveBeenCalled();
   });
 
   it("disables cleanup while a cleanup operation is running", async () => {

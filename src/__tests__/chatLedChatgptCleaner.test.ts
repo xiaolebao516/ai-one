@@ -60,7 +60,7 @@ describe('ChatGPT page scripts', () => {
 
   it('clicks a matching delete action after the pathname guard passes', () => {
     window.history.replaceState({}, '', CONVERSATION_PATH);
-    document.body.innerHTML = '<button data-testid="delete-chat-button">Delete</button>';
+    document.body.innerHTML = '<div role="menu"><button data-testid="delete-chat-button">Delete</button></div>';
     const button = document.querySelector('button');
     if (!button) throw new Error('Test fixture button was not created');
     const click = vi.fn();
@@ -129,7 +129,11 @@ describe('ChatGPT page scripts', () => {
   });
 
   it('requires a history sidebar and a fresh absence check for archive confirmation', () => {
+    // An empty or still-loading history list proves nothing.
     document.body.innerHTML = '<aside data-testid="history"></aside>';
+    expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID))).ok).toBe(false);
+
+    document.body.innerHTML = '<aside data-testid="history"><a href="/c/123e4567-e89b-42d3-a456-426614174999">Other</a></aside>';
     expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID))).ok).toBe(true);
 
     document.body.innerHTML = '<aside data-testid="history"><a href="' + CONVERSATION_PATH + '">Still listed</a></aside>';
@@ -137,6 +141,72 @@ describe('ChatGPT page scripts', () => {
 
     document.body.innerHTML = '<main>No sidebar loaded</main>';
     expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID))).ok).toBe(false);
+  });
+});
+
+describe('ChatGPT page scripts: only the registered conversation is touched', () => {
+  const OTHER_PATH = '/c/123e4567-e89b-42d3-a456-426614174777';
+
+  it('opens the options menu of the registered sidebar row, never another conversation row', () => {
+    window.history.replaceState({}, '', CONVERSATION_PATH);
+    document.body.innerHTML = [
+      '<nav><ul>',
+      '<li><a href="' + OTHER_PATH + '">Other</a><button aria-label="More options" id="other">...</button></li>',
+      '<li><a href="' + CONVERSATION_PATH + '">Mine</a><button aria-label="More options" id="mine">...</button></li>',
+      '</ul></nav>',
+    ].join('');
+    const other = vi.fn();
+    const mine = vi.fn();
+    document.getElementById('other')?.addEventListener('click', other);
+    document.getElementById('mine')?.addEventListener('click', mine);
+
+    expect(JSON.parse(runPageScript(buildOpenMenuScript(CONVERSATION_PATH))).ok).toBe(true);
+    expect(mine).toHaveBeenCalledTimes(1);
+    expect(other).not.toHaveBeenCalled();
+  });
+
+  it('does not click a sidebar options button when the registered row is not listed', () => {
+    window.history.replaceState({}, '', CONVERSATION_PATH);
+    document.body.innerHTML = '<nav><ul><li><a href="' + OTHER_PATH + '">Other</a><button aria-label="More options" id="other">...</button></li></ul></nav>';
+    const other = vi.fn();
+    document.getElementById('other')?.addEventListener('click', other);
+
+    expect(JSON.parse(runPageScript(buildOpenMenuScript(CONVERSATION_PATH))).ok).toBe(false);
+    expect(other).not.toHaveBeenCalled();
+  });
+
+  it('refuses to pick a delete action unless exactly one options menu is open', () => {
+    window.history.replaceState({}, '', CONVERSATION_PATH);
+    document.body.innerHTML = [
+      '<button data-testid="delete-chat-button" id="stray">Delete</button>',
+      '<div role="menu"><button data-testid="delete-chat-button" id="a">Delete</button></div>',
+      '<div role="menu"><button data-testid="delete-chat-button" id="b">Delete</button></div>',
+    ].join('');
+    const clicks = vi.fn();
+    for (const id of ['stray', 'a', 'b']) document.getElementById(id)?.addEventListener('click', clicks);
+
+    expect(JSON.parse(runPageScript(buildDeleteScript(CONVERSATION_PATH))).ok).toBe(false);
+    expect(clicks).not.toHaveBeenCalled();
+
+    // No menu at all: a loose Delete button elsewhere on the page must not be clicked either.
+    document.body.innerHTML = '<button data-testid="delete-chat-button" id="stray">Delete</button>';
+    document.getElementById('stray')?.addEventListener('click', clicks);
+    expect(JSON.parse(runPageScript(buildDeleteScript(CONVERSATION_PATH))).ok).toBe(false);
+    expect(clicks).not.toHaveBeenCalled();
+  });
+
+  it('requires exactly one confirmation dialog before confirming a delete', () => {
+    window.history.replaceState({}, '', CONVERSATION_PATH);
+    document.body.innerHTML = [
+      '<button data-testid="confirm-delete-button" id="stray">Delete</button>',
+      '<div role="dialog"><button id="a">Delete</button></div>',
+      '<div role="dialog"><button id="b">Delete</button></div>',
+    ].join('');
+    const clicks = vi.fn();
+    for (const id of ['stray', 'a', 'b']) document.getElementById(id)?.addEventListener('click', clicks);
+
+    expect(JSON.parse(runPageScript(buildConfirmScript(CONVERSATION_PATH, 'delete'))).ok).toBe(false);
+    expect(clicks).not.toHaveBeenCalled();
   });
 });
 

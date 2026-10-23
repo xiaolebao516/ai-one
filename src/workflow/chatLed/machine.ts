@@ -3,6 +3,7 @@ import {
   DEFAULT_COORDINATOR,
   DEFAULT_ROUND_LIMIT,
   type ChatLedRun,
+  type CleanupItemResult,
   type ForwardRecord,
   type ForwardStatus,
   type RegisteredConversation,
@@ -210,7 +211,9 @@ export function registerConversation(
   conv: Omit<RegisteredConversation, 'registeredAt'>,
   now: number,
 ): ChatLedRun {
-  if (isTerminal(run)) return run;
+  // Finished and stopped runs still accept registrations (a conversation created while the
+  // run was being stopped must stay known to cleanup); only a closed run is frozen.
+  if (run.closed) return run;
   if (run.conversations.some((item) => item.provider === conv.provider && item.url === conv.url)) {
     return run;
   }
@@ -335,6 +338,17 @@ export function failProvider(
     forwards,
     updatedAt: now,
   };
+}
+
+export function recordExport(run: ChatLedRun, now: number): ChatLedRun {
+  if (run.closed) return run;
+  return { ...run, exportedAt: now, updatedAt: now };
+}
+
+/** Stores the cleanup outcome once; later calls are ignored so results are never overwritten. */
+export function recordCleanup(run: ChatLedRun, results: CleanupItemResult[], now: number): ChatLedRun {
+  if (run.cleanupResults || (run.phase !== 'finished' && run.phase !== 'stopped')) return run;
+  return { ...run, cleanupResults: results, updatedAt: now };
 }
 
 export function closeRun(

@@ -108,6 +108,10 @@ export interface ChatLedRun {
   createdAt: number;
   updatedAt: number;
   closed?: { at: number; exportedMarkdown: boolean }; // set once cleanup finished or user closed
+  /** Set when the user exported the Markdown log; cleanup is gated on it. */
+  exportedAt?: number;
+  /** Persisted cleanup outcome; once present the run is never offered cleanup again. */
+  cleanupResults?: CleanupItemResult[];
 }
 
 /** Cleanup outcome per registered conversation. Only readback-confirmed outcomes count. */
