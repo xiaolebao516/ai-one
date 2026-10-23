@@ -1,0 +1,642 @@
+import { useEffect, useRef, useState } from "react";
+import { ArrowRight, Check, ChevronLeft, LoaderCircle, X } from "lucide-react";
+import type {
+  Approval,
+  RequestAnswer,
+  RequestDecision,
+} from "@agent-hud/protocol";
+import { clientDisplayName } from "../IslandNews";
+import { alertFill, alertText, onAlertFill, permissionColors } from "../tokens";
+import { useGround } from "../ground";
+import { cardColumn } from "../card-column";
+
+/** A question's draft: the offered answers picked, the words typed, and
+ * whether those words are the answer (`own`). Skipping or picking a single
+ * option sets the words aside without erasing them, as Open's
+ * QuestionDraft does. */
+type Draft = RequestAnswer & { own?: boolean };
+
+/** The least room an option's description takes beside its answer before it goes to a line of its own. */
+const OPTION_DESCRIPTION_MIN_WIDTH = 96;
+
+const drafts = new Map<
+  string,
+  { answers: Record<string, Draft>; page: number }
+>();
+
+export function PermissionQuestionCard({
+  request,
+  disabled,
+  pending,
+  light = false,
+  zh = false,
+  answer,
+}: {
+  request: Approval;
+  disabled: boolean;
+  pending: boolean;
+  light?: boolean;
+  zh?: boolean;
+  answer: (decision: RequestDecision) => void | Promise<void>;
+}) {
+  const t = (en: string, cn: string) => (zh ? cn : en);
+  const [answers, setAnswers] = useState<Record<string, Draft>>(
+    () => drafts.get(request.id)?.answers ?? {},
+  );
+  const [page, setPageState] = useState(
+    () => drafts.get(request.id)?.page ?? 0,
+  );
+  const [editingCustomKey, setEditingCustomKey] = useState<string | null>(null);
+  const customInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const saved = drafts.get(request.id);
+    setAnswers(saved?.answers ?? {});
+    setPageState(saved?.page ?? 0);
+    setEditingCustomKey(null);
+  }, [request.id]);
+
+  const setPage = (nextPage: number) => {
+    setPageState(nextPage);
+    const current = drafts.get(request.id);
+    drafts.set(request.id, {
+      answers: current?.answers ?? answers,
+      page: nextPage,
+    });
+  };
+
+  const questions = request.questions ?? [];
+  const canAnswerQuestion =
+    request.answersQuestion !== false && questions.length > 0;
+  const vendor = request.vendor ?? clientDisplayName(request.source);
+  const detailText = request.detail?.trim() || null;
+
+  const text = (alpha: number) =>
+    light ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`;
+  const stroke = (alpha: number) =>
+    light ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`;
+  const primary = text(0.92);
+  const secondary = text(0.55);
+  const tertiary = text(0.38);
+  const inset = light ? "rgba(0,0,0,0.045)" : "rgba(255,255,255,0.055)";
+  const highlight = light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.1)";
+  const ground = useGround(light);
+  const controls = permissionColors(ground);
+  const allow = controls.allowFill;
+  const onAllow = controls.onAllow;
+  const signal = alertFill("warning", ground);
+  const signalText = alertText("warning", ground);
+  const onSignal = onAlertFill(ground);
+
+  const changeAnswer = (key: string, patch: Partial<Draft>) =>
+    setAnswers((previous) => {
+      const next = {
+        ...previous,
+        [key]: {
+          ...previous[key],
+          ...patch,
+          selected: patch.selected ?? previous[key]?.selected ?? [],
+        },
+      };
+      drafts.set(request.id, {
+        answers: next,
+        page: drafts.get(request.id)?.page ?? page,
+      });
+      return next;
+    });
+
+  const submitAllAnswers = (omitKey?: string) => {
+    // Several picks are filed in the order they were offered; the typed
+    // words only when they are the chosen answer.
+    const written = Object.fromEntries(
+      Object.entries(answers)
+        .map(([key, value]) => {
+          const offered =
+            questions
+              .find((q) => q.answerKey === key)
+              ?.options.map((o) => o.label) ?? value.selected;
+          const selected = offered.filter((label) =>
+            value.selected.includes(label),
+          );
+          const custom = value.own ? value.custom?.trim() : undefined;
+          return [key, { selected, ...(custom ? { custom } : {}) }] as const;
+        })
+        .filter(
+          ([key, value]) =>
+            key !== omitKey && (value.selected.length > 0 || "custom" in value),
+        ),
+    );
+    drafts.delete(request.id);
+    void answer({ kind: "answer", answers: written });
+  };
+
+  if (!canAnswerQuestion) {
+    return (
+      <div style={cardColumn(8)}>
+        {detailText && (
+          <div style={{ fontSize: 11, color: secondary, lineHeight: 1.35 }}>
+            {detailText}
+          </div>
+        )}
+        {questions.map((q) => (
+          <div key={q.answerKey} style={cardColumn(5)}>
+            {q.header && (
+              <span
+                style={{
+                  justifySelf: "start",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: "2px 6px",
+                  borderRadius: 4,
+                  background: "rgba(233, 161, 109, 0.14)",
+                  color: signalText,
+                }}
+              >
+                {q.header}
+              </span>
+            )}
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: primary,
+              }}
+            >
+              {q.question}
+            </div>
+            {q.options.length > 0 && (
+              <div style={cardColumn(3)}>
+                {q.options.map((opt) => (
+                  <div
+                    key={opt.label}
+                    // The answer may be cut at two lines; all of it on hover (Open's `.help`).
+                    title={opt.label}
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      alignItems: "baseline",
+                      columnGap: 6,
+                      rowGap: 2,
+                      padding: "4px 7px",
+                      borderRadius: 5,
+                      background: inset,
+                    }}
+                  >
+                    {/* The answer keeps its own width and wraps only where the row cannot hold it, in two lines
+                        at most (Open's lineLimit(2)); the description takes what is left, or a line of its own
+                        when that is too little to read. Shrunk with it, "All A" broke into "All" over "A". */}
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        maxWidth: "100%",
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                        overflowWrap: "anywhere",
+                        fontSize: 11,
+                        fontWeight: 500,
+                        color: text(0.84),
+                      }}
+                    >
+                      {opt.label}
+                    </span>
+                    {/* The description wraps and is shown whole: it is the only place the card says what an answer
+                        does, and cut to one line it lost the part that mattered (a Claude next-step button whose
+                        message ran past the row). Open shows it only on hover. */}
+                    {opt.description && (
+                      <span
+                        style={{
+                          flex: `1 1 ${OPTION_DESCRIPTION_MIN_WIDTH}px`,
+                          minWidth: 0,
+                          fontSize: 10,
+                          lineHeight: 1.35,
+                          color: secondary,
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        {opt.description}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/* Core says why this one can be answered only in the client; without it, a Claude next-step box
+              showed only "Answer in Claude", with nothing to say why its buttons did nothing. */}
+          <span style={{ ...cardColumn(2), minWidth: 0 }}>
+            <span style={{ fontSize: 11, color: secondary }}>
+              {t(`Answer in ${vendor}`, `请到 ${vendor} 里回答`)}
+            </span>
+            {request.answerNote && (
+              <span style={{ fontSize: 10, lineHeight: 1.35, color: tertiary }}>
+                {request.answerNote}
+              </span>
+            )}
+          </span>
+          <span style={{ flex: 1, minWidth: 8 }} />
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              drafts.delete(request.id);
+              void answer({ kind: "leave" });
+            }}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              height: 22,
+              padding: "0 9px",
+              borderRadius: 6,
+              border: `1px solid ${stroke(0.18)}`,
+              background: "transparent",
+              color: secondary,
+              fontSize: 11,
+              fontWeight: 500,
+              cursor: disabled ? "default" : "pointer",
+            }}
+          >
+            <X size={9} strokeWidth={2.6} />
+            {t("Dismiss", "知道了")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const safePage = Math.min(page, Math.max(0, questions.length - 1));
+  const q = questions[safePage];
+  if (!q) return null;
+  const key = q.answerKey;
+  const value = answers[key] ?? { selected: [] };
+  const hasCustom = Boolean(value.own && value.custom?.trim());
+  const isAnswered = value.selected.length > 0 || hasCustom;
+  const editingCustom = editingCustomKey === key || q.options.length === 0;
+  useEffect(() => {
+    if (!editingCustom) return;
+    const input = customInputRef.current;
+    if (!input || input.closest("[inert], [aria-hidden=true]")) return;
+    input.focus({ preventScroll: true });
+  }, [editingCustom, key]);
+  const advanceOrSubmit = () => {
+    if (!isAnswered || disabled) return;
+    setEditingCustomKey(null);
+    if (safePage + 1 < questions.length) {
+      setPage(safePage + 1);
+    } else {
+      submitAllAnswers();
+    }
+  };
+
+  const renderMarker = (chosen: boolean, multi: boolean) => (
+    <span
+      aria-hidden="true"
+      style={{
+        width: 12,
+        height: 12,
+        borderRadius: multi ? 3 : "50%",
+        border: `1.2px solid ${chosen ? signal : stroke(0.28)}`,
+        background: chosen ? signal : "transparent",
+        display: "inline-grid",
+        placeItems: "center",
+        flexShrink: 0,
+        marginTop: 1,
+      }}
+    >
+      {chosen && <Check size={7} strokeWidth={3} color={onSignal} />}
+    </span>
+  );
+
+  return (
+    <div style={cardColumn(8)}>
+      {detailText && (
+        <div style={{ fontSize: 11, color: secondary, lineHeight: 1.35 }}>
+          {detailText}
+        </div>
+      )}
+      {(q.header || questions.length > 1) && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          {q.header && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                padding: "2px 6px",
+                borderRadius: 4,
+                background: "rgba(233, 161, 109, 0.14)",
+                color: signalText,
+              }}
+            >
+              {q.header}
+            </span>
+          )}
+          <span style={{ flex: 1 }} />
+          {questions.length > 1 && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 500,
+                fontVariantNumeric: "tabular-nums",
+                color: tertiary,
+              }}
+            >
+              {safePage + 1} / {questions.length}
+            </span>
+          )}
+        </div>
+      )}
+      <div style={cardColumn(2)}>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: primary,
+            lineHeight: 1.4,
+          }}
+        >
+          {q.question}
+        </div>
+        {q.multiSelect && (
+          <div style={{ fontSize: 10, color: tertiary }}>
+            {t("Choose any", "可多选")}
+          </div>
+        )}
+      </div>
+      <div style={cardColumn(4)}>
+        {q.options.map((option) => {
+          const chosen = value.selected.includes(option.label);
+          return (
+            <button
+              key={option.label}
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                setEditingCustomKey(null);
+                if (q.multiSelect) {
+                  const nextSelected = q.options
+                    .map((o) => o.label)
+                    .filter((label) =>
+                      label === option.label
+                        ? !chosen
+                        : value.selected.includes(label),
+                    );
+                  changeAnswer(key, { selected: nextSelected });
+                } else {
+                  changeAnswer(key, { selected: [option.label], own: false });
+                }
+              }}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 7,
+                width: "100%",
+                padding: "6px 8px",
+                borderRadius: 6,
+                border: `1px solid ${chosen ? "rgba(233,161,109,0.45)" : "transparent"}`,
+                background: chosen ? highlight : inset,
+                color: "inherit",
+                textAlign: "left",
+                cursor: disabled ? "default" : "pointer",
+              }}
+            >
+              {renderMarker(chosen, q.multiSelect)}
+              <span
+                style={{
+                  ...cardColumn(2),
+                  minWidth: 0,
+                  flex: 1,
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 500,
+                    color: primary,
+                  }}
+                >
+                  {option.label}
+                </span>
+                {/* Decided 2026-10-21: shown whole, not cut at two lines (Open's lineLimit(2)). It says what picking
+                    this answer does, and the end of a long one is often the part that decides. */}
+                {option.description && (
+                  <span
+                    style={{
+                      fontSize: 10,
+                      lineHeight: 1.35,
+                      color: secondary,
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {option.description}
+                  </span>
+                )}
+              </span>
+            </button>
+          );
+        })}
+        {editingCustom ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              padding: "6px 8px",
+              borderRadius: 6,
+              border: "1px solid rgba(233,161,109,0.45)",
+              background: hasCustom ? highlight : inset,
+            }}
+          >
+            {renderMarker(hasCustom, q.multiSelect)}
+            <input
+              ref={customInputRef}
+              type="text"
+              aria-label={t("Your own answer", "补充回答")}
+              placeholder={
+                q.options.length === 0
+                  ? t("Type an answer", "输入回答")
+                  : t("Other", "其他回答")
+              }
+              value={value.custom ?? ""}
+              disabled={disabled}
+              onChange={(e) => {
+                const textVal = e.target.value;
+                changeAnswer(key, {
+                  custom: textVal,
+                  own: true,
+                  ...(q.multiSelect ? {} : { selected: [] }),
+                });
+              }}
+              onKeyDown={(e) => {
+                // Return while an input method is composing belongs to it.
+                if (
+                  e.key === "Enter" &&
+                  !e.nativeEvent.isComposing &&
+                  e.keyCode !== 229
+                ) {
+                  e.preventDefault();
+                  advanceOrSubmit();
+                }
+              }}
+              style={{
+                flex: 1,
+                border: 0,
+                outline: 0,
+                background: "transparent",
+                color: primary,
+                fontSize: 11,
+                fontFamily: "inherit",
+              }}
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              // Going into the field is choosing to answer in one's own words.
+              changeAnswer(key, {
+                own: true,
+                ...(q.multiSelect ? {} : { selected: [] }),
+              });
+              setEditingCustomKey(key);
+            }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              width: "100%",
+              padding: "6px 8px",
+              borderRadius: 6,
+              border: `1px solid ${hasCustom ? "rgba(233,161,109,0.45)" : "transparent"}`,
+              background: hasCustom ? highlight : inset,
+              color: "inherit",
+              textAlign: "left",
+              cursor: disabled ? "default" : "pointer",
+            }}
+          >
+            {renderMarker(hasCustom, q.multiSelect)}
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 500,
+                color: hasCustom ? primary : secondary,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {value.custom?.trim() ? value.custom : t("Other", "其他")}
+            </span>
+          </button>
+        )}
+      </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => {
+            setEditingCustomKey(null);
+            changeAnswer(key, { selected: [], own: false });
+            if (safePage + 1 < questions.length) {
+              setPage(safePage + 1);
+            } else {
+              submitAllAnswers(key);
+            }
+          }}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            height: 22,
+            padding: "0 9px",
+            borderRadius: 6,
+            border: `1px solid ${stroke(0.18)}`,
+            background: "transparent",
+            color: secondary,
+            fontSize: 11,
+            fontWeight: 500,
+            cursor: disabled ? "default" : "pointer",
+          }}
+        >
+          <ArrowRight size={9} strokeWidth={2.6} />
+          {t("Skip", "跳过")}
+        </button>
+        <span style={{ flex: 1, minWidth: 8 }} />
+        {safePage > 0 && (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              setEditingCustomKey(null);
+              setPage(safePage - 1);
+            }}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              height: 22,
+              padding: "0 9px",
+              borderRadius: 6,
+              border: `1px solid ${stroke(0.18)}`,
+              background: "transparent",
+              color: secondary,
+              fontSize: 11,
+              fontWeight: 500,
+              cursor: disabled ? "default" : "pointer",
+            }}
+          >
+            <ChevronLeft size={9} strokeWidth={2.6} />
+            {t("Back", "返回")}
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={disabled || !isAnswered}
+          onClick={advanceOrSubmit}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            height: 22,
+            padding: "0 9px",
+            borderRadius: 6,
+            border: 0,
+            background: allow,
+            color: onAllow,
+            fontSize: 11,
+            fontWeight: 500,
+            opacity: isAnswered ? 1 : 0.45,
+            cursor: disabled || !isAnswered ? "default" : "pointer",
+          }}
+        >
+          {pending ? (
+            <LoaderCircle size={9} className="animate-spin" />
+          ) : safePage + 1 < questions.length ? (
+            <ArrowRight size={9} strokeWidth={2.6} />
+          ) : (
+            <Check size={9} strokeWidth={2.6} />
+          )}
+          {safePage + 1 < questions.length
+            ? t("Next", "继续")
+            : t("Submit", "提交")}
+        </button>
+      </div>
+    </div>
+  );
+}

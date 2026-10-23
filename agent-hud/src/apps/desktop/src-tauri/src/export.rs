@@ -1,0 +1,191 @@
+//! ai-one addition (not upstream code; Apache-2.0, same as this tree).
+//!
+//! Publishes what the HUD already computed to a folder ai-one reads:
+//!
+//! * `hud-snapshot.json` - the quotas, accounts, providers, billing, a short
+//!   session list and the token totals of the newest snapshot, written whenever the snapshot
+//!   changes (atomic: temp file, then rename).
+//! * `hud-status.json` - `{pid, heartbeatAt}` every few seconds, so ai-one can
+//!   tell a running HUD from a stale file.
+//!
+//! The folder comes from `AI_ONE_HUD_EXPORT_DIR`. Without it nothing is
+//! written. The HUD never reads anything back from this folder.
+use agent_hud_host::extension::{HostContext, ProductExtension};
+use serde_json::{json, Value};
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+
+const SNAPSHOT_FILE: &str = "hud-snapshot.json";
+const STATUS_FILE: &str = "hud-status.json";
+const HEARTBEAT: Duration = Duration::from_secs(5);
+/// Sessions kept in the export; the HUD itself shows only recent ones.
+const SESSION_LIMIT: usize = 40;
+
+pub struct AiOneExport {
+    directory: Option<PathBuf>,
+    stopped: Arc<AtomicBool>,
+}
+
+impl AiOneExport {
+    pub fn from_environment() -> Self {
+        let directory = std::env::var_os("AI_ONE_HUD_EXPORT_DIR")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty());
+        Self {
+            directory,
+            stopped: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+/// Write `value` to `directory/name` through a temp file in the same folder.
+fn write_atomic(directory: &Path, name: &str, value: &Value) -> Result<(), String> {
+    let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
+    let temporary = directory.join(format!(".{name}.{}.tmp", std::process::id()));
+    std::fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+    std::fs::rename(&temporary, directory.join(name)).map_err(|error| {
+        let _ = std::fs::remove_file(&temporary);
+        error.to_string()
+    })
+}
+
+/// The part of a snapshot ai-one needs. Fields are copied as the HUD wrote
+/// them; nothing is derived here, so an unknown value stays unknown.
+pub fn reduce(snapshot: &Value) -> Value {
+    let sessions: Vec<Value> = snapshot
+        .get("sessions")
+        .and_then(Value::as_array)
+        .map(|sessions| {
+            sessions
+                .iter()
+                .take(SESSION_LIMIT)
+                .map(|session| {
+                    json!({
+                        "id": session.get("id"),
+                        "title": session.get("title"),
+                        "source": session.get("source"),
+                        "state": session.get("state"),
+                        "updatedAt": session.get("updatedAt"),
+                        "tokens": session.get("tokens"),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    json!({
+        "schemaVersion": 1,
+        "generatedAt": snapshot.get("generatedAt"),
+        "mode": snapshot.get("mode"),
+        "connection": {
+            "status": snapshot.pointer("/connection/status"),
+            "message": snapshot.pointer("/connection/message"),
+            "platform": snapshot.pointer("/connection/platform"),
+            "platformCapabilities": snapshot.pointer("/connection/platformCapabilities"),
+        },
+        "accounts": snapshot.get("accounts").cloned().unwrap_or(json!([])),
+        "providers": snapshot.get("providers").cloned().unwrap_or(json!([])),
+        "indexing": snapshot.get("indexing"),
+        "totals": snapshot.get("totals"),
+        "quotas": snapshot.get("quotas").cloned().unwrap_or(json!([])),
+        "billing": snapshot.get("billing").cloned().unwrap_or(json!([])),
+        "sessions": sessions,
+    })
+}
+
+impl ProductExtension for AiOneExport {
+    fn start(&self, _host: HostContext) -> Result<(), String> {
+        let Some(directory) = self.directory.clone() else {
+            return Ok(());
+        };
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let stopped = Arc::clone(&self.stopped);
+        std::thread::Builder::new()
+            .name("ai-one-hud-heartbeat".into())
+            .spawn(move || {
+                while !stopped.load(Ordering::Acquire) {
+                    let _ = write_atomic(
+                        &directory,
+                        STATUS_FILE,
+                        &json!({
+                            "pid": std::process::id(),
+                            "heartbeatAt": chrono::Utc::now().to_rfc3339(),
+                            "running": true,
+                        }),
+                    );
+                    std::thread::sleep(HEARTBEAT);
+                }
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn request(&self, method: &str, _params: Value) -> Result<Value, String> {
+        Err(format!("ai-one HUD has no product request \"{method}\""))
+    }
+
+    fn observe_snapshot(&self, snapshot: Arc<Value>) {
+        if let Some(directory) = &self.directory {
+            let _ = write_atomic(directory, SNAPSHOT_FILE, &reduce(&snapshot));
+        }
+    }
+
+    fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
+        if let Some(directory) = &self.directory {
+            let _ = write_atomic(
+                directory,
+                STATUS_FILE,
+                &json!({
+                    "pid": std::process::id(),
+                    "heartbeatAt": chrono::Utc::now().to_rfc3339(),
+                    "running": false,
+                }),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reduce_keeps_unknown_values_unknown() {
+        let snapshot = json!({
+            "generatedAt": "2026-10-23T00:00:00Z",
+            "mode": "live",
+            "connection": {"status": "connected", "platform": "windows", "message": null},
+            "quotas": [{"id": "q", "vendor": "claude", "name": "5h", "usedPercent": null,
+                        "resetAt": null, "status": "stale", "account": null}],
+            "sessions": [{"id": "s", "title": "t", "source": "claude", "state": "running",
+                          "updatedAt": "x", "tokens": 3, "cwd": "C:/secret"}],
+        });
+        let reduced = reduce(&snapshot);
+        assert_eq!(reduced["quotas"][0]["usedPercent"], Value::Null);
+        assert_eq!(reduced["sessions"][0].get("cwd"), None);
+        assert_eq!(reduced["billing"], json!([]));
+    }
+
+    #[test]
+    fn atomic_write_replaces_file() {
+        let directory = tempfile_dir();
+        write_atomic(&directory, SNAPSHOT_FILE, &json!({"a": 1})).unwrap();
+        write_atomic(&directory, SNAPSHOT_FILE, &json!({"a": 2})).unwrap();
+        let text = std::fs::read_to_string(directory.join(SNAPSHOT_FILE)).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["a"], 2);
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    fn tempfile_dir() -> PathBuf {
+        let directory =
+            std::env::temp_dir().join(format!("ai-one-hud-export-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+}

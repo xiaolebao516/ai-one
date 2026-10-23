@@ -4,7 +4,7 @@
 
 - 产品目标是复用用户已有的 AI 网页订阅与原生工具，让多个 AI 独立取证并自动交换完整回复，支持暂停、人工接管、恢复及会话交接。
 - **当前产品方向与阶段优先级以 [Spec #32](https://github.com/xiaolebao516/ai-one/issues/32)（xiaolebao516/ai-one#32）为准**；旧 V1 Epic（#1）及其子任务、`docs/design/` 中的 V1 设计是历史参考，不再单独作为现行需求。实现范围以各 Spec / Task Issue 为准。旧 V1 曾把 Bridge、CLI Agent、远程控制、智能历史压缩列为不做；这不是永久禁止，是否及何时实施由 #32 与对应的有效 Spec 或独立 Task 决定，没有对应 Issue 不实现。
-- UI/UX 的当前依据是 #32 及其后续设计 Task 的成果（目前为 #33 交付的 `docs/design/v2-product-design.md` 与 `docs/design/v2-prototype/`，与 #32 冲突时以 #32 为准）；`docs/design/` 的 V1 文件仅作历史参考。技术依据为 `TECHNICAL-RESEARCH-V1.md` 与 `research-evidence/`。这些文件只在对应 Issue 的范围内修改。Agent HUD Open 仅作视觉参考。
+- UI/UX 的当前依据是 #32 及其后续设计 Task 的成果（目前为 #33 交付的 `docs/design/v2-product-design.md` 与 `docs/design/v2-prototype/`，与 #32 冲突时以 #32 为准）；`docs/design/` 的 V1 文件仅作历史参考。技术依据为 `TECHNICAL-RESEARCH-V1.md` 与 `research-evidence/`。这些文件只在对应 Issue 的范围内修改。额度 HUD 以 `agent-hud/`（移植自 Agent HUD Open，Apache-2.0，固定上游提交见 `agent-hud/UPSTREAM.md`）为准，由 Spec #82 交付；`agent-hud/` 内上游代码只在 #82 范围内改，改动逐条记入 `agent-hud/UPSTREAM.md`。
 - 上游仓库克隆、依赖安装和验证放在仓库外的独立临时目录，记录上游提交 SHA 与验证记录。
 - AGENTS.md 只保存稳定工程规则；需求、结论和任务进展记录在 Issue 与 PR 中，不维护 `progress.md`、`state.md` 等重复文档。
 

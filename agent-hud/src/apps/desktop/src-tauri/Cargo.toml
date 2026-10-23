@@ -1,0 +1,26 @@
+[package]
+name = "ai-one-hud"
+version.workspace = true
+description = "ai-one quota HUD: Agent HUD Open (Apache-2.0) host with ai-one snapshot export"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[build-dependencies]
+tauri-build = { version = "=2.7.3", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.4", features = ["tray-icon"] }
+agent-hud-host.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+
+# ai-one change: tauri's `custom-protocol` makes the exe serve the built
+# frontend from its own bundle instead of devUrl. Release and verification
+# builds enable it (`cargo build --features custom-protocol`).
+[features]
+custom-protocol = ["tauri/custom-protocol"]
