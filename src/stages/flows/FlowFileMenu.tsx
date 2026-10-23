@@ -203,7 +203,7 @@ export function FlowFileMenu({ file, flowId, text, fs, disabled = false, onImpor
                 {conflictCount === 0 ? <p className="text-v2-meta text-v2-ink-3">{text.t('importNoConflicts')}</p> : <p className="text-v2-meta text-v2-ink-3">{text.t('chooseConflict')}</p>}
                 {conflictCount > 0 ? (
                   <label className="flex items-start gap-v2-sm text-v2-meta text-v2-ink-2">
-                    <input type="radio" name="flows-import-resolution" value="keep-both" checked={pending.choice === 'keep-both'} onChange={() => setPending({ ...pending, choice: 'keep-both' })} />
+                    <input type="radio" className="accent-v2-primary" name="flows-import-resolution" value="keep-both" checked={pending.choice === 'keep-both'} onChange={() => setPending({ ...pending, choice: 'keep-both' })} />
                     {text.t('importKeepBoth')}
                   </label>
                 ) : null}
