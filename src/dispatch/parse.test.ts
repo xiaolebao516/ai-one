@@ -30,17 +30,17 @@ describe('dispatch metadata parser', () => {
     expect(model.events[0].threadUrl).toBeUndefined();
   });
   it('keeps valid slot ownership, marks old claims stale, never claims browser readiness', () => {
-    const model = parseDispatchSnapshot({ ...snapshot([]), slots: [{ id: 2, port: 9334, claim_present: true, stale: true, pid: 123, task: '#80', session_key: 'audit-80', started_at: 1792670400000, thread: 'https://chatgpt.com/c/6ad9fa49-d908-83e9-a9dd-f183da27abd6', token: 'SECRET' }] });
+    const model = parseDispatchSnapshot({ ...snapshot([]), slots: [{ id: 2, port: 9334, claim_present: true, stale: true, pid: 123, task: '#80', session_key: 'audit-80', started_at: 1792670400000, thread: 'https://chatgpt.com/c/00000000-0000-4000-8000-000000000001', token: 'SECRET' }] });
     expect(model.slots[0]).toMatchObject({ id: 2, state: 'stale', task: '#80', sessionKey: 'audit-80', browserState: 'unprobed' });
     expect(JSON.stringify(model)).not.toContain('SECRET');
   });
   it('does not associate a reused session with an unrelated thread or ambiguous ownership', () => {
     const slots = [1, 2].map((id) => ({ id, port: 9332 + id, claim_present: true, task: `#${id}`, session_key: 'shared' }));
     expect(parseDispatchSnapshot({ ...snapshot([{ ...session, session_key: 'shared' }]), slots }).events[0].issue).toBeUndefined();
-    expect(parseDispatchSnapshot({ ...snapshot([{ ...session, session_key: 'shared', thread: 'https://chatgpt.com/c/6ad9fa49-d908-83e9-a9dd-f183da27abd6' }]), slots: [slots[0]] }).events[0].issue).toBeUndefined();
+    expect(parseDispatchSnapshot({ ...snapshot([{ ...session, session_key: 'shared', thread: 'https://chatgpt.com/c/00000000-0000-4000-8000-000000000001' }]), slots: [slots[0]] }).events[0].issue).toBeUndefined();
   });
   it('never labels historical dispatches with a newer claim after thread/session reuse', () => {
-    const thread = 'https://chatgpt.com/c/6ad9fa49-d908-83e9-a9dd-f183da27abd6';
+    const thread = 'https://chatgpt.com/c/00000000-0000-4000-8000-000000000001';
     for (const hasThread of [true, false]) {
       const model = parseDispatchSnapshot({ ...snapshot([{ ...session, session_key: 'shared', thread: hasThread ? thread : undefined, created_at: '2026-10-21T12:00:00Z', last_used_at: '2026-10-21T12:01:00Z' }]), slots: [{ id: 1, port: 9333, claim_present: true, task: '#81', session_key: 'shared', thread: hasThread ? thread : undefined, started_at: Date.parse('2026-10-22T12:00:00Z') }] });
       expect(model.events[0].issue).toBeUndefined();

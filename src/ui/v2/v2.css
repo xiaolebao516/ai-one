@@ -15,6 +15,15 @@
   outline-offset: 2px;
 }
 
+/* Long-form reading text (AI replies, summaries, audit comments): serif, roomy, capped line length. */
+.v2-scope .v2-prose {
+  font-family: var(--v2-font-serif);
+  font-size: var(--v2-text-reading);
+  line-height: 1.7;
+  max-width: 68ch;
+  text-wrap: pretty;
+}
+
 /* Programmatic focus targets (a view heading moved to after navigation) are not keyboard stops. */
 .v2-scope :is(h1, h2, h3, h4, section, article, div)[tabindex="-1"]:focus-visible {
   outline: none;

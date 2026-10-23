@@ -52,10 +52,10 @@ export interface V2ModeTokens {
 
 export interface V2ShapeTokens {
   radius: { sm: string; md: string; lg: string; xl: string; pill: string };
-  font: { sans: string; mono: string };
-  /** Type scale: page title · task title · "now" line · body · meta · micro. */
-  text: { title: string; heading: string; lead: string; body: string; meta: string; micro: string };
-  space: { xs: string; sm: string; md: string; lg: string; xl: string; card: string; page: string };
+  font: { sans: string; mono: string; serif: string };
+  /** Type scale: page title · task title · "now" line · body · reading (serif long text) · meta · micro. */
+  text: { title: string; heading: string; lead: string; body: string; reading: string; meta: string; micro: string };
+  space: { xs: string; sm: string; md: string; lg: string; xl: string; card: string; page: string; pageMid: string; pageNarrow: string; section: string };
   /** Control heights. */
   control: { sm: string; md: string; lg: string };
 }
@@ -75,7 +75,10 @@ export interface V2Skin {
 const FONT_SANS = '"Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 const FONT_MONO = '"Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace';
 
-const TEXT_SCALE: V2ShapeTokens['text'] = { title: '24px', heading: '19px', lead: '16px', body: '13px', meta: '12px', micro: '11px' };
+/** Claude-style serif for what is read (page titles, the "now" line, summaries, AI replies); the sans stack stays for everything operated. CJK deliberately falls to the sans UI font, not SimSun (#105). */
+const FONT_SERIF = '"Source Serif 4", ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", serif';
+
+const TEXT_SCALE: V2ShapeTokens['text'] = { title: '28px', heading: '20px', lead: '16px', body: '14px', reading: '16px', meta: '12px', micro: '11px' };
 
 /** Design baseline (#34 §8): warm paper + ink, colour reserved for status, ink primary button. */
 const PAPER: V2Skin = {
@@ -84,9 +87,9 @@ const PAPER: V2Skin = {
   description: '#34 设计稿基线：暖灰纸面、墨色主按钮，颜色只留给状态，琥珀色永远是“需要你”。',
   shape: {
     radius: { sm: '6px', md: '8px', lg: '12px', xl: '16px', pill: '999px' },
-    font: { sans: FONT_SANS, mono: FONT_MONO },
+    font: { sans: FONT_SANS, mono: FONT_MONO, serif: FONT_SERIF },
     text: TEXT_SCALE,
-    space: { xs: '4px', sm: '8px', md: '12px', lg: '16px', xl: '24px', card: '16px', page: '32px' },
+    space: { xs: '4px', sm: '8px', md: '12px', lg: '20px', xl: '32px', card: '22px', page: '40px', pageMid: '28px', pageNarrow: '20px', section: '40px' },
     control: { sm: '26px', md: '30px', lg: '34px' },
   },
   light: {
@@ -191,9 +194,9 @@ const MIST: V2Skin = {
   description: '对照方案：冷灰石板底、靛蓝主按钮、更大的圆角和更宽松的控件，卡片用描边而不是投影。',
   shape: {
     radius: { sm: '8px', md: '10px', lg: '14px', xl: '20px', pill: '999px' },
-    font: { sans: FONT_SANS, mono: FONT_MONO },
-    text: { ...TEXT_SCALE, body: '13.5px', meta: '12.5px' },
-    space: { xs: '4px', sm: '8px', md: '14px', lg: '18px', xl: '28px', card: '18px', page: '36px' },
+    font: { sans: FONT_SANS, mono: FONT_MONO, serif: FONT_SERIF },
+    text: { ...TEXT_SCALE, body: '14.5px', meta: '12.5px' },
+    space: { xs: '4px', sm: '8px', md: '14px', lg: '22px', xl: '34px', card: '24px', page: '40px', pageMid: '28px', pageNarrow: '20px', section: '44px' },
     control: { sm: '28px', md: '32px', lg: '38px' },
   },
   light: {
@@ -311,7 +314,7 @@ export function v2CssVariables(skinId: V2SkinId, mode: V2Mode): Record<string, s
   for (const [key, value] of Object.entries(skin.shape.radius)) vars[`--v2-radius-${key}`] = value;
   for (const [key, value] of Object.entries(skin.shape.font)) vars[`--v2-font-${key}`] = value;
   for (const [key, value] of Object.entries(skin.shape.text)) vars[`--v2-text-${key}`] = value;
-  for (const [key, value] of Object.entries(skin.shape.space)) vars[`--v2-space-${key}`] = value;
+  for (const [key, value] of Object.entries(skin.shape.space)) vars[`--v2-space-${kebab(key)}`] = value;
   for (const [key, value] of Object.entries(skin.shape.control)) vars[`--v2-control-${key}`] = value;
   return vars;
 }

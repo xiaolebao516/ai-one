@@ -4,9 +4,9 @@ import { Badge, Card } from '../../ui/v2';
 /** Honest placeholder for a page whose parts are still being built (Spec #79 v2). */
 export function PlannedView({ title, body, badge, action }: { title: string; body: string; badge: string; action?: ReactNode }) {
   return (
-    <div className="mx-auto grid max-w-[720px] gap-v2-lg p-v2-page">
+    <div className="mx-auto grid max-w-[720px] gap-v2-section p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:p-v2-page">
       <header className="flex flex-wrap items-center gap-v2-sm">
-        <h1 className="text-[24px] font-semibold leading-tight text-v2-ink">{title}</h1>
+        <h1 className="font-v2-serif text-v2-title text-v2-ink">{title}</h1>
         <Badge tone="unknown">{badge}</Badge>
       </header>
       <Card className="grid gap-v2-md">

@@ -70,8 +70,8 @@ export type V2CardVariant = 'raised' | 'flat' | 'sunken';
 export type V2CardPadding = 'none' | 'sm' | 'md';
 
 export const CARD_VARIANT: Record<V2CardVariant, string> = {
-  raised: 'bg-v2-surface shadow-v2-card',
-  flat: 'bg-v2-surface ring-1 ring-inset ring-v2-line',
+  raised: 'bg-v2-surface ring-1 ring-inset ring-v2-line',
+  flat: 'ring-1 ring-inset ring-v2-line',
   sunken: 'bg-v2-sunken',
 };
 

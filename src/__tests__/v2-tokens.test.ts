@@ -78,4 +78,56 @@ describe('v2 design tokens', () => {
     expect(referenced.length).toBeGreaterThan(20);
     for (const name of referenced) expect(defined.has(name), name).toBe(true);
   });
+
+  describe('typography and whitespace baseline (#105)', () => {
+    it('writes a serif stack that starts with the bundled face and never falls to SimSun for CJK', () => {
+      for (const id of V2_SKIN_IDS) {
+        const serif = v2CssVariables(id, 'light')['--v2-font-serif'];
+        expect(serif.startsWith('"Source Serif 4"'), id).toBe(true);
+        expect(serif, id).not.toMatch(/SimSun|NSimSun|宋体/);
+        expect(serif, id).toContain('Microsoft YaHei UI');
+        expect(serif.endsWith('serif'), id).toBe(true);
+      }
+    });
+
+    it('sets the reading size, page and section whitespace on every skin', () => {
+      for (const id of V2_SKIN_IDS) {
+        const vars = v2CssVariables(id, 'light');
+        expect(vars['--v2-text-reading'], id).toBe('16px');
+        expect(parseInt(vars['--v2-space-page'], 10), id).toBeGreaterThanOrEqual(40);
+        expect(parseInt(vars['--v2-space-section'], 10), id).toBeGreaterThanOrEqual(40);
+        expect(parseInt(vars['--v2-space-card'], 10), id).toBeGreaterThanOrEqual(22);
+      }
+    });
+
+    it('steps page padding down with the window: 40 wide, 28 mid, 20 narrow (design 2.1), on every page view', () => {
+      for (const id of V2_SKIN_IDS) {
+        const v = v2CssVariables(id, 'light');
+        const [narrow, mid, wide] = [v['--v2-space-page-narrow'], v['--v2-space-page-mid'], v['--v2-space-page']].map((x) => parseInt(x, 10));
+        expect(narrow, id).toBeLessThan(mid);
+        expect(mid, id).toBeLessThan(wide);
+      }
+      for (const id of V2_SKIN_IDS) {
+        const v = v2CssVariables(id, 'light');
+        expect([v['--v2-space-page-narrow'], v['--v2-space-page-mid'], v['--v2-space-page']], id).toEqual(['20px', '28px', '40px']);
+      }
+      for (const view of ['HomeView', 'TasksView', 'TaskView', 'ResourcesView', 'PlannedView']) {
+        const src = readFileSync(new URL(`../workbench/views/${view}.tsx`, import.meta.url), 'utf8');
+        expect(src, view).toContain('p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:p-v2-page');
+        // every page padding is the responsive triple; no bare `p-v2-page` left over
+        expect(src.split('p-v2-page-narrow').length, view).toBe(src.split('min-[1320px]:p-v2-page').length);
+        expect(src.match(/(?<![:-])p-v2-page(?![-\w])/g) ?? [], view).toEqual([]);
+      }
+    });
+
+    it('ships the font file and its licence next to the stylesheet that loads it', () => {
+      const css = readFileSync(new URL('../ui/v2/fonts.css', import.meta.url), 'utf8');
+      const file = css.match(/url\("([^"]+\.woff2)"\)/)?.[1];
+      expect(file).toBeTruthy();
+      expect(() => readFileSync(new URL(file!, new URL('../ui/v2/fonts.css', import.meta.url)))).not.toThrow();
+      const ofl = readFileSync(new URL('../assets/fonts/source-serif-4/OFL.txt', import.meta.url), 'utf8');
+      expect(ofl).toContain('SIL OPEN FONT LICENSE');
+      expect(ofl).toContain('Adobe');
+    });
+  });
 });

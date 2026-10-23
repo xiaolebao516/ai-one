@@ -36,7 +36,7 @@ excludes `run` jobs on slot 1. The number of slots (1..8) is stored in
 - `list`: sweeps the claim directory first (see *Self-healing* - this is the one read-only
   command that also removes dead leftovers), then reports each slot's state, any live claim (by
   pid) and the last closure. States: `ready`; `busy` (logged in,
-  still generating a reply, so `run` waits for it); `down` (browser not running);
+  still generating a reply, so `run` waits for it); `down` (Windows process evidence confirms absence and the CDP connection is refused);
   `needs-login`; `hidden` (window minimized or the tab not visible, Prodex cannot send);
   `error` (the probe or the browser start itself failed); `unknown`. Only `ready` slots take
   new work. `list` never restores a window.
@@ -54,6 +54,27 @@ Exit codes: `0` ok, `1` error, `3` the user must act (sign in or complete a Chat
 verification / add a slot), `4` every ready slot stayed busy past `--wait-ms`. A failing
 `prodex ... ask` is always `1`, with its own code written to stderr, so its code can never
 pass for `3` or `4`. A browser that cannot be started or probed is `1`, not `3`.
+
+## Browser evidence when CDP is unreachable
+
+`browser_unreachable` alone no longer proves the browser is closed. On Windows,
+the tool checks Edge/Chrome primary processes against the exact slot port and full
+profile path, then probes CDP and page presence. A matching live process with a silent
+port, a responding port without a ready page, ambiguous process identity, failed probes,
+and unsupported platforms remain `unknown`. These states include diagnostic guidance in
+`list`, `ensure` and `run`; they do not trigger an automatic restart or imply expired login.
+Only an explicit `ECONNREFUSED` plus confirmed process absence permits `down`;
+an unavailable fetch, timeout, permission error or other probe failure remains `unknown`.
+An intermediate `unknown` after a confirmed fresh launch is polled within the startup budget.
+
+Slot 1 delegates its profile to Prodex. If browsers are running but the full identity cannot
+be established, it remains conservatively `unknown`; inspect the intended browser before
+reopening it. Process command lines, profile paths, private URLs and raw probe errors are
+not included in these diagnostics. Existing ready/busy/hidden/login checks are unchanged.
+
+The single-browser dispatch feasibility assessment and its unimplemented prototype are
+documented in [the Issue #84 assessment](../../docs/prodex-single-browser.md). Existing
+multi-slot dispatch remains in use.
 
 ## Error output shape
 
@@ -109,11 +130,13 @@ node scripts/prodex-slots/cli.mjs run --slot auto --task 71 --session s1 \
 ```
 
 Continuing one thread - the ownership URL and the ask target must be the same URL, otherwise
-the claim would describe a different conversation than the one being written to:
+the claim would describe a different conversation than the one being written to. Run it on the
+slot that holds the thread (`--slot N`, where N is the slot the first `run` reported as
+`using slot N` on stderr), not on `auto` - see *Multi-turn conversations and recovery*:
 
 ```bash
 THREAD='https://chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013'
-node scripts/prodex-slots/cli.mjs run --slot auto --task 71 --session s1 --thread-url "$THREAD" \
+node scripts/prodex-slots/cli.mjs run --slot 2 --task 71 --session s1 --thread-url "$THREAD" \
   -- --target-url "$THREAD" --confirm-target --effort high
 ```
 
@@ -184,12 +207,33 @@ reply text or credentials, and its fields are re-validated on read.
 - Continue the **same thread**: pass the thread URL to the ask itself,
   `--target-url "$THREAD" --confirm-target`, and mirror it in `--thread-url` so the ownership
   record names the thread that is actually being written to.
+- Continue it **on the slot whose tab holds that thread** (`--slot N`, not `auto`). `auto` may
+  pick another slot, whose tab is on a different conversation; the ask then stops with "No open
+  ChatGPT tab matches the confirmed target URL" before sending anything, so retrying on the right
+  slot is safe. Observed 2026-10-22.
+- **Record the slot yourself.** `run` releases its claim as soon as the ask returns, and `list`
+  only shows live claims and the last explicit `release` record, so it cannot tell which slot a
+  past thread lives on. Note the `using slot N` line from stderr, the thread URL and the request
+  id from the reply when you dispatch. A `ready` slot may still hold a thread someone means to
+  continue: another `run --slot auto -- --new-chat` can land on it and move its tab to a new
+  conversation. There is no reservation across turns; continue soon, and if the tab has moved,
+  start a new chat that restates the earlier rounds (whether `--target-url` can reopen a thread
+  whose tab was moved away is not verified). A slot's debug port lists its open tab
+  (`http://127.0.0.1:<port>/json`).
 - `--continue` / `--continue-task` are not reliable after a restart or across sessions; do not
   use them as the only way back to a thread.
 - After a `request_mismatch` or "the browser tab was moved to a different conversation", stop.
   Take the answer back with
   `prodex pro browser recover --port <port> --target-url "$THREAD" --request-id <id>` and check
   `request_verified: yes` before doing anything else. Never resend blindly.
+- `recover` is plain Prodex, not wrapped by `run`, so give it the slot's own environment:
+  `PRODEX_CDP_PORT=<port>` and, for slot N ≥ 2,
+  `PRODEX_SEND_LOCK_FILE=<slots home>/browser-send-slotN.lock` (slots home is `PRODEX_SLOTS_HOME`,
+  default `~/.local/share/prodex`). For slot 1 leave `PRODEX_SEND_LOCK_FILE` unset (Prodex's own
+  default lock). Without the lock file a slot N ≥ 2 recover
+  waits on slot 1's lock ("another prodex send holds the browser") and times out even though
+  slot N is idle. Observed 2026-10-22. If the thread is still generating, recover says so; run it
+  again once the answer has settled.
 - Every turn should leave its outcome as a short comment on the task issue (question, result,
   blockers) - that comment is the handoff that survives a closed session.
 - Long prompts (tens of KB) have repeatedly triggered `request_mismatch` in the field even
@@ -211,6 +255,9 @@ reply text or credentials, and its fields are re-validated on read.
   with an error naming the file, and the file is deleted by hand. It is never removed
   automatically: without OS file locks two processes cannot both judge it stale and remove it
   safely. Needs a file system with hard links (NTFS).
+- On Windows only, `EPERM` from exclusive mutex creation is retried in at most 25 ms
+  intervals and never past `timeoutMs`; persistent `EPERM` remains an error. `EACCES`
+  and non-Windows `EPERM` retain their immediate-error behavior.
 - Covered by tests that start real processes which rendezvous before every round (six
   processes, 20 rounds of claiming; four processes adding at once) plus deterministic tests for
   the release and stale-mutex paths. The two collision tests fail on the first version of this

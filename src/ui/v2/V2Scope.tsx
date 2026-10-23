@@ -3,6 +3,7 @@ import { cx } from './cx';
 import { useV2Skin } from './skinPreference';
 import { resolveV2Mode, useDocumentDarkClass } from './themeMode';
 import { v2CssVariables, type V2ModePreference, type V2SkinId } from './tokens';
+import './fonts.css';
 import './v2.css';
 
 export interface V2ScopeProps extends HTMLAttributes<HTMLDivElement> {

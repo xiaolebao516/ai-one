@@ -257,13 +257,20 @@ describe('workbench storage', () => {
     const loaded = loadPrefs(
       memory({ 'ai-one.workbench.prefs': JSON.stringify({ source: 'github', theme: 'dark', repos: ['o/a', 'o/a', 'bad', 3, 'https://github.com/o/b'] }) }),
     );
-    expect(loaded).toEqual({ source: 'github', theme: 'dark', repos: ['o/a', 'o/b'] });
+    expect(loaded).toEqual({ source: 'github', theme: 'dark', repos: ['o/a', 'o/b'], dispatchRepo: '' });
     expect(loadPrefs(memory({ 'ai-one.workbench.prefs': JSON.stringify({ source: 'x', repos: [] }) }))).toEqual(DEFAULT_PREFS);
+  });
+
+  it('reads legacy prefs and rejects an invalid dispatch repository path', () => {
+    const legacy = loadPrefs(memory({ 'ai-one.workbench.prefs': JSON.stringify({ source: 'github', theme: 'dark', repos: ['o/a'] }) }));
+    expect(legacy.dispatchRepo).toBe('');
+    const invalid = loadPrefs(memory({ 'ai-one.workbench.prefs': JSON.stringify({ source: 'github', theme: 'dark', repos: ['o/a'], dispatchRepo: 'relative/repo' }) }));
+    expect(invalid.dispatchRepo).toBe('');
   });
 
   it('round-trips prefs', () => {
     const store = memory();
-    savePrefs({ source: 'github', theme: 'light', repos: ['o/a'] }, store);
-    expect(loadPrefs(store)).toEqual({ source: 'github', theme: 'light', repos: ['o/a'] });
+    savePrefs({ source: 'github', theme: 'light', repos: ['o/a'], dispatchRepo: 'C:\\work\\repo' }, store);
+    expect(loadPrefs(store)).toEqual({ source: 'github', theme: 'light', repos: ['o/a'], dispatchRepo: 'C:\\work\\repo' });
   });
 });

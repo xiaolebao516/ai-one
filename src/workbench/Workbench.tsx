@@ -6,7 +6,9 @@ import { STATUS_TONE, pickText, summarize, type HudTask } from '../ui/taskHudMod
 import { taskHudText } from '../ui/taskHudText';
 import { Badge, Button, Icon, IconButton, Notice, SegmentedControl, StatusIndicator, V2Scope, cx, type V2IconName } from '../ui/v2';
 import { CommandPalette } from './CommandPalette';
+import { channelView, type ChannelView } from './dispatchView';
 import { NAV_KEY, paletteCommands } from './paletteCommands';
+import { useDispatchData, type DispatchLoader } from './useDispatchData';
 import { categoryHealth, countLabel, isExact, observedAt, repoNotices, useWorkbenchData, type DataHealth, type GitHubLoader, type WorkbenchData } from './useWorkbenchData';
 import {
   HOME_ROUTE,
@@ -27,6 +29,7 @@ import {
 import { workbenchText, type WorkbenchText } from './workbenchText';
 import { HomeView } from './views/HomeView';
 import { PlannedView } from './views/PlannedView';
+import { ResourcesView } from './views/ResourcesView';
 import { TaskView } from './views/TaskView';
 import { TasksView } from './views/TasksView';
 
@@ -38,12 +41,18 @@ export interface WorkbenchProps {
   onOpenClassic: () => void;
   /** Reads GitHub; tests pass a controllable one. Must be a stable reference. */
   githubLoader?: GitHubLoader;
+  /** Reads local Prodex metadata; tests pass a controllable one. Must be a stable reference. */
+  dispatchLoader?: DispatchLoader;
+  /** Overrides the desktop check for local reads (tests). */
+  isDesktop?: boolean;
 }
 
 /** The new ai-one front end (Spec #79 v2). The classic chat UI is only a capability library now. */
-export function Workbench({ locale, onOpenClassic, githubLoader }: WorkbenchProps) {
+export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader, isDesktop }: WorkbenchProps) {
   const text = workbenchText(locale);
   const data = useWorkbenchData(githubLoader);
+  const dispatch = useDispatchData({ source: data.prefs.source, repoPath: data.prefs.dispatchRepo, loader: dispatchLoader, isDesktop });
+  const channel = channelView(dispatch);
   const [route, setRoute] = useState<WorkbenchRoute>(HOME_ROUTE);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const mainRef = useRef<HTMLElement | null>(null);
@@ -104,7 +113,17 @@ export function Workbench({ locale, onOpenClassic, githubLoader }: WorkbenchProp
   const task = current.view === 'task' ? data.tasks.find((item) => item.id === current.taskId) : undefined;
   let view: ReactNode;
   if (current.view === 'home') {
-    view = <HomeView locale={locale} tasks={data.tasks} health={data.health} onOpenTask={openTask} onShowTasks={() => go({ view: 'tasks' })} />;
+    view = (
+      <HomeView
+        locale={locale}
+        tasks={data.tasks}
+        health={data.health}
+        channel={channel}
+        onOpenTask={openTask}
+        onShowTasks={() => go({ view: 'tasks' })}
+        onShowResources={() => go({ view: 'resources' })}
+      />
+    );
   } else if (current.view === 'tasks') {
     view = <TasksView locale={locale} tasks={data.tasks} health={data.health} onOpenTask={openTask} />;
   } else if (current.view === 'task' && task) {
@@ -125,12 +144,20 @@ export function Workbench({ locale, onOpenClassic, githubLoader }: WorkbenchProp
   } else if (current.view === 'flows') {
     view = <PlannedView title={text.t('flowsTitle')} body={text.t('flowsBody')} badge={text.t('plannedBadge')} />;
   } else {
-    view = <PlannedView title={text.t('resourcesTitle')} body={text.t('resourcesBody')} badge={text.t('plannedBadge')} />;
+    view = <ResourcesView locale={locale} dispatch={dispatch} repoPath={data.prefs.dispatchRepo} onSetRepo={data.setDispatchRepo} onOpenClassic={onOpenClassic} />;
   }
 
   return (
     <V2Scope mode={mode} className="fixed inset-0 flex flex-col overflow-hidden bg-v2-bg" data-testid="workbench">
-      <TitleBar text={text} tasks={data.tasks} health={data.health} onPalette={() => setPaletteOpen(true)} onShowTasks={() => go({ view: 'tasks' })} />
+      <TitleBar
+        text={text}
+        tasks={data.tasks}
+        health={data.health}
+        channel={channel}
+        onPalette={() => setPaletteOpen(true)}
+        onShowTasks={() => go({ view: 'tasks' })}
+        onShowResources={() => go({ view: 'resources' })}
+      />
       <div className="flex min-h-0 flex-1">
         <Sidebar
           text={text}
@@ -170,11 +197,22 @@ interface TitleBarProps {
   tasks: readonly HudTask[];
   /** Loading or failed: counts would read as "nothing to do", so they show as "?". Partial: "at least". */
   health: DataHealth;
+  channel: ChannelView;
   onPalette: () => void;
   onShowTasks: () => void;
+  onShowResources: () => void;
 }
 
-function TitleBar({ text, tasks, health, onPalette, onShowTasks }: TitleBarProps) {
+const CHANNEL_DOT: Record<ChannelView['tone'], string> = {
+  ok: 'bg-v2-done',
+  attention: 'bg-v2-block',
+  incomplete: 'bg-v2-unknown',
+  empty: 'bg-v2-unknown',
+  pending: 'bg-v2-unknown',
+  failed: 'bg-v2-block',
+};
+
+function TitleBar({ text, tasks, health, channel, onPalette, onShowTasks, onShowResources }: TitleBarProps) {
   const summary = summarize(tasks);
   // The island shows counts by state, so unreadable task states make them "at least" too.
   const byState = categoryHealth(health, tasks);
@@ -218,8 +256,32 @@ function TitleBar({ text, tasks, health, onPalette, onShowTasks }: TitleBarProps
           {text.t('islandNeedsYou', { n: count(summary.needsYou) })}
         </span>
       </button>
-      <div />
+      <div className="flex justify-end">
+        <ChannelButton text={text} channel={channel} onClick={onShowResources} />
+      </div>
     </header>
+  );
+}
+
+/** Prodex dispatch channel at a glance (design: resource dots); the full picture is on the resources page. */
+function ChannelButton({ text, channel, onClick }: { text: WorkbenchText; channel: ChannelView; onClick: () => void }) {
+  const state = text.t(channel.labelKey);
+  const label = text.t('channelAria', { state });
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      data-testid="channel-button"
+      className="flex h-7 items-center gap-v2-sm rounded-v2-md px-v2-sm text-v2-meta text-v2-ink-2 hover:bg-v2-hover"
+    >
+      <span className="relative flex h-6 w-6 items-center justify-center rounded-v2-sm bg-[#3B3A36] text-[10px] font-semibold text-white" aria-hidden="true">
+        Px
+        <span className={cx('absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-v2-bg', CHANNEL_DOT[channel.tone])} />
+      </span>
+      <span className="max-[1099px]:hidden">{text.t('resourcesShort', { state })}</span>
+    </button>
   );
 }
 

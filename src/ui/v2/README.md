@@ -33,7 +33,7 @@ export function MyV2Page() {
 ```
 
 - **必须放在 `<V2Scope>` 里。** `--v2-*` 变量只写在 scope 元素上；scope 外的 `bg-v2-*` 等类没有值，所以 v2 不会影响旧界面，旧界面的 `zinc` / `sky` 类和 `html.ai-sister` 也不会影响 v2。
-- **布局用 Tailwind 语义类**：颜色 `bg-v2-surface`、`text-v2-ink-2`、`border-v2-line`；字号 `text-v2-title|heading|lead|body|meta|micro`；圆角 `rounded-v2-sm|md|lg|xl|pill`；阴影 `shadow-v2-card|float`；间距 `p-v2-card`、`gap-v2-md`、`h-v2-control-md`。映射在根目录 `tailwind.config.js`，只有变量名，没有值。
+- **布局用 Tailwind 语义类**：颜色 `bg-v2-surface`、`text-v2-ink-2`、`border-v2-line`；字号 `text-v2-title|heading|lead|body|reading|meta|micro`；字体 `font-v2`（无衬线，操作类）与 `font-v2-serif`（衬线，“读的东西”：页面标题、任务标题、「现在」、AI 回复；长文用 `.v2-prose`）；圆角 `rounded-v2-sm|md|lg|xl|pill`；阴影 `shadow-v2-card|float`；间距 `p-v2-card`、`gap-v2-md`、`h-v2-control-md`。映射在根目录 `tailwind.config.js`，只有变量名，没有值。
 - **状态只用 tone**：`run`（进行中）、`rework`（返工）、`you`（需要你：决定 / 验收）、`block`（阻塞 / 失败）、`done`、`paused`、`unknown`。不要在页面里写 `text-v2-you` 之类的状态色类，用 `StatusIndicator` / `Badge` / `Notice` / `Card accent`。外部数据里的未知值用 `toV2StatusTone()` 降级为 `unknown`。
 - **状态不只靠颜色**：`StatusIndicator` 同时给形状和文字；`label` 是必填的。
 - **琥珀色（`you`）只表示“和人有关”**；`attention` 按钮只用于回答决定 / 验收的那一个操作。
