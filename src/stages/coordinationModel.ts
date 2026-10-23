@@ -23,6 +23,7 @@ export interface StorageLike {
 }
 
 export const COORDINATION_SETTINGS_STORAGE_KEY = 'coordination.json';
+export const COORDINATION_SETTINGS_BACKUP_KEY = 'coordination.json.bak';
 
 export const DEFAULT_AI_PREFERENCES: Record<string, string> = {
   gpt: '执行、审计',
@@ -60,18 +61,40 @@ export interface ValidationResult {
   errors: string[];
 }
 
-/** Sanitize and validate preference strings to prevent Markdown/header injection. */
+/**
+ * Sanitize preference text to strictly safe plain text, stripping any Markdown syntax,
+ * HTML tags, links, images, code markers, headers, and control characters.
+ */
 export function sanitizePreferenceValue(value: string): string {
-  // Strip control chars (0-31 and 127-159), newlines, Markdown headers/backticks, and limit length
   let cleaned = '';
   for (let i = 0; i < value.length; i++) {
     const code = value.charCodeAt(i);
+    // Strip control chars (0-31, 127-159)
     if ((code >= 0 && code <= 31) || (code >= 127 && code <= 159)) {
       cleaned += ' ';
-    } else if (value[i] === '#' || value[i] === '`') {
-      continue;
     } else {
-      cleaned += value[i];
+      const ch = value[i];
+      // Strip markdown and HTML control punctuation: # ` * _ ~ [ ] ( ) ! < > \ |
+      if (
+        ch === '#' ||
+        ch === '`' ||
+        ch === '*' ||
+        ch === '_' ||
+        ch === '~' ||
+        ch === '[' ||
+        ch === ']' ||
+        ch === '(' ||
+        ch === ')' ||
+        ch === '!' ||
+        ch === '<' ||
+        ch === '>' ||
+        ch === '\\' ||
+        ch === '|'
+      ) {
+        cleaned += ' ';
+      } else {
+        cleaned += ch;
+      }
     }
   }
   return cleaned.replace(/\s+/g, ' ').trim().slice(0, 50);
@@ -95,12 +118,12 @@ export function validateCoordinationSettings(raw: unknown): ValidationResult {
 
   const candidate = raw as Record<string, unknown>;
 
-  // schemaVersion: if not 1, do not assume fields are forward-compatible; strictly reset to default
-  if (candidate.schemaVersion !== 1) {
+  // schemaVersion must be exact integer 1 (not null, not "1", not 2)
+  if (candidate.schemaVersion !== 1 || typeof candidate.schemaVersion !== 'number') {
     return {
       valid: false,
       settings: { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_AI_PREFERENCES } },
-      errors: [`Unsupported or missing schemaVersion: expected 1, received ${String(candidate.schemaVersion)}`],
+      errors: [`Unsupported, non-numeric, or missing schemaVersion: expected 1, received ${String(candidate.schemaVersion)}`],
     };
   }
 
@@ -180,6 +203,7 @@ export function validateCoordinationSettings(raw: unknown): ValidationResult {
 export function parseCoordinationSettingsWithRecovery(rawJson: string | null | undefined): {
   settings: CoordinationSettings;
   recovered: boolean;
+  corruptBackup?: string;
 } {
   if (!rawJson || !rawJson.trim()) {
     return {
@@ -194,11 +218,13 @@ export function parseCoordinationSettingsWithRecovery(rawJson: string | null | u
     return {
       settings: result.settings,
       recovered: !result.valid,
+      corruptBackup: !result.valid ? rawJson : undefined,
     };
   } catch {
     return {
       settings: { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_AI_PREFERENCES } },
       recovered: true,
+      corruptBackup: rawJson,
     };
   }
 }
@@ -248,20 +274,38 @@ export function renderCoordinationBrief(settings: CoordinationSettings): string 
 }
 
 /**
+ * Builds standard Task Issue markdown body with coordination brief injected.
+ */
+export function buildTaskIssueBody(
+  description: string,
+  settings: CoordinationSettings = loadCoordinationSettings(),
+): string {
+  const base = [
+    '## 任务与范围',
+    description.trim() || '（待补充描述）',
+    '',
+    '## 交付 / 验收标准',
+    '- [ ] 完成并经独立审计 PASS',
+  ].join('\n');
+  return injectCoordinationBrief(base, settings);
+}
+/**
  * Injects or updates the coordination brief section into a Task Issue body markdown.
+ * Anchors strictly to markdown line starts so code blocks are not corrupted.
  */
 export function injectCoordinationBrief(issueBody: string, settings: CoordinationSettings): string {
   const brief = renderCoordinationBrief(settings);
-  const briefPattern = /## 协调简报[\s\S]*?(?=\n## |$)/;
+  const briefPattern = /^## 协调简报(?:\r?\n[\s\S]*?)?(?=\r?\n## |$)/m;
 
   if (briefPattern.test(issueBody)) {
     return issueBody.replace(briefPattern, brief);
   }
 
   // Prepend before ## 任务与范围 or append to the end
-  const taskSectionIndex = issueBody.indexOf('## 任务与范围');
-  if (taskSectionIndex !== -1) {
-    return `${issueBody.slice(0, taskSectionIndex)}${brief}\n\n${issueBody.slice(taskSectionIndex)}`;
+  const taskSectionMatch = /^## 任务与范围/m.exec(issueBody);
+  if (taskSectionMatch) {
+    const idx = taskSectionMatch.index;
+    return `${issueBody.slice(0, idx)}${brief}\n\n${issueBody.slice(idx)}`;
   }
 
   return `${issueBody.trimEnd()}\n\n${brief}\n`;
@@ -278,7 +322,15 @@ function defaultStorage(): StorageLike | undefined {
 export function loadCoordinationSettings(storage: StorageLike | undefined = defaultStorage()): CoordinationSettings {
   try {
     const raw = storage?.getItem(COORDINATION_SETTINGS_STORAGE_KEY);
-    return parseCoordinationSettingsWithRecovery(raw).settings;
+    const parsed = parseCoordinationSettingsWithRecovery(raw);
+    if (parsed.recovered && parsed.corruptBackup && storage) {
+      try {
+        storage.setItem(COORDINATION_SETTINGS_BACKUP_KEY, parsed.corruptBackup);
+      } catch {
+        // backup is best-effort
+      }
+    }
+    return parsed.settings;
   } catch {
     return { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_AI_PREFERENCES } };
   }
