@@ -908,10 +908,10 @@ fn is_word_character(ch: char) -> bool {
 }
 
 fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
-    // Conservative gate: backslash-escaped backticks or an odd number of backticks make code-span
-    // pairing ambiguous, so a keyword inside real code could leak out. Treat the body as no evidence
-    // (closingIssuesReferences stays the primary source) instead of guessing.
-    if body.contains("\\`") || body.matches('`').count() % 2 != 0 {
+    // Fail-closed gate (the body is only a fallback; closingIssuesReferences stays the primary
+    // source): any backtick, HTML (`<`) or tilde fence makes Markdown code/comment/attribute context
+    // ambiguous, so the body is not evidence at all instead of being parsed heuristically.
+    if body.contains('`') || body.contains('<') || body.contains("~~~") {
         return false;
     }
     let prose = strip_fenced_code_and_quotes(body);
@@ -931,11 +931,8 @@ fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
         let lower = line.to_ascii_lowercase();
         for verb in verbs.iter().copied() {
             for (start, _) in lower.match_indices(verb) {
-                if lower[..start]
-                    .chars()
-                    .next_back()
-                    .is_some_and(is_word_character)
-                {
+                // The closing statement must open the line (optionally as a "- " / "* " bullet).
+                if !matches!(&lower[..start], "" | "- " | "* ") {
                     continue;
                 }
 
@@ -1920,6 +1917,10 @@ mod tests {
         assert!(!body_links_issue("escaped \\` literal and `Closes #12`", REPO, 12));
         assert!(!body_links_issue("\\` x\n`start\nCloses #12\nend`", REPO, 12));
         assert!(!body_links_issue("stray ` backtick\nCloses #12", REPO, 12));
+        assert!(!body_links_issue("<span title=\"Closes #12\">text</span>", REPO, 12));
+        assert!(!body_links_issue("`Closes <!-- ` --> #12", REPO, 12));
+        assert!(!body_links_issue("This PR closes #12", REPO, 12));
+        assert!(body_links_issue("Summary\n- Closes #12\n* Fixes #13", REPO, 12));
         assert!(!body_links_issue("<!-- Closes #12 -->", REPO, 12));
         assert!(!body_links_issue("<!--\nCloses #12\n-->", REPO, 12));
     }
@@ -1975,6 +1976,8 @@ mod tests {
             "escaped \\` literal and `Closes #12`",
             "\\` x\n`start\nCloses #12\nend`",
             "stray ` backtick\nCloses #12",
+            "<span title=\"Closes #12\">text</span>",
+            "`Closes <!-- ` --> #12",
         ] {
             let accept_gh = FakeGh::new(vec![Ok(pr_value(SHA, body, vec![], true, "OPEN"))]);
             let accepted = accept(&accept_gh, &args).await;

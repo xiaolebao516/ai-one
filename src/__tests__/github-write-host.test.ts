@@ -11,7 +11,7 @@ const goodResult: GithubWriteResult = {
   status: 'confirmed',
   code: 'ok',
   message: '已确认写入 GitHub',
-  steps: [],
+  steps: [{ step: 'comment', state: 'confirmed' }],
 };
 
 const sha = '03a234f4d472137fac40c9d58b5b474f78796f22';
@@ -126,6 +126,25 @@ describe('host GitHub write bridge', () => {
       repo: 'owner/repo', issue: 12, text: 'hello',
     });
     expect(JSON.stringify(malformed)).not.toContain('PRIVATE_SERVER_ERROR');
+  });
+
+  it('treats self-contradictory results as unconfirmed, never as success', async () => {
+    const okMessage = '已确认写入 GitHub';
+    const contradictions: unknown[] = [
+      { status: 'confirmed', code: 'ok', message: okMessage, steps: [] },
+      { status: 'confirmed', code: 'ok', message: okMessage, steps: [{ step: 'comment', state: 'unconfirmed' }] },
+      { status: 'confirmed', code: 'ok', message: okMessage,
+        steps: [{ step: 'comment', state: 'confirmed' }, { step: 'label', state: 'skipped' }] },
+      { status: 'partial', code: 'ok', message: okMessage, steps: [{ step: 'comment', state: 'confirmed' }] },
+      { status: 'failed', code: 'ok', message: okMessage, steps: [] },
+      { status: 'partial', code: 'github_failed', message: okMessage, steps: [{ step: 'comment', state: 'confirmed' }] },
+    ];
+    for (const value of contradictions) {
+      invokeMock.mockResolvedValueOnce(value);
+      const result = await host.githubWrite.comment({ repo: 'owner/repo', issue: 12, text: 'hello' });
+      expect(result.status).toBe('unconfirmed');
+      expect(result.code).toBe('unconfirmed');
+    }
   });
 
   it('normalizes malformed status results and invoke failures', async () => {

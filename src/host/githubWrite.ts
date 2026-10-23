@@ -264,6 +264,17 @@ function normalizeResult(value: unknown): GithubWriteResult {
   if (value.url !== undefined && typeof value.url !== 'string') return unconfirmedResult();
   if (value.commentUrl !== undefined && typeof value.commentUrl !== 'string') return unconfirmedResult();
   if (value.currentHead !== undefined && !validSha(value.currentHead)) return unconfirmedResult();
+  // Self-contradictory results must never read as success: confirmed needs ok plus at least one step,
+  // all confirmed; failed cannot contain a confirmed step; partial needs a confirmed and a failed step.
+  const steps = value.steps as GithubWriteStep[];
+  const hasConfirmed = steps.some((step) => step.state === 'confirmed');
+  const hasFailed = steps.some((step) => step.state === 'failed');
+  if ((value.code === 'ok') !== (value.status === 'confirmed')) return unconfirmedResult();
+  if (value.status === 'confirmed' && (steps.length === 0 || !steps.every((step) => step.state === 'confirmed'))) {
+    return unconfirmedResult();
+  }
+  if (value.status === 'partial' && !(hasConfirmed && hasFailed)) return unconfirmedResult();
+  if (value.status === 'failed' && hasConfirmed) return unconfirmedResult();
 
   return {
     status: value.status as GithubWriteResult['status'],
