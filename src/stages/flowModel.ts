@@ -924,13 +924,29 @@ export function applyImport(
         return;
       }
       if (conflicts.length > 0) {
-        const sameName = conflicts.find((candidate) => normalizeName(candidate.name) === normalizeName(item.name));
-        const replaceByName = Boolean(sameName && !sameName.builtin && !item.builtin);
-        if (replaceByName && sameName) {
-          const index = flows.findIndex((flow) => flow.id === sameName.id);
-          flows[index] = { ...item, id: sameName.id, builtin: false };
+        const sameNameCustom = conflicts.find((candidate) =>
+          !candidate.builtin && normalizeName(candidate.name) === normalizeName(item.name),
+        );
+        if (sameNameCustom) {
+          if (!item.builtin) {
+            const index = flows.findIndex((flow) => flow.id === sameNameCustom.id);
+            flows[index] = { ...item, id: sameNameCustom.id, builtin: false };
+          }
+          // Prefer the custom name match, but never overwrite a local custom flow with an imported built-in.
+          return;
         }
-        // Built-ins remain code-owned; a custom same-name conflict is replaced only after explicit overwrite.
+
+        const sameNameBuiltin = conflicts.find((candidate) =>
+          candidate.builtin && normalizeName(candidate.name) === normalizeName(item.name),
+        );
+        if (sameNameBuiltin) {
+          // A different-ID built-in is code-owned. Preserve the imported definition as a renamed custom flow.
+          const newId = uniqueId(item.id + '-import', [...occupiedStageIds, ...occupiedFlowIds]);
+          const newName = uniqueName(item.name, flows);
+          flows.push({ ...item, id: newId, name: newName, builtin: false });
+          occupiedFlowIds.add(newId);
+          return;
+        }
         return;
       }
       flows.push({ ...item, builtin: false });
