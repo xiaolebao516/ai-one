@@ -2,7 +2,7 @@ import type { FlowDef, FlowsFile, StageDef } from '../../stages/flowModel';
 import type { StageSelection } from '../../stages/flowEditor';
 import type { Locale } from '../../i18n/resolve';
 import { Badge, Button, Card, Select, cx } from '../../ui/v2';
-import type { FlowsText } from '../../workbench/views/flowsText';
+import { isChineseFlowsLocale, type FlowsText } from '../../workbench/views/flowsText';
 
 interface FlowSidebarProps {
   file: FlowsFile;
@@ -18,7 +18,7 @@ interface FlowSidebarProps {
 }
 
 function itemLabel(item: FlowDef | StageDef, locale: Locale): string {
-  return locale.toLowerCase().startsWith('zh') ? item.name : item.nameEn ?? item.name;
+  return isChineseFlowsLocale(locale) ? item.name : item.nameEn ?? item.name;
 }
 
 export function FlowSidebar({
