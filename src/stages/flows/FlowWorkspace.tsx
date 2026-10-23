@@ -95,7 +95,7 @@ export function FlowWorkspace({ editor, locale, text, fs }: FlowWorkspaceProps) 
             onCreateFlow={editor.createFlow}
             onCreateStage={editor.createStage}
           />
-          <div className="relative grid min-w-0 content-start gap-v2-lg min-[1100px]:grid-cols-[150px_minmax(0,1fr)] min-[1320px]:grid-cols-[170px_minmax(0,1fr)_minmax(320px,0.85fr)]">
+          <div className="relative grid min-w-0 content-start gap-v2-lg overflow-x-clip min-[1100px]:grid-cols-[150px_minmax(0,1fr)] min-[1320px]:grid-cols-[170px_minmax(0,1fr)_minmax(320px,0.85fr)]">
             <div className="hidden min-w-0 min-[1100px]:block">
               <FlowSidebar
                 file={file}
@@ -146,8 +146,8 @@ export function FlowWorkspace({ editor, locale, text, fs }: FlowWorkspaceProps) 
               className={cx(
                 'min-w-0 transition-[transform,opacity] duration-200 ease-out max-[1319px]:absolute max-[1319px]:right-0 max-[1319px]:top-0 max-[1319px]:z-20 max-[1319px]:w-[min(440px,48vw)] max-[1319px]:max-h-[calc(100vh-10rem)] max-[1319px]:overflow-y-auto max-[1319px]:shadow-v2-float',
                 selectedStage
-                  ? 'max-[1319px]:translate-x-0 max-[1319px]:opacity-100'
-                  : 'max-[1319px]:pointer-events-none max-[1319px]:translate-x-full max-[1319px]:opacity-0 min-[1320px]:hidden',
+                  ? 'max-[1319px]:visible max-[1319px]:translate-x-0 max-[1319px]:opacity-100'
+                  : 'max-[1319px]:invisible max-[1319px]:pointer-events-none max-[1319px]:translate-x-full max-[1319px]:opacity-0 min-[1320px]:hidden',
               )}
               aria-label={text.t('stageDetails')}
               aria-hidden={!selectedStage}
