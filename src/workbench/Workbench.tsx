@@ -30,6 +30,7 @@ import { workbenchText, type WorkbenchText } from './workbenchText';
 import { HomeView } from './views/HomeView';
 import { ChatLedPage } from './views/ChatLedPage';
 import { ChatView } from './views/chat/ChatView';
+import { NativeOverlayGuard, NativeOverlayProvider } from './views/chat/nativeOverlay';
 import { useChatRuntime } from './views/chat/useChatRuntime';
 import { PlannedView } from './views/PlannedView';
 import { ResourcesView } from './views/ResourcesView';
@@ -171,6 +172,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
   }
 
   return (
+    <NativeOverlayProvider>
     <V2Scope mode={mode} className="fixed inset-0 flex flex-col overflow-hidden bg-v2-bg" data-testid="workbench">
       <TitleBar
         text={text}
@@ -200,6 +202,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
           {view}
         </main>
       </div>
+      {paletteOpen ? <NativeOverlayGuard /> : null}
       {paletteOpen ? (
         <CommandPalette
           title={text.t('paletteTitle')}
@@ -212,6 +215,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
         />
       ) : null}
     </V2Scope>
+    </NativeOverlayProvider>
   );
 }
 

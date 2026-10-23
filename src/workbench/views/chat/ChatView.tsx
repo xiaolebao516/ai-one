@@ -44,6 +44,7 @@ import {
   type ProviderReplyState,
 } from './chatModel';
 import type { ChatRuntime } from './useChatRuntime';
+import { useNativeOverlayGuard } from './nativeOverlay';
 import { ProviderWebTab } from './ProviderWebTab';
 
 export interface ChatViewProps {
@@ -141,6 +142,8 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
   const [forwardNote, setForwardNote] = useState('');
   const [includeSummaries, setIncludeSummaries] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // The conversation popup (narrow widths) and the more-menu float over the native web tab.
+  useNativeOverlayGuard(sidebarOpen || menuOpen);
   const [showReplay, setShowReplay] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameDraft, setRenameDraft] = useState(runtime.activeSession.title);
