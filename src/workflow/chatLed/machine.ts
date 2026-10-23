@@ -1,4 +1,5 @@
-import type { AIProvider } from '../../../shared/types';
+import type { AIProvider, ProviderInstance } from '../../../shared/types';
+import { providerInstanceName } from '../../../shared/providerInstances';
 import {
   DEFAULT_COORDINATOR,
   DEFAULT_ROUND_LIMIT,
@@ -15,7 +16,7 @@ import {
 import { parseCoordinatorReply, PROVIDER_LABELS } from './protocol';
 
 export interface FeedbackItem {
-  from: AIProvider;
+  from: ProviderInstance;
   label: string;
   reply?: string;
   error?: string;
@@ -25,9 +26,10 @@ export function createRun(input: {
   id: string;
   goal: string;
   coordinator?: AIProvider;
-  available: readonly AIProvider[];
+  available: readonly ProviderInstance[];
   roundLimit?: number;
   mode?: ChatLedMode;
+  workers?: 0 | 1 | 2;
   now: number;
 }): ChatLedRun {
   const coordinator = input.coordinator ?? DEFAULT_COORDINATOR;
@@ -40,6 +42,7 @@ export function createRun(input: {
     available,
     roundLimit: input.roundLimit ?? DEFAULT_ROUND_LIMIT,
     mode: input.mode ?? 'general',
+    workers: input.workers ?? 0,
     round: 0,
     phase: 'idle',
     forwards: [],
@@ -109,7 +112,7 @@ export function setInitializationPending(run: ChatLedRun, pending: boolean, now:
 
 export function setAvailableProviders(
   run: ChatLedRun,
-  available: readonly AIProvider[],
+  available: readonly ProviderInstance[],
   now: number,
 ): ChatLedRun {
   if (run.phase !== 'coordinator-thinking') return run;
@@ -121,7 +124,7 @@ export function setAvailableProviders(
 export function beginSessionInitialization(
   run: ChatLedRun,
   id: string,
-  provider: AIProvider,
+  provider: ProviderInstance,
   now: number,
 ): ChatLedRun {
   if (run.closed || (run.sessionInitializations ?? []).some((item) => item.id === id)) return run;
@@ -175,7 +178,7 @@ export function canResumeAfterStop(run: ChatLedRun): boolean {
     (run.stop?.type === 'protocol-violation' || run.stop?.type === 'provider-failure');
 }
 
-function previousSend(run: ChatLedRun): { to: AIProvider[]; message: string } | undefined {
+function previousSend(run: ChatLedRun): { to: ProviderInstance[]; message: string } | undefined {
   let latestRound = 0;
   for (const forward of run.forwards) {
     if (forward.round > latestRound) latestRound = forward.round;
@@ -386,14 +389,14 @@ export function settledFeedbackItems(
     if (forward.status === 'done') {
       return {
         from: forward.to,
-        label: PROVIDER_LABELS[forward.to],
+        label: providerInstanceName(forward.to, PROVIDER_LABELS),
         reply: forward.reply ?? '',
       };
     }
 
     return {
       from: forward.to,
-      label: PROVIDER_LABELS[forward.to],
+      label: providerInstanceName(forward.to, PROVIDER_LABELS),
       error: forward.error ?? (forward.status === 'cancelled' ? 'Cancelled' : 'Unknown error'),
     };
   });
@@ -455,7 +458,7 @@ export function resumeAfterStop(run: ChatLedRun, now: number): ChatLedRun {
 
 export function failProvider(
   run: ChatLedRun,
-  provider: AIProvider,
+  provider: ProviderInstance,
   error: string,
   now: number,
 ): ChatLedRun {

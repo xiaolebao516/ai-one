@@ -39,7 +39,7 @@ export function loadRuns(storage: ChatLedStorage | undefined): ChatLedRun[] {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(isRunLike).map((loaded) => {
-      const run = interruptCleanup(recoverPendingInitialization(loaded, Date.now()), Date.now());
+      const run = interruptCleanup(recoverPendingInitialization({ ...loaded, workers: loaded.workers === 1 || loaded.workers === 2 ? loaded.workers : 0 }, Date.now()), Date.now());
       return IN_FLIGHT.has(run.phase)
         ? {
             ...run,

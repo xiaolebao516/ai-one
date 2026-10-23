@@ -1,5 +1,6 @@
 // This export may contain conversation text. Never upload it or write it into the repository.
 import { AI_PROVIDERS } from '../../../shared/constants';
+import { providerInstanceName } from '../../../shared/providerInstances';
 import type { ChatLedRun, ForwardRecord } from './types';
 
 type Locale = 'zh' | 'en';
@@ -127,8 +128,8 @@ function fencedText(value: string): string {
   return fence + '\n' + body + fence;
 }
 
-function providerName(provider: ForwardRecord['from']): string {
-  return AI_PROVIDERS[provider].name;
+function providerName(provider: ForwardRecord['to']): string {
+  return providerInstanceName(provider, Object.fromEntries(Object.entries(AI_PROVIDERS).map(([key, value]) => [key, value.name])));
 }
 
 function formatForward(forward: ForwardRecord, copy: typeof COPY[Locale]): string[] {

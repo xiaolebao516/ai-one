@@ -27,3 +27,10 @@ export function providerInstanceLabel(value: ProviderInstance): string {
   if (!parsed) throw new Error(`Invalid provider instance key: ${value}`);
   return parsed.n === 1 ? `ai-${parsed.base}` : `ai-${parsed.base}-${parsed.n}`;
 }
+/** Human-facing name, never used as a routing key. */
+export function providerInstanceName(instance: ProviderInstance, names: Partial<Record<AIProvider, string>>): string {
+  const parsed = parseProviderInstance(instance);
+  if (!parsed) throw new Error('Invalid provider instance key');
+  const name = names[parsed.base] ?? parsed.base;
+  return parsed.n === 1 ? name : `${name} #${parsed.n}`;
+}

@@ -1,4 +1,6 @@
-import type { AIProvider, ProviderState } from '../../../shared/types';
+import type { ProviderInstance, ProviderState } from '../../../shared/types';
+import { providerInstanceBase } from '../../../shared/providerInstances';
+import { sendAndWaitInstance, cancelInstanceSend } from './sendInstance';
 import { resetProviderBootState, startBridgePull } from '../../bridge/pull';
 import { host } from '../../host';
 import { prepareWorkflowRun } from '../runtime';
@@ -30,12 +32,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
 }
 
-async function stateOf(provider: AIProvider): Promise<ProviderState | undefined> {
-  const snapshot = await host.connections.get();
+async function stateOf(provider: ProviderInstance): Promise<ProviderState<ProviderInstance> | undefined> {
+  const snapshot = await host.connections.getAll();
   return snapshot.find((state) => state.provider === provider);
 }
 
-async function readProviderUrl(provider: AIProvider): Promise<string | undefined> {
+async function readProviderUrl(provider: ProviderInstance): Promise<string | undefined> {
   const raw = await host.provider.evalWithCallback(provider, 'location.href');
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -51,7 +53,7 @@ interface BoundedUrlRead {
 }
 
 async function readProviderUrlBounded(
-  provider: AIProvider,
+  provider: ProviderInstance,
   timeoutMs = 2_000,
 ): Promise<BoundedUrlRead> {
   let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
@@ -76,11 +78,11 @@ let bridgeStart: Promise<void> | undefined;
  * Makes sure the provider page exists (parked offscreen), is logged in and idle (busy gate, #15).
  * Does not touch shared workflow state, so cleanup can use it while nothing else is running.
  */
-export async function prepareProviderPage(provider: AIProvider): Promise<void> {
+export async function prepareProviderPage(provider: ProviderInstance): Promise<void> {
   const state = await stateOf(provider);
   const previousStatusAt = state?.lastStatusAt ?? 0;
   if (!state || state.webview !== 'loaded') {
-    resetProviderBootState(provider);
+    if (provider === providerInstanceBase(provider)) resetProviderBootState(providerInstanceBase(provider));
     await host.provider.open(provider, parkedBounds());
   }
   // Workbench hides loaded views. They must be shown offscreen again to obtain live DOM status.
@@ -100,8 +102,8 @@ export async function prepareProviderPage(provider: AIProvider): Promise<void> {
  * until its DOM is ready ("script evaluation is not ready"). That is a transient state, not a
  * failure: ask again on the next poll until the readiness deadline.
  */
-async function waitUntilFreshSendable(provider: AIProvider, previousStatusAt: number): Promise<void> {
-  const checkStatusScript = `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({ v: 1, action: "CHECK_STATUS", provider })})`;
+async function waitUntilFreshSendable(provider: ProviderInstance, previousStatusAt: number): Promise<void> {
+  const checkStatusScript = `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({ v: 1, action: "CHECK_STATUS", provider: providerInstanceBase(provider) })})`;
   const readyDeadline = Date.now() + PAGE_READY_TIMEOUT_MS;
   for (;;) {
     try {
@@ -111,7 +113,7 @@ async function waitUntilFreshSendable(provider: AIProvider, previousStatusAt: nu
     }
     const state = await stateOf(provider);
     const fresh = Boolean(state && state.lastStatusAt > previousStatusAt);
-    if (state && fresh && isSendable(state)) return;
+    if (state && fresh && isSendable({ ...state, provider: providerInstanceBase(state.provider) })) return;
     if (Date.now() > readyDeadline) {
       if (state?.login === 'logged_out' || state?.login === 'blocked') {
         throw new Error(`${provider} is not logged in (state: ${state.login}). Log in from the classic UI or Resources page first.`);
@@ -142,8 +144,8 @@ export function createRealChatLedEnv(): ChatLedEnv {
       await bridgeStart;
     },
     async sendableProviders() {
-      const snapshot = await host.connections.get();
-      return snapshot.filter(isSendable).map((state) => state.provider);
+      const snapshot = await host.connections.getAll();
+      return snapshot.filter((state) => isSendable({ ...state, provider: providerInstanceBase(state.provider) })).map((state) => state.provider);
     },
     prepare: prepareProviderPage,
     async newSession(provider) {
@@ -165,11 +167,18 @@ export function createRealChatLedEnv(): ChatLedEnv {
       return { url: page.url, documentId: page.documentId, freshDocument: true };
     },
     async send(provider, text) {
-      const { response } = await sendAndWait(provider, text);
-      return response;
+      if (provider === providerInstanceBase(provider)) {
+        const { response } = await sendAndWait(providerInstanceBase(provider), text);
+        return response;
+      }
+      return sendAndWaitInstance(provider, text);
     },
     async stop(provider) {
-      await stopProvider(provider);
+      if (provider === providerInstanceBase(provider)) await stopProvider(providerInstanceBase(provider));
+      else {
+        cancelInstanceSend(provider);
+        await host.provider.stop(provider);
+      }
     },
     async readConversationUrl(provider) {
       return (await readProviderUrlBounded(provider)).url;

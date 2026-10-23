@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type { AIProvider } from '../../shared/types';
+import type { AIProvider, ProviderInstance } from '../../shared/types';
+import { providerInstanceName } from '../../shared/providerInstances';
 import {
   buildFeedbackPrompt,
   buildIntroPrompt,
@@ -19,8 +20,8 @@ function parse(
   reply: string,
   options: {
     coordinator?: AIProvider;
-    available?: readonly AIProvider[];
-    previous?: { to: AIProvider[]; message: string };
+    available?: readonly ProviderInstance[];
+    previous?: { to: ProviderInstance[]; message: string };
   } = {},
 ) {
   return parseCoordinatorReply(reply, {
@@ -230,5 +231,34 @@ describe('chat-led template modes', () => {
     const prompt = buildIntroPrompt({ ...input, mode: 'discuss' });
     expect(prompt).toContain('独立给出观点');
     expect(prompt).toContain('协调者比较分歧并汇总');
+  });
+});
+
+describe('provider instance protocol', () => {
+  it('allows only enabled worker instances and rejects the coordinator', () => {
+    const enabled: ProviderInstance[] = ['chatgpt#2', 'chatgpt#3', 'claude'];
+    expect(parse(block('ai-one-send', '{"to":["chatgpt#2","chatgpt#3","claude"],"message":"self-contained"}'), { available: enabled }))
+      .toMatchObject({ kind: 'send', to: enabled });
+    expect(parse(block('ai-one-send', '{"to":"chatgpt#4","message":"x"}'), { available: enabled }))
+      .toMatchObject({ kind: 'violation', code: 'unknown-target' });
+    expect(parse(block('ai-one-send', '{"to":"chatgpt#3","message":"x"}'), { available: ['chatgpt#2'] }))
+      .toMatchObject({ kind: 'violation', code: 'unavailable-target' });
+    expect(parse(block('ai-one-send', '{"to":"chatgpt","message":"x"}'), { available: enabled }))
+      .toMatchObject({ kind: 'violation', code: 'self-target' });
+  });
+  it('preserves the original general prompt without workers and describes independent contexts with workers', () => {
+    const original = { goal: 'hello', coordinator: 'chatgpt' as const, available: [{ provider: 'claude' as const, label: 'Claude' }], roundLimit: 8 };
+    const general = buildIntroPrompt(original);
+    expect(buildIntroPrompt({ ...original, mode: 'general' })).toBe(general);
+    const withWorkers = buildIntroPrompt({ ...original, available: [...original.available, { provider: 'chatgpt#2' as const, label: 'ChatGPT #2' }] });
+    expect(withWorkers).toContain('chatgpt#2（ChatGPT #2）');
+    expect(withWorkers).toContain('不共享上下文');
+  });
+});
+
+describe('provider instance names', () => {
+  it('keeps base names and numbers additional workers', () => {
+    expect(providerInstanceName('chatgpt', { chatgpt: 'ChatGPT' })).toBe('ChatGPT');
+    expect(providerInstanceName('chatgpt#2', { chatgpt: 'ChatGPT' })).toBe('ChatGPT #2');
   });
 });
