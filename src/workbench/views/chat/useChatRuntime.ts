@@ -571,6 +571,7 @@ export function useChatRuntime({
       if (openFailures.length > 0) {
         const failed = new Set(openFailures.map((item) => item.provider));
         setReplyStates((current) => {
+          if (activeSessionIdRef.current !== sessionId) return current;
           const next = { ...current };
           for (const provider of failed) {
             next[provider] = { status: 'failed', content: '', error: workbenchText(locale).t('chatSendFailed') };
@@ -584,6 +585,7 @@ export function useChatRuntime({
         if (presetId !== 'free') {
           runTargets = [];
           setReplyStates((current) => {
+            if (activeSessionIdRef.current !== sessionId) return current;
             const next = { ...current };
             for (const provider of participants) {
               if (!failed.has(provider)) next[provider] = { status: 'notSent', content: '', notSentReason: 'not-ready' };
@@ -642,6 +644,7 @@ export function useChatRuntime({
         for (const provider of freshened) pendingProviderResetsRef.current.delete(provider);
         if (resetFailures.size > 0) {
           setReplyStates((current) => {
+            if (activeSessionIdRef.current !== sessionId) return current;
             const next = { ...current };
             for (const provider of resetFailures) {
               next[provider] = { status: 'failed', content: '', error: workbenchText(locale).t('chatSessionResetFailed', { providers: AI_PROVIDERS[provider].name }) };
@@ -671,6 +674,7 @@ export function useChatRuntime({
         const notReady = runTargets.filter((provider) => !isSendable(latestStates[provider]));
         if (notReady.length > 0) {
           setReplyStates((current) => {
+            if (activeSessionIdRef.current !== sessionId) return current;
             const next = { ...current };
             for (const provider of notReady) {
               const login = deriveLoginState(latestStates[provider]);
@@ -712,6 +716,7 @@ export function useChatRuntime({
       if (!result.ok) {
         setNotice({ tone: 'block', message: preflightNotice(result, locale) });
         setReplyStates((current) => {
+          if (activeSessionIdRef.current !== sessionId) return current;
           const next = { ...current };
           for (const provider of runTargets) {
             if (next[provider]?.status === 'generating') {
@@ -725,6 +730,7 @@ export function useChatRuntime({
     } catch (error) {
       setNotice({ tone: 'block', message: error instanceof Error ? error.message : String(error) });
       setReplyStates((current) => {
+        if (activeSessionIdRef.current !== sessionId) return current;
         const next = { ...current };
         for (const provider of runTargets) {
           if (next[provider]?.status === 'generating') {
