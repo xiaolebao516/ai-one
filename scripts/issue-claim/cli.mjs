@@ -168,7 +168,8 @@ export function assess(holder, { now = new Date(), suspectAfterMin = DEFAULT_SUS
  * write gateway the old process could still push, so this is for a coordinator or user who has
  * actually stopped it. The swap is a compare-and-swap on the exact old claim commit.
  */
-export function takeover(issue, agent, evidence, { cwd, remote = 'origin', now = new Date() } = {}) {
+export function takeover(issue, agent, evidence, { cwd, remote = 'origin' } = {}) {
+  const now = new Date(); // not injectable: a caller-supplied clock would fake staleness
   const statedEvidence = String(evidence ?? '').replace(/\s+/g, ' ').trim();
   if (!statedEvidence) throw new Error('takeover needs non-empty stopped evidence');
   const holder = readClaim(issue, { cwd, remote });
@@ -241,6 +242,10 @@ export function main(argv, { cwd = process.cwd(), out = console.log, err = conso
       return EXIT.held;
     }
     if (command === 'takeover' && issue !== undefined && agent) {
+      if (options.suspectAfterMin !== undefined) {
+        err('takeover does not take --suspect-after-min; the window is fixed');
+        return EXIT.error;
+      }
       if (!options.stoppedEvidence) {
         err('takeover needs --stopped-evidence "<how the old writer is known to have stopped>"');
         return EXIT.error;

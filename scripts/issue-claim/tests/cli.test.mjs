@@ -137,9 +137,11 @@ test('a live claim cannot be taken, and the window is not a takeover option', ()
   const early = run(b, ['takeover', '92', '--agent', 'rescuer', '--stopped-evidence', 'killed pid 1']);
   assert.equal(early.code, EXIT.held);
   assert.match(early.err, /HANDOFF_BLOCKED/);
-  // --suspect-after-min is accepted but ignored by takeover, so it cannot make a live holder look stale.
+  // Neither a shrunk window nor an injected future clock can make a live holder look stale.
   const shrunk = run(b, ['takeover', '92', '--agent', 'rescuer', '--stopped-evidence', 'x', '--suspect-after-min', '0.0001']);
-  assert.equal(shrunk.code, EXIT.held);
+  assert.equal(shrunk.code, EXIT.error);
+  const future = takeover(92, 'rescuer', 'x', { cwd: b, now: new Date(Date.now() + 3600 * 1000) });
+  assert.equal(future.ok, false);
   assert.match(run(b, ['show', '92']).out, /claimed by busy/);
   assert.match(run(b, ['inspect', '92', '--suspect-after-min', '0.0001']).out, /^SUSPECT_STALE .*not safe to take automatically/);
   assert.equal(run(a, ['release', '92', '--agent', 'busy']).code, EXIT.ok);
