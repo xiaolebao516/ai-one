@@ -215,6 +215,8 @@ export function useChatRuntime({
   const [now, setNow] = useState(() => Date.now());
   const [notice, setNotice] = useState<ChatRuntimeNotice>();
   const [desktopAvailable, setDesktopAvailable] = useState(false);
+  const sessionsRef = useRef(sessions);
+  const sessionsDirtyRef = useRef(false);
   const activeSessionIdRef = useRef(activeSessionId);
   const desktopAvailableRef = useRef(false);
   const pullBridgeRef = useRef(new Map<AIProvider, PullBridgeState>());
@@ -242,9 +244,22 @@ export function useChatRuntime({
   }, [providerStates]);
 
   useEffect(() => {
+    sessionsRef.current = sessions;
+    sessionsDirtyRef.current = true;
+  }, [sessions]);
+
+  useEffect(() => {
     if (!enabled) return;
-    saveConversationSessionsWithQuotaRecovery(sessions);
-  }, [enabled, sessions]);
+    const timer = globalThis.setInterval(() => {
+      if (!sessionsDirtyRef.current) return;
+      sessionsDirtyRef.current = false;
+      saveConversationSessionsWithQuotaRecovery(sessionsRef.current);
+    }, 250);
+    return () => {
+      globalThis.clearInterval(timer);
+      if (sessionsDirtyRef.current) saveConversationSessionsWithQuotaRecovery(sessionsRef.current);
+    };
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled || !hasBusyProviders) return;
