@@ -805,8 +805,10 @@ export function applyImport(
   const stages = current.stages.map(cloneStage);
   const flows = current.flows.map((flow) => ({ ...flow, stages: flow.stages.map(cloneStageRef) }));
   const stageIdMap = new Map<string, string>();
-  const occupiedStageIds = new Set(stages.map((stage) => stage.id));
-  const occupiedFlowIds = new Set(flows.map((flow) => flow.id));
+  // Reserve every imported original ID up front, including items processed later in the file.
+  // Fresh IDs must avoid both kinds because stage and flow IDs share a validation namespace.
+  const occupiedStageIds = new Set([...stages, ...incoming.stages].map((stage) => stage.id));
+  const occupiedFlowIds = new Set([...flows, ...incoming.flows].map((flow) => flow.id));
 
   incoming.stages.forEach((source) => {
     const item = cloneStage(source);
