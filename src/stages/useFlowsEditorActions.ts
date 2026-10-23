@@ -181,19 +181,25 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
     let candidate = context.file;
     if (context.draftDirty && context.draft && context.selection) {
       const base = candidate.stages.find((stage) => stage.id === context.draft?.id);
-      const referenced = context.selection.kind === 'flow'
-        ? candidate.flows.filter((flow) => flow.stages.some((ref) => ref.stageId === context.draft?.id))
-        : [];
-      if (context.selection.kind === 'flow' && referenced.length > 1 && scope === undefined) {
+      const selectedRefIndex = context.selectedFlow?.stages.findIndex((ref) => ref.stageId === context.draft?.id) ?? -1;
+      const flowScopeSelection: StageSelection | null = context.selection.kind === 'flow'
+        ? context.selection
+        : context.selectedFlow && !context.selectedFlow.builtin && selectedRefIndex >= 0
+          ? { kind: 'flow', flowId: context.selectedFlow.id, index: selectedRefIndex }
+          : null;
+      const referenced = candidate.flows.filter((flow) => flow.stages.some((ref) => ref.stageId === context.draft?.id));
+      const needsScopeChoice = Boolean(flowScopeSelection && referenced.length > 1);
+      if (needsScopeChoice && scope === undefined) {
         context.setScopePrompt(true);
         return false;
       }
-      const chosenScope = context.selection.kind === 'flow' && referenced.length > 1 ? scope ?? 'library' : 'library';
+      const chosenScope = needsScopeChoice ? scope ?? 'library' : 'library';
       if (chosenScope === 'flow' && base && !canOverrideStageDraft(base, context.draft)) {
         context.setEditError(context.text.t('overrideUnsupported'));
         return false;
       }
-      const updated = applyStageDraft(candidate, context.selection, context.draft, chosenScope);
+      const targetSelection = chosenScope === 'flow' && flowScopeSelection ? flowScopeSelection : context.selection;
+      const updated = applyStageDraft(candidate, targetSelection, context.draft, chosenScope);
       if (!updated) {
         context.setEditError(context.text.t('overrideUnsupported'));
         return false;
