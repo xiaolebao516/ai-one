@@ -1,4 +1,4 @@
-import type { AIProvider } from '../../../shared/types';
+import type { AIProvider, ProviderInstance } from '../../../shared/types';
 
 /**
  * Chat-led coordination (#113). A web AI (the coordinator) emits fenced `ai-one-send` blocks;
@@ -22,7 +22,7 @@ export const DONE_FENCE = 'ai-one-done';
 /** Parsed content of one ```ai-one-send block (strict JSON, no unknown keys tolerated). */
 export interface SendDirective {
   kind: 'send';
-  to: AIProvider[]; // deduplicated, order kept, at least one, never the coordinator itself
+  to: ProviderInstance[]; // deduplicated, order kept, at least one, never the coordinator itself
   message: string; // non-empty, forwarded verbatim
 }
 
@@ -58,7 +58,7 @@ export interface ForwardRecord {
   id: string; // unique within the run, e.g. "r3-claude"
   round: number; // 1-based coordinator round that issued it
   from: AIProvider; // always the coordinator
-  to: AIProvider;
+  to: ProviderInstance;
   message: string; // exact text sent to `to`
   messageChars: number;
   status: ForwardStatus;
@@ -81,14 +81,14 @@ export type RunPhase =
 export type StopReason =
   | { type: 'protocol-violation'; violation: ProtocolViolation; rawReply: string }
   | { type: 'round-limit'; limit: number }
-  | { type: 'provider-failure'; provider: AIProvider; error: string }
+  | { type: 'provider-failure'; provider: ProviderInstance; error: string }
   | { type: 'user' };
 
 export type SessionInitializationStatus = 'pending' | 'registered' | 'manual' | 'not-created';
 
 export interface SessionInitialization {
   id: string;
-  provider: AIProvider;
+  provider: ProviderInstance;
   status: SessionInitializationStatus;
   startedAt: number;
   updatedAt: number;
@@ -99,7 +99,7 @@ export interface SessionInitialization {
 }
 
 export interface RegisteredConversation {
-  provider: AIProvider;
+  provider: ProviderInstance;
   url: string; // empty for an unconfirmed creation attempt; such records are manual-only
   title?: string;
   /**
@@ -115,8 +115,9 @@ export interface ChatLedRun {
   id: string;
   goal: string; // the user's task text
   coordinator: AIProvider;
-  available: AIProvider[]; // logged-in providers the coordinator may address (never includes coordinator)
+  available: ProviderInstance[]; // logged-in providers the coordinator may address (never includes coordinator)
   roundLimit: number;
+  workers?: 0 | 1 | 2; // absent in old storage means zero
   mode?: ChatLedMode; // absent in v1 storage means general
   autoReminderStreak?: number; // consecutive automatic retries since a successful send
   round: number; // number of coordinator replies processed so far
@@ -151,7 +152,7 @@ export type CleanupOutcome =
   | 'skipped'; // not registered / not created by ai-one: never touched
 
 export interface CleanupItemResult {
-  provider: AIProvider;
+  provider: ProviderInstance;
   url?: string;
   title?: string;
   outcome: CleanupOutcome;

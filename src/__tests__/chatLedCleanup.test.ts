@@ -320,3 +320,17 @@ describe('chat-led cleanup stops when progress cannot be saved', () => {
     expect(cleaner.deleteConversation).toHaveBeenCalledWith(FIRST_URL);
   });
 });
+
+describe('multi-instance cleanup isolation', () => {
+  it('uses only the matching instance cleaner and skips uncertain ownership', async () => {
+    const target = { ...conversation(FIRST_URL), provider: 'chatgpt#2' as const };
+    const unconfirmed = { ...conversation(SECOND_URL), provider: 'chatgpt#3' as const, registrationStatus: 'manual' as const };
+    const first = makeCleaner();
+    const second = makeCleaner({ instance: 'chatgpt#2' });
+    const plan = planCleanup(makeRun([target, unconfirmed]), [first, second]);
+    expect(plan.map((item) => item.action)).toEqual(['delete', 'manual']);
+    await executeCleanup(plan, [first, second]);
+    expect(second.deleteConversation).toHaveBeenCalledWith(FIRST_URL);
+    expect(first.deleteConversation).not.toHaveBeenCalled();
+  });
+});

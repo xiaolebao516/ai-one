@@ -1,4 +1,5 @@
-import type { AIProvider } from '../../../shared/types';
+import type { AIProvider, ProviderInstance } from '../../../shared/types';
+import { providerInstanceBase, providerInstanceName } from '../../../shared/providerInstances';
 import {
   applyCoordinatorReply,
   beginSessionInitialization,
@@ -40,7 +41,7 @@ type InitStage = 'before-url' | 'creating' | 'after-url';
 
 interface SessionInitAttempt {
   id: string;
-  provider: AIProvider;
+  provider: ProviderInstance;
   stage: InitStage;
   finalized: boolean;
   promise: Promise<void>;
@@ -74,7 +75,7 @@ function waitWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boole
   });
 }
 
-function readUrlWithin(env: ChatLedEnv, provider: AIProvider, documentId = false): Promise<string | undefined> {
+function readUrlWithin(env: ChatLedEnv, provider: ProviderInstance, documentId = false): Promise<string | undefined> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (url: string | undefined) => {
@@ -99,18 +100,18 @@ export interface ChatLedEnv {
   /** Await bridge/runtime initialization before touching provider pages. */
   initialize?(): Promise<void>;
   /** Providers that can be addressed right now (loaded, DOM ready, logged in). */
-  sendableProviders(): Promise<AIProvider[]>;
+  sendableProviders(): Promise<ProviderInstance[]>;
   /** Make sure the provider page exists (parked offscreen) and is idle (busy gate, #15). */
-  prepare(provider: AIProvider): Promise<void>;
+  prepare(provider: ProviderInstance): Promise<void>;
   /** Create a session and capture the URL observed immediately after its navigation. */
-  newSession(provider: AIProvider, previousUrl?: string): Promise<void | { url?: string; freshDocument?: boolean; documentId?: string }>;
+  newSession(provider: ProviderInstance, previousUrl?: string): Promise<void | { url?: string; freshDocument?: boolean; documentId?: string }>;
   /** Send complete text, resolve with the complete reply. Must reject on failure/timeout. */
-  send(provider: AIProvider, text: string): Promise<string>;
+  send(provider: ProviderInstance, text: string): Promise<string>;
   /** Best effort: ask a still-generating provider to stop (used by stop). */
-  stop(provider: AIProvider): Promise<void>;
+  stop(provider: ProviderInstance): Promise<void>;
   /** Conversation address of the provider page, undefined when unreadable. */
-  readConversationUrl(provider: AIProvider): Promise<string | undefined>;
-  readDocumentId?(provider: AIProvider): Promise<string | undefined>;
+  readConversationUrl(provider: ProviderInstance): Promise<string | undefined>;
+  readDocumentId?(provider: ProviderInstance): Promise<string | undefined>;
 }
 
 export interface ChatLedStartInput {
@@ -118,16 +119,17 @@ export interface ChatLedStartInput {
   goal: string;
   coordinator?: AIProvider;
   /** Candidate targets; only those prepared and confirmed sendable are offered to the coordinator. */
-  candidates: readonly AIProvider[];
+  candidates: readonly ProviderInstance[];
   roundLimit?: number;
   mode?: ChatLedMode;
+  workers?: 0 | 1 | 2;
 }
 
 /** Drives one chat-led run (#113), with pure state transitions and bounded provider I/O. */
 export class ChatLedController {
   private run: ChatLedRun;
   private readonly listeners = new Set<Listener>();
-  private readonly candidates: readonly AIProvider[];
+  private readonly candidates: readonly ProviderInstance[];
   private generation = 0;
   private resumeWaiters: (() => void)[] = [];
   private stopWaiters: (() => void)[] = [];
@@ -135,7 +137,7 @@ export class ChatLedController {
   /** Sticky: once a checkpoint fails, this controller never performs further provider I/O. */
   private persistenceFailed = false;
   private initSequence = 0;
-  private readonly preparingProviders = new Set<AIProvider>();
+  private readonly preparingProviders = new Set<ProviderInstance>();
   /** Each item covers a possible new-session side effect through address registration. */
   private readonly pendingInit = new Set<SessionInitAttempt>();
   /** Startup preparation is bounded by stop(), even if a host readiness call never returns. */
@@ -144,7 +146,7 @@ export class ChatLedController {
   constructor(
     private readonly env: ChatLedEnv,
     run: ChatLedRun,
-    candidates: readonly AIProvider[] = run.available,
+    candidates: readonly ProviderInstance[] = run.available,
   ) {
     this.run = run;
     this.candidates = [...new Set(candidates)];
@@ -159,6 +161,7 @@ export class ChatLedController {
       available: [],
       roundLimit: input.roundLimit ?? DEFAULT_ROUND_LIMIT,
       mode: input.mode ?? 'general',
+      workers: input.workers ?? 0,
       now: env.now(),
     });
     return Promise.resolve(new ChatLedController(env, run, input.candidates));
@@ -226,7 +229,7 @@ export class ChatLedController {
     const intro = buildIntroPrompt({
       goal: this.run.goal,
       coordinator: this.run.coordinator,
-      available: this.run.available.map((provider) => ({ provider, label: PROVIDER_LABELS[provider] ?? provider })),
+      available: this.run.available.map((provider) => ({ provider, label: providerInstanceName(provider, PROVIDER_LABELS) })),
       roundLimit: this.run.roundLimit,
       mode: this.run.mode ?? 'general',
     });
@@ -237,7 +240,7 @@ export class ChatLedController {
     const live = () => this.isLive(generation);
     const coordinator = this.run.coordinator;
     const failures: string[] = [];
-    const prepared = new Set<AIProvider>();
+    const prepared = new Set<ProviderInstance>();
 
     try {
       this.assertPersisted();
@@ -329,7 +332,7 @@ export class ChatLedController {
     for (const wake of this.resumeWaiters.splice(0)) wake();
     for (const wake of this.stopWaiters.splice(0)) wake();
 
-    const targets = new Set<AIProvider>([
+    const targets = new Set<ProviderInstance>([
       ...inFlight,
       ...this.preparingProviders,
       ...[...this.pendingInit].map((attempt) => attempt.provider),
@@ -523,7 +526,7 @@ export class ChatLedController {
     }
   }
 
-  private async sendOwned(provider: AIProvider, text: string, live: () => boolean): Promise<string> {
+  private async sendOwned(provider: ProviderInstance, text: string, live: () => boolean): Promise<string> {
     let rejectStopped!: (reason: Error) => void;
     const stopped = new Promise<never>((_, reject) => {
       rejectStopped = reject;
@@ -616,7 +619,7 @@ export class ChatLedController {
 
       if (firstSend) await this.registerFirstSend(firstSend, live);
       this.assertPersisted();
-      const providerError = providerResponseError(provider, response);
+      const providerError = providerResponseError(providerInstanceBase(provider), response);
       if (providerError) throw providerError;
       return response;
     })();
@@ -630,7 +633,7 @@ export class ChatLedController {
     }
   }
 
-  private beginSessionAttempt(provider: AIProvider): SessionInitAttempt {
+  private beginSessionAttempt(provider: ProviderInstance): SessionInitAttempt {
     this.assertPersisted();
     const id = this.run.id + ':' + provider + ':' + String(++this.initSequence);
     const attempt: SessionInitAttempt = {
@@ -863,18 +866,18 @@ const PROVIDER_START: Record<AIProvider, [string[], string[]]> = {
   meta: [['www.meta.ai', 'meta.ai'], ['/']],
 };
 
-function isBlankStart(provider: AIProvider, raw: string): boolean {
+function isBlankStart(provider: ProviderInstance, raw: string): boolean {
   try {
     const url = new URL(raw);
-    const [hosts, paths] = PROVIDER_START[provider];
+    const [hosts, paths] = PROVIDER_START[providerInstanceBase(provider)];
     return url.protocol === 'https:' && !url.username && !url.password && !url.port && hosts.includes(url.hostname) && paths.includes(url.pathname);
   } catch { return false; }
 }
 
-function isConversationAddress(provider: AIProvider, raw: string): boolean {
+function isConversationAddress(provider: ProviderInstance, raw: string): boolean {
   try {
     const url = new URL(raw);
-    if (url.protocol !== 'https:' || url.username || url.password || url.port || !PROVIDER_START[provider][0].includes(url.hostname)) return false;
+    if (url.protocol !== 'https:' || url.username || url.password || url.port || !PROVIDER_START[providerInstanceBase(provider)][0].includes(url.hostname)) return false;
     const patterns: Record<AIProvider, RegExp> = {
       chatgpt: /^(?:\/g\/[^/]+)?\/c\/[^/]+$/,
       claude: /^\/chat\/[^/]+$/,
@@ -882,7 +885,7 @@ function isConversationAddress(provider: AIProvider, raw: string): boolean {
       grok: /^\/(?:c|chat)\/[^/]+$/,
       meta: /^\/(?:c|chat)\/[^/]+$/,
     };
-    return patterns[provider].test(url.pathname);
+    return patterns[providerInstanceBase(provider)].test(url.pathname);
   } catch { return false; }
 }
 

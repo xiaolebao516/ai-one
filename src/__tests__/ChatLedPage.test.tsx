@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AIProvider } from '../../shared/types';
+import type { ProviderInstance } from '../../shared/types';
 import type { ChatLedEnv } from '../workflow/chatLed/controller';
 import type { ChatLedRun } from '../workflow/chatLed/types';
 import { CHAT_LED_STORAGE_KEY } from '../workflow/chatLed/store';
@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
     show: vi.fn(async () => undefined),
   },
   createRealChatLedEnv: vi.fn(),
-  prepareProviderPage: vi.fn(async () => undefined),
+  prepareProviderPage: vi.fn(async (_instance: string) => undefined),
   claudeCleaner: {
     provider: 'claude',
     supports: { delete: false, archive: false },
@@ -78,12 +78,12 @@ function makeRun(): ChatLedRun {
 function makeEnv(): ChatLedEnv {
   return {
     now: () => Date.now(),
-    sendableProviders: vi.fn(async (): Promise<AIProvider[]> => ['chatgpt', 'claude']),
+    sendableProviders: vi.fn(async (): Promise<ProviderInstance[]> => ['chatgpt', 'claude']),
     prepare: vi.fn(async () => undefined),
-    newSession: vi.fn(async (provider: AIProvider) => ({ url: 'https://example.test/' + provider + '/c/new' })),
+    newSession: vi.fn(async (provider: ProviderInstance) => ({ url: 'https://example.test/' + provider + '/c/new' })),
     send: vi.fn(async (): Promise<string> => 'unused'),
     stop: vi.fn(async () => undefined),
-    readConversationUrl: vi.fn(async (provider: AIProvider): Promise<string> => 'https://example.test/' + provider + '/c/existing'),
+    readConversationUrl: vi.fn(async (provider: ProviderInstance): Promise<string> => 'https://example.test/' + provider + '/c/existing'),
   };
 }
 
@@ -261,5 +261,46 @@ describe('ChatLedPage persistence safety', () => {
     expect(stored[0].cleanupRunning).toBe(false);
     expect(stored[0].cleanupResults?.map((item) => item.outcome)).toEqual(['deleted', 'manual']);
     expect(stored[0].cleanupResults?.[1].url).toBe(SECOND_URL);
+  });
+});
+
+describe('extra ChatGPT worker selection', () => {
+  it('defaults to zero and offers zero, one or two workers', async () => {
+    const container = await renderPage();
+    const picker = container.querySelector('#chatled-workers') as HTMLSelectElement | null;
+    expect(picker?.value).toBe('0');
+    expect([...(picker?.options ?? [])].map((option) => option.value)).toEqual(['0', '1', '2']);
+  });
+  it('selecting two workers passes both instance keys to the controller preparation', async () => {
+    const env = makeEnv();
+    mocks.createRealChatLedEnv.mockReturnValue(env);
+    const container = await renderPage();
+    const picker = container.querySelector('#chatled-workers') as HTMLSelectElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set;
+      setter?.call(picker, '2');
+      picker.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await enterGoal(container, 'parallel agent testing');
+    await clickButton(container, 'Start');
+    await vi.waitFor(() => expect(env.prepare).toHaveBeenCalledWith('chatgpt#3'));
+    expect(env.prepare).toHaveBeenCalledWith('chatgpt#2');
+  });
+
+  it('does not delete any conversation when another instance fails preparation', async () => {
+    const run = makeRun();
+    run.conversations[1].provider = 'chatgpt#2';
+    window.localStorage.setItem(CHAT_LED_STORAGE_KEY, JSON.stringify([run]));
+    mocks.prepareProviderPage.mockImplementation(async (instance: string) => {
+      if (instance === 'chatgpt#2') throw new Error('second instance unavailable');
+    });
+    const container = await renderPage();
+    await clickButton(container, 'Open');
+    await clickButton(container, 'Clean up');
+    await vi.waitFor(() => {
+      const saved = JSON.parse(window.localStorage.getItem(CHAT_LED_STORAGE_KEY) || '[]') as ChatLedRun[];
+      expect(saved[0]?.cleanupResults?.map((item) => item.outcome)).toEqual(['manual', 'manual']);
+    }, { timeout: 10_000 }); // the first instance is prepared (with the real 2.5 s viewport settle) before the second fails
+    expect(mocks.cleaner.deleteConversation).not.toHaveBeenCalled();
   });
 });

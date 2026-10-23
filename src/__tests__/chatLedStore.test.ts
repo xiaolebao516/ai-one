@@ -122,3 +122,16 @@ describe('v1 run compatibility', () => {
     expect(loaded.autoReminderStreak ?? 0).toBe(0);
   });
 });
+
+describe('multi-instance storage compatibility', () => {
+  it('normalizes missing workers to zero while retaining instance keys', () => {
+    const storage = memoryStorage();
+    const old = stoppedRunWithTwoConversations();
+    delete old.workers;
+    old.conversations.push({ provider: 'chatgpt#2', url: 'https://chatgpt.com/c/worker', createdByAiOne: true, registrationStatus: 'confirmed', registeredAt: 2 });
+    storage.setItem(CHAT_LED_STORAGE_KEY, JSON.stringify([old]));
+    const [loaded] = loadRuns(storage);
+    expect(loaded.workers).toBe(0);
+    expect(loaded.conversations.at(-1)?.provider).toBe('chatgpt#2');
+  });
+});

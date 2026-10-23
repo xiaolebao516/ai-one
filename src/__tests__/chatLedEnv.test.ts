@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderState } from '../../shared/types';
 const mocks = vi.hoisted(() => ({ get: vi.fn(), open: vi.fn(), park: vi.fn(), eval: vi.fn(), newSession: vi.fn(), evalWithCallback: vi.fn() }));
-vi.mock('../host', () => ({ host: { connections: { get: mocks.get }, provider: { open: mocks.open, park: mocks.park, eval: mocks.eval, newSession: mocks.newSession, evalWithCallback: mocks.evalWithCallback } } }));
+vi.mock('../host', () => ({ host: { connections: { get: mocks.get, getAll: mocks.get }, provider: { open: mocks.open, park: mocks.park, eval: mocks.eval, newSession: mocks.newSession, evalWithCallback: mocks.evalWithCallback } } }));
 vi.mock('../bridge/pull', () => ({ resetProviderBootState: vi.fn(), startBridgePull: vi.fn() }));
 vi.mock('../workflow/runtime', () => ({ prepareWorkflowRun: vi.fn() }));
 vi.mock('../workflow/sendAndWait', () => ({ sendAndWait: vi.fn() }));
@@ -81,5 +81,25 @@ describe('chat-led real provider preparation', () => {
       // The identity read happens only after the page reported ready again.
       expect(mocks.evalWithCallback.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.eval.mock.invocationCallOrder[2]);
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('multi-instance preparation', () => {
+  beforeEach(() => vi.resetAllMocks());
+  it('addresses the instance while CHECK_STATUS uses the base provider', async () => {
+    const states = [
+      { provider: 'chatgpt', webview: 'loaded', dom: 'ready', login: 'logged_in', thinking: false, lastStatusAt: 4 },
+      { provider: 'chatgpt#2', webview: 'loaded', dom: 'ready', login: 'logged_out', thinking: false, lastStatusAt: 1 },
+    ];
+    mocks.get.mockImplementation(async () => states);
+    mocks.eval.mockImplementation(async (instance: string) => {
+      if (instance === 'chatgpt#2') states[1] = { ...states[1], login: 'logged_in', lastStatusAt: 9 };
+    });
+    await prepareProviderPage('chatgpt#2');
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(mocks.eval.mock.calls[0][0]).toBe('chatgpt#2');
+    expect(mocks.eval.mock.calls[0][1]).toContain('"provider":"chatgpt"');
+    expect(mocks.eval.mock.calls[0][1]).not.toContain('"provider":"chatgpt#2"');
+    expect(await createRealChatLedEnv().sendableProviders()).toContain('chatgpt#2');
   });
 });

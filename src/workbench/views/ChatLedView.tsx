@@ -1,4 +1,5 @@
-import type { AIProvider } from "../../../shared/types";
+import type { ProviderInstance } from "../../../shared/types";
+import { providerInstanceName } from "../../../shared/providerInstances";
 import type { Locale } from "../../i18n/resolve";
 import {
   Badge,
@@ -21,7 +22,7 @@ import type {
 import { workbenchText, type WorkbenchTextKey } from "../workbenchText";
 
 type CleanupPlanItem = {
-  provider: AIProvider;
+  provider: ProviderInstance;
   url: string;
   title?: string;
   action: "delete" | "archive" | "manual";
@@ -44,7 +45,7 @@ export interface ChatLedViewProps {
   onStop(): void;
   onRemind(): void;
   onExtendLimit(extra: number): void;
-  onTakeOver(provider: AIProvider): void;
+  onTakeOver(provider: ProviderInstance): void;
   onExport(): void;
   onCleanup(): void;
   onClose(): void;
@@ -116,8 +117,8 @@ const CLEANUP_RESULT_TONE: Record<CleanupOutcome, V2StatusTone> = {
   skipped: "unknown",
 };
 
-function providerName(provider: AIProvider, labels: Record<string, string>): string {
-  return labels[provider] || provider;
+function providerName(provider: ProviderInstance, labels: Record<string, string>): string {
+  return providerInstanceName(provider, labels);
 }
 
 function cleanupActionLabel(action: CleanupPlanItem["action"], text: ReturnType<typeof workbenchText>): string {

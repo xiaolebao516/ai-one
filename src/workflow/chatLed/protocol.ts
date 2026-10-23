@@ -1,5 +1,6 @@
 import { AI_PROVIDERS } from '../../../shared/constants';
-import type { AIProvider } from '../../../shared/types';
+import { isProviderInstance } from '../../../shared/providerInstances';
+import type { AIProvider, ProviderInstance } from '../../../shared/types';
 import {
   DONE_FENCE,
   MAX_TARGETS_PER_DIRECTIVE,
@@ -86,8 +87,8 @@ export function parseCoordinatorReply(
   reply: string,
   ctx: {
     coordinator: AIProvider;
-    available: readonly AIProvider[];
-    previous?: { to: AIProvider[]; message: string };
+    available: readonly ProviderInstance[];
+    previous?: { to: ProviderInstance[]; message: string };
   },
 ): ParsedReply {
   const fences = collectTopLevelDirectiveFences(reply);
@@ -142,12 +143,12 @@ export function parseCoordinatorReply(
   }
 
   for (const target of targetStrings) {
-    if (!Object.prototype.hasOwnProperty.call(AI_PROVIDERS, target)) {
+    if (!isProviderInstance(target)) {
       return violation('unknown-target', 'The directive names an unknown AI provider.');
     }
   }
 
-  const targets = [...new Set(targetStrings as AIProvider[])];
+  const targets = [...new Set(targetStrings as ProviderInstance[])];
   if (targets.length > MAX_TARGETS_PER_DIRECTIVE) {
     return violation('too-many-targets', 'The directive exceeds the maximum number of distinct targets.');
   }
@@ -176,7 +177,7 @@ export function parseCoordinatorReply(
 export function buildIntroPrompt(input: {
   goal: string;
   coordinator: AIProvider;
-  available: readonly { provider: AIProvider; label: string }[];
+  available: readonly { provider: ProviderInstance; label: string }[];
   roundLimit: number;
   mode?: 'general' | 'repo' | 'discuss';
 }): string {
@@ -202,6 +203,9 @@ export function buildIntroPrompt(input: {
     '最多执行 ' + input.roundLimit + ' 轮转发；收到第 ' + (input.roundLimit + 1) + ' 条协调者回复时会暂停并交由用户决定。完成时必须使用 ai-one-done 围栏，不要只用自然语言宣告完成。',
     '用户任务原文如下，请保留其目标与约束：\n\n' + input.goal,
   ];
+  if (input.available.some(({ provider }) => provider.startsWith('chatgpt#'))) {
+    parts.splice(-1, 0, 'chatgpt#2 / chatgpt#3 是另外的独立 ChatGPT 工人对话，与你（协调者）不共享上下文，message 必须自包含。');
+  }
   if (input.mode === 'repo') {
     parts.splice(-1, 0, '仓库协作模式：每位工人使用独立分支，同一分支同一时间只有一个写入者。仓库写操作必须由网页 AI 使用其自带的 GitHub 连接器执行；ai-one 不检查、不代执行任何 GitHub 写操作。');
   } else if (input.mode === 'discuss') {
@@ -211,7 +215,7 @@ export function buildIntroPrompt(input: {
 }
 
 export function buildFeedbackPrompt(
-  items: { from: AIProvider; label: string; reply?: string; error?: string }[],
+  items: { from: ProviderInstance; label: string; reply?: string; error?: string }[],
   round: number,
   remaining: number,
 ): string {

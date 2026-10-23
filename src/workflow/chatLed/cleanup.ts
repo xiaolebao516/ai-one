@@ -1,4 +1,5 @@
-import type { AIProvider } from '../../../shared/types';
+import type { AIProvider, ProviderInstance } from '../../../shared/types';
+import { providerInstanceBase } from '../../../shared/providerInstances';
 import type { ChatLedRun, CleanupItemResult, CleanupOutcome } from './types';
 
 export interface CleanerStep {
@@ -8,6 +9,7 @@ export interface CleanerStep {
 
 export interface ConversationCleaner {
   provider: AIProvider;
+  instance?: ProviderInstance;
   supports: {
     delete: boolean;
     archive: boolean;
@@ -20,7 +22,7 @@ export interface ConversationCleaner {
 }
 
 export interface CleanupPlanItem {
-  provider: AIProvider;
+  provider: ProviderInstance;
   url: string;
   title?: string;
   action: 'delete' | 'archive' | 'manual';
@@ -43,11 +45,11 @@ interface CleanerMatch {
 }
 
 function matchCleaner(
-  provider: AIProvider,
+  provider: ProviderInstance,
   url: string,
   cleaners: readonly ConversationCleaner[],
 ): CleanerMatch {
-  const candidates = cleaners.filter((cleaner) => cleaner.provider === provider);
+  const candidates = cleaners.filter((cleaner) => cleaner.provider === providerInstanceBase(provider) && (cleaner.instance ?? cleaner.provider) === provider);
   if (candidates.length === 0) {
     return { reason: 'No cleaner is registered for this provider.' };
   }

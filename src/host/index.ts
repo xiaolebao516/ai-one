@@ -32,6 +32,9 @@ export interface ProviderStopResult {
 const isBaseProviderState = (state: ProviderState<ProviderInstance>): state is ProviderState => parseProviderInstance(state.provider)?.n === 1;
 
 const providersWithUnconfirmedStop = new Set<ProviderInstance>();
+// A drained send whose result is unknown (the page may or may not have dispatched). Kept apart from the stop
+// latch on purpose: a later successful stop() must not release it. Only an explicit reload does.
+const providersWithUnknownSend = new Set<ProviderInstance>();
 
 const STOP_ENGINE_JS =
   "window.__MAC_ENGINE__ && typeof window.__MAC_ENGINE__.stop === 'function' ? window.__MAC_ENGINE__.stop() : null";
@@ -102,19 +105,54 @@ const providerApi = {
   eval: (provider: ProviderInstance, js: string): Promise<void> => invoke('provider_eval', { provider, js }),
   evalWithCallback: (provider: ProviderInstance, js: string): Promise<string> =>
     invoke('provider_eval_with_callback', { provider, js }),
-  send: (provider: ProviderInstance, text: string): Promise<void> => {
-    if (providersWithUnconfirmedStop.has(provider)) {
-      return Promise.reject(new Error(`${provider} send rejected: stop failed; reload provider page before retrying`));
+  // drainOutbox: a collector that reads the page outbox by polling (extra instances) must not see replies
+  // left behind by an earlier cancelled or timed-out send. The page drops everything already queued in
+  // the SAME script that dispatches the message, so no reply can fall in between. peekOutbox returns at
+  // most one size-limited batch per call, so it drains in rounds. Fail closed: if the outbox cannot be
+  // proven empty (error, no progress, round cap) the message is NOT dispatched and the send is rejected.
+  send: async (provider: ProviderInstance, text: string, options?: { drainOutbox?: boolean }): Promise<void> => {
+    if (providersWithUnconfirmedStop.has(provider) || providersWithUnknownSend.has(provider)) {
+      throw new Error(`${provider} send rejected: stop failed or an earlier send result is unknown; reload provider page before retrying`);
     }
-    return invoke('provider_eval', {
-      provider,
-      js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
-        v: 1,
-        action: 'SEND_MESSAGE',
-        provider: providerInstanceBase(provider),
-        payload: { text },
-      })});`,
+    const message = JSON.stringify({
+      v: 1,
+      action: 'SEND_MESSAGE',
+      provider: providerInstanceBase(provider),
+      payload: { text },
     });
+    if (!options?.drainOutbox) {
+      return invoke('provider_eval', { provider, js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${message});` });
+    }
+    // The host stops waiting for the callback after 5 s but cannot recall a script already queued in the
+    // page. The script therefore carries its own, shorter expiry and refuses to dispatch after it.
+    const expiresAt = Date.now() + DRAIN_SCRIPT_TTL_MS;
+    let raw: string;
+    try {
+      raw = await invoke<string>('provider_eval_with_callback', { provider, js: drainAndDispatchScript(message, expiresAt) });
+    } catch (error) {
+      // The script may still have dispatched (it only expires later), so whether the message was sent is
+      // unknown. Quarantine the page like an unconfirmed stop: no further send until it is reloaded, so a
+      // late reply to this message can never be taken for the answer to the next one.
+      providersWithUnknownSend.add(provider);
+      throw new Error(`${provider} send rejected: outbox drain result unknown (${error instanceof Error ? error.message : String(error)}); reload the provider page before retrying`);
+    }
+    let result: unknown;
+    try {
+      result = JSON.parse(raw) as unknown;
+      if (typeof result === 'string') result = JSON.parse(result) as unknown;
+    } catch {
+      providersWithUnknownSend.add(provider); // an unreadable result is equally unknown
+      throw new Error(`${provider} send rejected: unreadable outbox drain result; reload the provider page before retrying`);
+    }
+    const outcome = result !== null && typeof result === 'object' ? (result as { sent?: unknown; reason?: unknown }) : undefined;
+    if (outcome?.sent === true) return;
+    if (outcome?.sent === false) {
+      // The page states explicitly that it did not dispatch: no quarantine needed.
+      throw new Error(`${provider} send rejected: stale outbox could not be drained (${typeof outcome.reason === 'string' ? outcome.reason : 'no reason'})`);
+    }
+    // Anything else ({}, null, a wrong type) says nothing about whether the page dispatched.
+    providersWithUnknownSend.add(provider);
+    throw new Error(`${provider} send rejected: malformed outbox drain result; reload the provider page before retrying`);
   },
   fill: (provider: ProviderInstance, text: string): Promise<void> =>
     invoke('provider_eval', {
@@ -138,13 +176,48 @@ const providerApi = {
   reload: async (provider: ProviderInstance): Promise<void> => {
     await invoke('provider_reload', { provider });
     providersWithUnconfirmedStop.delete(provider);
+    providersWithUnknownSend.delete(provider);
   },
   reconnect: async (provider: ProviderInstance): Promise<void> => {
     await invoke('provider_reload', { provider, reconnect: true });
     providersWithUnconfirmedStop.delete(provider);
+    // Not providersWithUnknownSend: for providers other than Grok the host accepts reconnect without
+    // reloading the page, so the old page (and a late reply in it) may still be there. Only reload() clears it.
   },
   newSession: (provider: ProviderInstance): Promise<void> => invoke('provider_new_session', { provider }),
 };
+
+// Runs in the provider page. Returns JSON {sent:true} after dispatching, or {sent:false, reason} without dispatching.
+// Shorter than the host's 5 s callback wait, so a script that only runs after the host gave up expires.
+const DRAIN_SCRIPT_TTL_MS = 2500;
+
+function drainAndDispatchScript(message: string, expiresAt: number): string {
+  return `(() => {
+  const expiresAt = ${expiresAt};
+  const b = window.__MAC_BRIDGE__;
+  if (!b) return JSON.stringify({ sent: false, reason: 'no bridge' });
+  if (Date.now() > expiresAt) return JSON.stringify({ sent: false, reason: 'expired' });
+  try {
+    let lastMax = 0;
+    let drained = false;
+    for (let round = 0; round < 500; round++) {
+      if (Date.now() > expiresAt) return JSON.stringify({ sent: false, reason: 'expired' });
+      let max = 0;
+      for (const item of (b.peekOutbox() || [])) { if (item && typeof item.mid === 'number' && item.mid > max) max = item.mid; }
+      if (max <= 0) { drained = true; break; }
+      if (max <= lastMax) return JSON.stringify({ sent: false, reason: 'ack did not advance' });
+      b.ackBulk(max);
+      lastMax = max;
+    }
+    if (!drained) return JSON.stringify({ sent: false, reason: 'round cap reached' });
+  } catch (e) {
+    return JSON.stringify({ sent: false, reason: 'drain failed: ' + String(e && e.message || e) });
+  }
+  if (Date.now() > expiresAt) return JSON.stringify({ sent: false, reason: 'expired' });
+  b.dispatch(${message});
+  return JSON.stringify({ sent: true });
+})()`;
+}
 
 export const host = {
   app: {

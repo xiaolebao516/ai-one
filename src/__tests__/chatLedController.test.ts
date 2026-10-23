@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AIProvider } from '../../shared/types';
+import type { ProviderInstance } from '../../shared/types';
 import type { ChatLedRun } from '../workflow/chatLed/types';
 import { loadRuns, saveRunChecked, type ChatLedStorage } from '../workflow/chatLed/store';
 import {
@@ -16,30 +16,34 @@ interface Script {
   chatgpt: (string | Error)[];
   claude?: (string | Error)[];
   gemini?: (string | Error)[];
+  'chatgpt#2'?: (string | Error)[];
+  'chatgpt#3'?: (string | Error)[];
 }
 
-function makeEnv(script: Script, sendable: AIProvider[] = ['chatgpt', 'claude', 'gemini']) {
-  const calls: { provider: AIProvider; text: string }[] = [];
+function makeEnv(script: Script, sendable: ProviderInstance[] = ['chatgpt', 'claude', 'gemini']) {
+  const calls: { provider: ProviderInstance; text: string }[] = [];
   const events: string[] = [];
   const queues: Record<string, (string | Error)[]> = {
     chatgpt: [...script.chatgpt],
     claude: [...(script.claude ?? [])],
     gemini: [...(script.gemini ?? [])],
+    'chatgpt#2': [...(script['chatgpt#2'] ?? [])],
+    'chatgpt#3': [...(script['chatgpt#3'] ?? [])],
   };
   let clock = 1000;
   let sessionSequence = 0;
-  const urls = new Map<AIProvider, string>();
+  const urls = new Map<ProviderInstance, string>();
   const env: ChatLedEnv = {
     now: () => (clock += 1),
     sendableProviders: async () => sendable,
     prepare: vi.fn(async () => undefined),
-    newSession: vi.fn(async (provider: AIProvider) => {
+    newSession: vi.fn(async (provider: ProviderInstance) => {
       events.push(`new:${provider}`);
-      const url = `https://example.test/${provider}/c/new-${++sessionSequence}`;
+      const url = `https://example.test/${provider.replace('#', '-')}/c/new-${++sessionSequence}`;
       urls.set(provider, url);
       return { url };
     }),
-    send: vi.fn(async (provider: AIProvider, text: string) => {
+    send: vi.fn(async (provider: ProviderInstance, text: string) => {
       events.push(`send:${provider}`);
       calls.push({ provider, text });
       const next = queues[provider]?.shift();
@@ -48,8 +52,8 @@ function makeEnv(script: Script, sendable: AIProvider[] = ['chatgpt', 'claude', 
       return next;
     }),
     stop: vi.fn(async () => undefined),
-    readConversationUrl: vi.fn(async (provider: AIProvider) =>
-      urls.get(provider) ?? `https://example.test/${provider}/c/existing`,
+    readConversationUrl: vi.fn(async (provider: ProviderInstance) =>
+      urls.get(provider) ?? `https://example.test/${provider.replace('#', '-')}/c/existing`,
     ),
   };
   return { env, calls, events };
@@ -71,7 +75,7 @@ describe('ChatLedController', () => {
     env.newSession = vi.fn(async () => ({ url, freshDocument: true, documentId: 'fresh-boot' }));
     env.readDocumentId = vi.fn(async () => 'fresh-boot');
     env.readConversationUrl = vi.fn(async () => url);
-    env.send = vi.fn(async (provider: AIProvider, text: string) => {
+    env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
       calls.push({ provider, text });
       url = 'https://chatgpt.com/c/11111111-1111-4111-8111-111111111111';
       return DONE('blank-page works');
@@ -96,11 +100,11 @@ describe('ChatLedController', () => {
   });
 
   it('prepares coordinator and candidates before querying sendability on a cold start', async () => {
-    const ready = new Set<AIProvider>();
+    const ready = new Set<ProviderInstance>();
     const { env, calls } = makeEnv({ chatgpt: [DONE('ready')] }, []);
     env.initialize = vi.fn(async () => undefined);
     env.sendableProviders = vi.fn(async () => [...ready]);
-    const prepare = vi.fn(async (provider: AIProvider) => {
+    const prepare = vi.fn(async (provider: ProviderInstance) => {
       ready.add(provider);
     });
     env.prepare = prepare;
@@ -133,7 +137,7 @@ describe('ChatLedController', () => {
 
   it('fails visibly when no candidate target is confirmed ready', async () => {
     const { env, calls } = makeEnv({ chatgpt: [DONE('unused')] });
-    env.sendableProviders = vi.fn(async (): Promise<AIProvider[]> => ['chatgpt']);
+    env.sendableProviders = vi.fn(async (): Promise<ProviderInstance[]> => ['chatgpt']);
     const controller = await create(env);
     await controller.start();
     expect(controller.getRun().phase).toBe('awaiting-user');
@@ -267,7 +271,7 @@ describe('ChatLedController', () => {
   it('pause holds the next send until resume', async () => {
     let release: (value: string) => void = () => undefined;
     const { env, calls } = makeEnv({ chatgpt: [DONE('x')] });
-    env.send = vi.fn(async (provider: AIProvider, text: string) => {
+    env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
       calls.push({ provider, text });
       return new Promise<string>((resolve) => {
         release = resolve;
@@ -289,7 +293,7 @@ describe('ChatLedController', () => {
 
   it('stop cancels in-flight forwards, asks providers to stop and registers conversations first', async () => {
     const { env, calls } = makeEnv({ chatgpt: [SEND(['claude'], 'slow')] });
-    env.send = vi.fn(async (provider: AIProvider, text: string) => {
+    env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
       calls.push({ provider, text });
       if (provider === 'chatgpt') return SEND(['claude'], 'slow');
       return new Promise<string>(() => undefined); // claude never answers
@@ -353,7 +357,7 @@ describe('ChatLedController', () => {
 
   it('stopping while the coordinator is paused still asks the coordinator page to stop', async () => {
     const { env, calls } = makeEnv({ chatgpt: [] });
-    env.send = vi.fn(async (provider: AIProvider, text: string) => {
+    env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
       calls.push({ provider, text });
       return new Promise<string>(() => undefined);
     });
@@ -384,8 +388,8 @@ describe('ChatLedController', () => {
 
   it('records a manual session when newSession has a side effect but then rejects', async () => {
     const { env, calls } = makeEnv({ chatgpt: [DONE('unused')] });
-    env.newSession = vi.fn(async (provider: AIProvider) => {
-      env.readConversationUrl = vi.fn(async (p: AIProvider) =>
+    env.newSession = vi.fn(async (provider: ProviderInstance) => {
+      env.readConversationUrl = vi.fn(async (p: ProviderInstance) =>
         `https://example.test/${p}/c/${p === provider ? 'new-after-side-effect' : 'existing'}`,
       );
       throw new Error('newSession failed after creating the page');
@@ -406,7 +410,7 @@ describe('ChatLedController', () => {
   it('records a manual creation when post-session readiness fails', async () => {
     const { env, calls } = makeEnv({ chatgpt: [DONE('unused')] });
     let coordinatorPrepareCalls = 0;
-    env.prepare = vi.fn(async (provider: AIProvider) => {
+    env.prepare = vi.fn(async (provider: ProviderInstance) => {
       if (provider === 'chatgpt') {
         coordinatorPrepareCalls += 1;
         if (coordinatorPrepareCalls === 3) throw new Error('session page is not ready');
@@ -455,8 +459,8 @@ describe('ChatLedController', () => {
     const { env, calls } = makeEnv({ chatgpt: [DONE('ok')] });
     let finishSession: () => void = () => undefined;
     let reads = 0;
-    env.readConversationUrl = vi.fn(async (provider: AIProvider) => {
-      if (provider !== 'chatgpt') return `https://example.test/${provider}/c/existing`;
+    env.readConversationUrl = vi.fn(async (provider: ProviderInstance) => {
+      if (provider !== 'chatgpt') return `https://example.test/${provider.replace('#', '-')}/c/existing`;
       reads += 1;
       return reads === 1 ? 'https://example.test/chatgpt/c/old' : 'https://example.test/chatgpt/c/new';
     });
@@ -510,8 +514,8 @@ describe('ChatLedController', () => {
     const { env } = makeEnv({ chatgpt: [DONE('unused')] });
     let finishSession: () => void = () => undefined;
     let reads = 0;
-    env.readConversationUrl = vi.fn(async (provider: AIProvider) => {
-      if (provider !== 'chatgpt') return `https://example.test/${provider}/c/existing`;
+    env.readConversationUrl = vi.fn(async (provider: ProviderInstance) => {
+      if (provider !== 'chatgpt') return `https://example.test/${provider.replace('#', '-')}/c/existing`;
       reads += 1;
       return reads === 1 ? 'https://example.test/chatgpt/c/old' : 'https://example.test/chatgpt/c/new';
     });
@@ -546,7 +550,7 @@ describe('ChatLedController', () => {
 
   it('does not start provider I/O when a run checkpoint fails', async () => {
     const { env } = makeEnv({ chatgpt: [DONE('must not send')] });
-    env.sendableProviders = vi.fn(async (): Promise<AIProvider[]> => ['chatgpt', 'claude', 'gemini']);
+    env.sendableProviders = vi.fn(async (): Promise<ProviderInstance[]> => ['chatgpt', 'claude', 'gemini']);
     const controller = await create(env);
     controller.subscribe(() => false);
 
@@ -623,11 +627,11 @@ describe('ChatLedController', () => {
     let currentUrl = 'https://chatgpt.com/';
     const conversationUrl = 'https://chatgpt.com/c/123e4567-e89b-42d3-a456-426614174123';
     const durableStatusAtCreation: string[] = [];
-    const sent: AIProvider[] = [];
-    env.readConversationUrl = vi.fn(async (provider: AIProvider) =>
+    const sent: ProviderInstance[] = [];
+    env.readConversationUrl = vi.fn(async (provider: ProviderInstance) =>
       provider === 'chatgpt' ? currentUrl : ('https://example.test/' + provider + '/c/existing'));
     env.readDocumentId = vi.fn(async () => 'doc-blank-1');
-    env.newSession = vi.fn(async (provider: AIProvider) => {
+    env.newSession = vi.fn(async (provider: ProviderInstance) => {
       const raw = JSON.parse(Array.from(data.values())[0] || '[]') as ChatLedRun[];
       durableStatusAtCreation.push(raw[0]?.sessionInitializations[0]?.status ?? 'missing');
       if (provider === 'chatgpt') {
@@ -636,7 +640,7 @@ describe('ChatLedController', () => {
       }
       return { url: 'https://example.test/' + provider + '/c/unexpected' };
     });
-    env.send = vi.fn(async (provider: AIProvider) => {
+    env.send = vi.fn(async (provider: ProviderInstance) => {
       sent.push(provider);
       if (provider === 'chatgpt') {
         currentUrl = conversationUrl;
@@ -682,8 +686,8 @@ describe('ChatLedController', () => {
       claude: ['reply 1', 'reply 2'],
     });
     let claudeReads = 0;
-    const otherReads = new Map<AIProvider, number>();
-    env.readConversationUrl = vi.fn(async (provider: AIProvider) => {
+    const otherReads = new Map<ProviderInstance, number>();
+    env.readConversationUrl = vi.fn(async (provider: ProviderInstance) => {
       if (provider !== 'claude') {
         const n = (otherReads.get(provider) ?? 0) + 1;
         otherReads.set(provider, n);
@@ -694,12 +698,12 @@ describe('ChatLedController', () => {
       if (claudeReads <= 4) return 'https://example.test/claude/c/123';
       return 'https://example.test/claude/c/USERS-OWN-CHAT';
     });
-    env.newSession = vi.fn(async (provider: AIProvider) => ({
+    env.newSession = vi.fn(async (provider: ProviderInstance) => ({
       url: provider === 'claude'
         ? 'https://example.test/claude/c/123'
         : `https://example.test/${provider}/c/new`,
     }));
-    env.send = vi.fn(async (provider: AIProvider, text: string) => {
+    env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
       calls.push({ provider, text });
       if (provider === 'claude') {
         const reply = calls.filter((c) => c.provider === 'claude').length === 1 ? 'reply 1' : 'reply 2';
@@ -724,14 +728,14 @@ describe('ChatLedController', () => {
       chatgpt: [SEND(['claude'], 'first'), SEND(['claude'], 'second'), DONE('done')],
       claude: ['reply 1', 'reply 2'],
     });
-    const currentUrls = new Map<AIProvider, string>();
+    const currentUrls = new Map<ProviderInstance, string>();
     const targetUrl = 'https://example.test/claude/c/123';
     const userUrl = 'https://example.test/claude/c/users-own-chat';
     let claudeReads = 0;
     let releaseRead!: (url: string | undefined) => void;
     let notifyReadStarted!: () => void;
     const readStarted = new Promise<void>((resolve) => { notifyReadStarted = resolve; });
-    env.readConversationUrl = vi.fn(async (provider: AIProvider) => {
+    env.readConversationUrl = vi.fn(async (provider: ProviderInstance) => {
       if (provider !== 'claude') {
         return currentUrls.get(provider) ?? ('https://example.test/' + provider + '/c/existing');
       }
@@ -742,14 +746,14 @@ describe('ChatLedController', () => {
       }
       return currentUrls.get(provider) ?? 'https://example.test/claude/c/existing';
     });
-    env.newSession = vi.fn(async (provider: AIProvider) => {
+    env.newSession = vi.fn(async (provider: ProviderInstance) => {
       const url = provider === 'claude'
         ? targetUrl
         : ('https://example.test/' + provider + '/c/' + provider + '-new');
       currentUrls.set(provider, url);
       return { url };
     });
-    env.send = vi.fn(async (provider: AIProvider, text: string) => {
+    env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
       calls.push({ provider, text });
       if (provider === 'claude') {
         return calls.filter((call) => call.provider === 'claude').length === 1 ? 'reply 1' : 'reply 2';
@@ -779,8 +783,8 @@ describe('ChatLedController', () => {
       chatgpt: [SEND(['claude'], 'first'), SEND(['claude'], 'second'), DONE('done')],
       claude: ['r1', 'r2'],
     });
-    const reads = new Map<AIProvider, number>();
-    env.readConversationUrl = vi.fn(async (provider: AIProvider) => {
+    const reads = new Map<ProviderInstance, number>();
+    env.readConversationUrl = vi.fn(async (provider: ProviderInstance) => {
       const n = (reads.get(provider) ?? 0) + 1;
       reads.set(provider, n);
       if (provider !== 'claude') {
@@ -788,7 +792,7 @@ describe('ChatLedController', () => {
       }
       return n === 1 ? 'https://example.test/' : 'https://example.test/claude/c/second-session';
     });
-    env.newSession = vi.fn(async (provider: AIProvider) => ({
+    env.newSession = vi.fn(async (provider: ProviderInstance) => ({
       url: provider === 'claude'
         ? 'https://example.test/claude/c/second-session'
         : `https://example.test/${provider}/c/new`,
@@ -832,7 +836,7 @@ describe('chat-led parallel deadlines', () => {
     vi.useFakeTimers();
     try {
       const { env, calls } = makeEnv({ chatgpt: [] });
-      env.send = vi.fn(async (provider: AIProvider, text: string) => {
+      env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
         calls.push({ provider, text });
         if (provider === 'chatgpt') {
           return calls.filter(c => c.provider === 'chatgpt').length === 1
@@ -869,10 +873,10 @@ describe('chat-led parallel deadlines', () => {
       const { env, calls, events } = makeEnv({ chatgpt: [] });
       let releasePrepare!: () => void;
       let stallClaudePrepare = false; // only after the coordinator has issued the forward
-      env.prepare = vi.fn(async (provider: AIProvider) => {
+      env.prepare = vi.fn(async (provider: ProviderInstance) => {
         if (provider === 'claude' && stallClaudePrepare) await new Promise<void>((resolve) => { releasePrepare = resolve; });
       });
-      env.send = vi.fn(async (provider: AIProvider, text: string) => {
+      env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
         events.push('send:' + provider);
         calls.push({ provider, text });
         if (provider === 'chatgpt') {
@@ -917,7 +921,7 @@ describe('chat-led parallel deadlines', () => {
   it('does not automatically send while paused and cancels the next reminder on stop', async () => {
     const { env, calls } = makeEnv({ chatgpt: [] });
     let release: () => void = () => undefined;
-    env.send = vi.fn(async (provider: AIProvider, text: string) => {
+    env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
       calls.push({ provider, text });
       if (calls.length === 1) return new Promise<string>(resolve => { release = () => resolve('not a directive'); });
       return DONE('never');
@@ -947,7 +951,7 @@ describe('parallel forwarding busy gate', () => {
     let geminiPrepares = 0;
     let releaseGemini: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => { releaseGemini = resolve; });
-    env.prepare = vi.fn(async (provider: AIProvider) => {
+    env.prepare = vi.fn(async (provider: ProviderInstance) => {
       if (provider === 'gemini' && ++geminiPrepares === 2) await gate;
       return originalPrepare(provider);
     });
@@ -959,5 +963,51 @@ describe('parallel forwarding busy gate', () => {
     await running;
     expect(controller.getRun().forwards.map(f => f.status)).toEqual(['done', 'done']);
     expect(controller.getRun().phase).toBe('finished');
+  });
+});
+
+describe('multi-instance parallel forwarding', () => {
+  it('returns two ChatGPT worker responses plus Claude independently', async () => {
+    const { env, calls } = makeEnv({
+      chatgpt: [SEND(['chatgpt#2', 'chatgpt#3', 'claude'], 'independent job'), DONE('collated')],
+      'chatgpt#2': ['worker two'], 'chatgpt#3': ['worker three'], claude: ['Claude reply'],
+    }, ['chatgpt', 'chatgpt#2', 'chatgpt#3', 'claude']);
+    const controller = await ChatLedController.create(env, { id: 'workers', goal: 'parallel', candidates: ['chatgpt#2', 'chatgpt#3', 'claude'], workers: 2 });
+    await controller.start();
+    expect(controller.getRun().workers).toBe(2);
+    expect(controller.getRun().forwards.map((item) => [item.to, item.status])).toEqual([
+      ['chatgpt#2', 'done'], ['chatgpt#3', 'done'], ['claude', 'done'],
+    ]);
+    expect(calls.map((item) => item.provider)).toContain('chatgpt#3');
+    expect(controller.getRun().phase).toBe('finished');
+  });
+  it('isolates an unready worker from ready targets', async () => {
+    const { env } = makeEnv({ chatgpt: [DONE('finished')] }, ['chatgpt', 'chatgpt#3', 'claude']);
+    env.prepare = vi.fn(async (provider: ProviderInstance) => { if (provider === 'chatgpt#2') throw new Error('worker unavailable'); });
+    const controller = await ChatLedController.create(env, { id: 'partial', goal: 'g', candidates: ['chatgpt#2', 'chatgpt#3', 'claude'], workers: 2 });
+    await controller.start();
+    expect(controller.getRun().available).toEqual(['chatgpt#3', 'claude']);
+    expect(controller.getRun().phase).toBe('finished');
+  });
+  it('isolates worker timeout without cancelling a concurrent Claude reply', async () => {
+    vi.useFakeTimers();
+    try {
+      const { env, calls } = makeEnv({ chatgpt: [] }, ['chatgpt', 'chatgpt#2', 'claude']);
+      env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
+        calls.push({ provider, text });
+        if (provider === 'chatgpt') return calls.filter((item) => item.provider === 'chatgpt').length === 1
+          ? SEND(['chatgpt#2', 'claude'], 'parallel') : DONE('handled');
+        if (provider === 'chatgpt#2') return new Promise<string>(() => undefined);
+        return 'Claude is done';
+      });
+      const controller = await ChatLedController.create(env, { id: 'timeout', goal: 'g', candidates: ['chatgpt#2', 'claude'], workers: 1 });
+      const started = controller.start();
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(CHAT_LED_FORWARD_TIMEOUT_MS);
+      await started;
+      expect(controller.getRun().forwards.find((item) => item.to === 'chatgpt#2')?.status).toBe('timed-out');
+      expect(controller.getRun().forwards.find((item) => item.to === 'claude')?.reply).toBe('Claude is done');
+      expect(env.stop).toHaveBeenCalledWith('chatgpt#2');
+    } finally { vi.useRealTimers(); }
   });
 });
