@@ -130,7 +130,7 @@
 - 说明区：`CC 协调` 标记 + 一行“经 Prodex 派 GPT 执行/审计，需要时请 Argon、Opus”。
 - 说明区第二行写清楚后果：“点‘交给 CC’后，ai-one 会建一个 Task Issue，并把接手指令放进剪贴板，你粘贴给 Claude Code。”
 - 点「交给 CC」后的步骤（行内进度，不弹窗）：
-  1. 建 Task Issue。正文**按 `.github/ISSUE_TEMPLATE/task.md` 生成**，字段如下：`关联 / 派工`（Parent Spec：用户选了才填，否则“无”；选了父 Spec 时由写入桥在创建后建立**原生 Sub-issue 关系**（失败则结果为 `partial`，如实显示“Issue 已建、父子关系未建”，由 CC 接手时补）；Reviewed Spec Revision：随父 Spec；Complexity：默认 `ROUTINE`；Owner：“待 CC 接手后登记”；Reviewer：“ChatGPT（独立审计，经 Prodex 新对话）”；Depends on：无）、`任务与范围`（**需求原文原样放这里**；非目标：“由 CC 与用户确认后补”）、`交付 / 验收标准`（写“**验收标准待 CC 在开工前补齐，补齐前不得开始实现**”并留空勾选项）、`实施与验证记录`（PR：待创建），末尾附「协调简报」（S6）与来源“由 ai-one 创建”；
+  1. 建 Task Issue。正文**按 `.github/ISSUE_TEMPLATE/task.md` 生成**，字段如下：`关联 / 派工`（Parent Spec：用户选了才填，否则“无”；选了父 Spec 时由写入桥在创建后建立**原生 Sub-issue 关系**（失败则结果为 `partial`，如实显示“Issue 已建、父子关系未建”，由 CC 接手时补）；Reviewed Spec Revision：随父 Spec；Complexity：默认 `ROUTINE`；Owner：“待 CC 接手后登记”；Reviewer：“ChatGPT（独立审计，经 Prodex 新对话）”；Depends on：无）、`任务与范围`（**需求原文原样放这里**；非目标：留空并标“待补”）、`交付 / 验收标准`（留空勾选项）。**开工门槛（写进 Issue 正文固定一段）**：CC 接手后必须先补齐 **非目标、可核验验收标准、验证手段**，并在 Issue 登记 Owner；**这三项没补齐、或（选了父 Spec 时）原生 Sub-issue 关系没建立，都不得开始实现**，建立不了就暂停并在 Issue 报告阻塞（工具不能建原生关系时按 AGENTS.md 报告“待关联”，不伪报完成）、`实施与验证记录`（PR：待创建），末尾附「协调简报」（S6）与来源“由 ai-one 创建”；
   2. **回读** Issue 确认已创建（拿到编号和链接）；
   3. 复制接手指令：`按 AGENTS.md 快速开发模式接手 <owner/repo> 的 Issue #<N>`；
   4. 显示结果卡：`已创建 #N · 接手指令已复制` + 「在 GitHub 打开」「再复制一次」「查看任务」。
@@ -414,7 +414,7 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
   - 接入：`WorkbenchData.tasks` = 演示 / GitHub 任务 ∪ 本地任务（本地任务带 `dataSource: 'local'`，任务列表里单独“讨论”分组，不混进仓库分组）；路由 `task/local:<uuid>` 从本地存储取；数据源切换（演示 ↔ GitHub）时本地任务始终显示（它们不属于任何数据源）。
 - 「想需求」/ Chat 主导任务的任务现场（Chat 主导的主体是转发时间线，见 §3.6）：阶段条只有一格“想需求”；主体用讨论矩阵（行=环节：独立思考、第 1 轮、审计、第 2 轮…；列=参与者；每格一句摘要，独立思考阶段两列同时“思考中，看不到对方”）；结束出现汇总卡。样式见原型 05。
 - 汇总卡的操作：
-  - **转入定方案**：建一个 Task Issue（同 S1 §3.4，正文 = 汇总卡内容，模式预选“交给 CC”），不自动开跑；
+  - **转入定方案**：走 S1 §3.4 的同一套 `create_issue`（**同样按 `task.md` 模板生成全部字段、同样的开工门槛**），汇总卡内容放进 `任务与范围` 一节，模式预选“交给 CC”，不自动开跑；
   - **继续追问**：回到该讨论追加一轮；
   - **结束并保存**：保存汇总并标记完成。
 - 讨论任务没有 GitHub Issue 时：「给 CC 留言」「暂停」等 §6 的写入按钮**不显示**（没有写入目标）。
@@ -538,3 +538,5 @@ interface StageRef { stageId: string; overrides?: Partial<Pick<StageDef,'partici
 **第二轮审计（HEAD bda76ab，REVISE）处理（r3）**：① #32 正文第 6 条与变更记录统一，`v2-product-design.md` 顶部加指向说明；② #103 的 Reviewed Spec Revision 升 v2 并留重审评论；③ §3.4 写明原生 Sub-issue 关系由 CC 建；④ §1.1 与 §11 顺序统一，L4/L7 路由文件范围补全；⑤ 评论格式统一（前缀 + 模板 + 隐藏标记）；⑥ §7 补讨论恢复语义；⑦ §10.1 固定上游 SHA 并澄清 MCP 范围；⑧ `StageDef` 增加 `note` 字段。
 
 **第三轮审计（HEAD c9e3fac，REVISE）处理（r4）**：① Chat 主导入口：总览输入框新增第五个选项 `/chat-led`，并写 §3.6（本地任务、转发时间线、清理卡）；② 讨论 / Chat 主导任务的多轮持久化：`LocalTask.rounds`、保存完整回复文本的位置与大小上限（§7）；③ `create_issue` 增加 `parentSpec` 由桥建立原生 Sub-issue 关系，失败为 `partial`（§3.4、§6.3）；④ `accept` / `request_changes` 增加 PR 与 Issue 关联、PR 开放状态校验（§6.3）。
+
+**第四轮审计（HEAD f40a99e，REVISE）处理（r5）**：Task 创建闭环——开工门槛固定为“非目标、可核验验收标准、验证手段补齐 + 原生 Sub-issue 关系建立（选了父 Spec 时）”，做不到就暂停报告；“转入定方案”与“交给 CC”走同一套模板，汇总放入 `任务与范围`（§3.4、§7）。
