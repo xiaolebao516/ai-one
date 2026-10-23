@@ -173,6 +173,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
   const toggleTarget = (provider: AIProvider) => {
     const selected = runtime.selectedTargets.includes(provider);
     if (deriveLoginState(runtime.providerStates[provider]) === 'loggedOut' || (runtime.busyProviders.includes(provider) && !selected)) return;
+    setActionNotice(undefined);
     runtime.setSelectedTargets(
       runtime.selectedTargets.includes(provider)
         ? runtime.selectedTargets.filter((target) => target !== provider)
@@ -182,6 +183,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
 
   const submit = async (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
+    setActionNotice(undefined);
     const message = formatInsertedFilesPrompt(readyFiles, draft);
     if (!message.trim() || attachmentsReading || attachmentBusy) return;
     if (presetId === 'deliberation') {
