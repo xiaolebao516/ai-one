@@ -465,21 +465,6 @@ fn validate_pause(args: &SetPauseArgs) -> bool {
     valid_repo_input(&args.repo) && valid_number(args.issue)
 }
 
-fn validate_accept(args: &AcceptArgs) -> bool {
-    valid_repo_input(&args.repo)
-        && valid_number(args.issue)
-        && valid_number(args.pr)
-        && valid_head(&args.expected_head)
-}
-
-fn validate_request_changes(args: &RequestChangesArgs) -> bool {
-    valid_repo_input(&args.repo)
-        && valid_number(args.issue)
-        && valid_number(args.pr)
-        && valid_head(&args.expected_head)
-        && valid_text(&args.text)
-}
-
 async fn code_for_error<G: GhApi>(gh: &G, error: GhError) -> GithubWriteCode {
     match error {
         GhError::Missing => GithubWriteCode::GhMissing,
@@ -796,29 +781,29 @@ async fn precheck_pr<G: GhApi>(
     issue: u64,
     pr_number: u64,
     expected_head: &str,
-) -> Result<(), GithubWriteResult> {
+) -> Result<(), Box<GithubWriteResult>> {
     let pr = match load_pr(gh, repo, pr_number).await {
         Ok(Some(pr)) => pr,
         Ok(None) => {
-            return Err(result(
+            return Err(Box::new(result(
                 GithubWriteState::Failed,
                 GithubWriteCode::GithubFailed,
                 "PR 不存在或当前不是开放状态，已拒绝",
                 Vec::new(),
-            ));
+            )));
         }
         Err(error) => {
             let code = code_for_error(gh, error).await;
-            return Err(simple_result(GithubWriteState::Failed, code));
+            return Err(Box::new(simple_result(GithubWriteState::Failed, code)));
         }
     };
     if pr.state != "OPEN" {
-        return Err(result(
+        return Err(Box::new(result(
             GithubWriteState::Failed,
             GithubWriteCode::GithubFailed,
             "PR 不存在或当前不是开放状态，已拒绝",
             Vec::new(),
-        ));
+        )));
     }
     let expected = expected_head.to_ascii_lowercase();
     if pr.head != expected {
@@ -827,7 +812,7 @@ async fn precheck_pr<G: GhApi>(
             GithubWriteCode::HeadMismatch,
         );
         response.current_head = Some(pr.head);
-        return Err(response);
+        return Err(Box::new(response));
     }
 
     let closing_ref_matches = pr.closing_issue_nodes.iter().any(|node| {
@@ -846,10 +831,10 @@ async fn precheck_pr<G: GhApi>(
         !(closing_ref_matches || body_matches)
     };
     if association_missing {
-        return Err(simple_result(
+        return Err(Box::new(simple_result(
             GithubWriteState::Failed,
             GithubWriteCode::PrIssueMismatch,
-        ));
+        )));
     }
     Ok(())
 }
@@ -959,7 +944,7 @@ async fn review_action<G: GhApi>(
         }
     }
     if let Err(precheck_result) = precheck_pr(gh, repo, issue, pr_number, expected_head).await {
-        return precheck_result;
+        return *precheck_result;
     }
 
     let body = match action {
