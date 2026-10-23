@@ -128,6 +128,27 @@ describe('host GitHub write bridge', () => {
     expect(JSON.stringify(malformed)).not.toContain('PRIVATE_SERVER_ERROR');
   });
 
+  it('marks createIssue invoke rejection unconfirmed without retrying or exposing error text', async () => {
+    invokeMock.mockRejectedValueOnce('NETWORK_DISCONNECTED_BEFORE_READBACK');
+    const thrown = await host.githubWrite.createIssue({
+      repo: 'owner/repo',
+      title: 'spec task',
+      body: 'details',
+    });
+    expect(thrown).toEqual({
+      status: 'unconfirmed',
+      code: 'unconfirmed',
+      message: '已发出，但没能确认；请先回读，不要重试',
+      steps: [],
+    });
+    expect(invokeMock).toHaveBeenCalledWith('github_write_create_issue', {
+      repo: 'owner/repo',
+      title: 'spec task',
+      body: 'details',
+    });
+    expect(JSON.stringify(thrown)).not.toContain('NETWORK_DISCONNECTED');
+  });
+
   it('normalizes malformed status results and invoke failures', async () => {
     invokeMock.mockResolvedValueOnce({ available: true, reason: 'not_logged_in' });
     await expect(host.githubWrite.status()).resolves.toEqual({ available: false, reason: 'failed' });

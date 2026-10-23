@@ -31,6 +31,8 @@ import { HomeView } from './views/HomeView';
 import { PlannedView } from './views/PlannedView';
 import { ResourcesView } from './views/ResourcesView';
 import { TaskView } from './views/TaskView';
+import { TaskNotificationIsland } from './drawer/TaskNotificationIsland';
+import { isNeedsYou } from '../ui/taskHudModel';
 import { TasksView } from './views/TasksView';
 
 const NAV_ICON: Record<NavView, V2IconName> = { home: 'home', tasks: 'list', chat: 'message', flows: 'flow', resources: 'users' };
@@ -60,6 +62,7 @@ export function Workbench({ locale, onOpenClassic, onTakeoverAi, githubLoader, d
   const mainRef = useRef<HTMLElement | null>(null);
   const mode = resolveTheme(data.prefs.theme, useSystemDark());
   const current = resolveRoute(route, data.tasks);
+  const activeNeedsYou = data.tasks.find((t) => isNeedsYou(t.status));
   // A task that is gone from a settled data set is gone: make the fallback the real route, so the
   // old task does not pop back up when the data source flips again. While loading, keep the route.
   const fellBack = route.view === 'task' && current.view !== 'task';
@@ -138,6 +141,7 @@ export function Workbench({ locale, onOpenClassic, onTakeoverAi, githubLoader, d
         dispatchSnapshot={dispatch.snapshot}
         onOpenClassic={onOpenClassic}
         onTakeoverAi={onTakeoverAi}
+        onRefreshData={data.refresh}
       />
     );
   } else if (current.view === 'chat') {
@@ -198,6 +202,13 @@ export function Workbench({ locale, onOpenClassic, onTakeoverAi, githubLoader, d
           onRun={runCommand}
           onClose={() => setPaletteOpen(false)}
           fallbackFocus={mainRef}
+        />
+      ) : null}
+      {activeNeedsYou && current.view !== 'task' ? (
+        <TaskNotificationIsland
+          task={activeNeedsYou}
+          locale={locale}
+          onNavigate={() => openTask(activeNeedsYou)}
         />
       ) : null}
     </V2Scope>

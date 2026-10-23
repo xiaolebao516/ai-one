@@ -31,6 +31,7 @@ export interface TaskViewProps {
   dispatchSnapshot?: DispatchSnapshot | null;
   onOpenClassic?: () => void;
   onTakeoverAi?: (aiName: string) => void;
+  onRefreshData?: () => Promise<void> | void;
 }
 
 const EVIDENCE_TONE = { readback: 'done', local: 'run', self: 'neutral', unverified: 'unknown' } as const;
@@ -49,6 +50,7 @@ export function TaskView({
   dispatchSnapshot,
   onOpenClassic,
   onTakeoverAi,
+  onRefreshData,
 }: TaskViewProps) {
   const isZh = locale.startsWith('zh');
   const text = workbenchText(locale);
@@ -60,7 +62,7 @@ export function TaskView({
   const [extraEvidence, setExtraEvidence] = useState<HudEvidence[]>([]);
   const [reviewedHead, setReviewedHead] = useState<string>(() => task.pr?.headSha || '');
 
-  const allEvidence = useMemo(() => [...extraEvidence, ...task.evidence], [extraEvidence, task.evidence]);
+  const allEvidence = useMemo(() => [...task.evidence, ...extraEvidence], [task.evidence, extraEvidence]);
 
   const openDrawer = (tab: DrawerTabKey) => {
     setActiveDrawerTab(tab);
@@ -75,13 +77,23 @@ export function TaskView({
   };
 
   const initialPauseState: PauseState = useMemo(() => {
-    const pauseComments: { body: string }[] = [];
+    type PauseEntry = { body: string; time: number };
+    const pauseComments: PauseEntry[] = [];
     for (const item of allEvidence) {
       if (item.raw && item.raw.includes('ai-one:set_pause:v1')) {
-        pauseComments.push({ body: item.raw });
+        let time = 0;
+        if (item.observedMinutesAgo !== undefined) {
+          time = Date.now() - (item.observedMinutesAgo * 60000);
+        }
+        if (!time) {
+          const match = item.id.match(/\d{10,}/);
+          if (match) time = parseInt(match[0], 10);
+        }
+        pauseComments.push({ body: item.raw, time: time || 0 });
       }
     }
     if (pauseComments.length === 0) return 'none';
+    pauseComments.sort((a, b) => a.time - b.time);
     const derived = derivePauseState(pauseComments);
     return derived.paused ? 'paused' : 'running';
   }, [allEvidence]);
@@ -145,7 +157,7 @@ export function TaskView({
                     raw: formatPauseBody(next === 'paused' ? 'paused' : 'running'),
                     observedMinutesAgo: 0,
                   };
-                  setExtraEvidence((prev) => [ev, ...prev]);
+                  setExtraEvidence((prev) => [...prev, ev]);
                 }}
               />
             </div>
@@ -189,7 +201,8 @@ export function TaskView({
                     locale={locale}
                     expectedHeadSha={reviewedHead}
                     currentHeadSha={task.pr?.headSha || ''}
-                    onRefreshHead={() => {
+                    onRefreshHead={async () => {
+                      await onRefreshData?.();
                       if (task.pr?.headSha) setReviewedHead(task.pr.headSha);
                     }}
                   />

@@ -53,7 +53,23 @@ export async function collectSnapshot(options, client, now = () => new Date().to
     number: i.number, title: i.title, state: i.state, url: `https://github.com/${repo}/issues/${i.number}`,
     labels: (i.labels ?? []).map((l) => typeof l === 'string' ? l : l.name).filter((l) => typeof l === 'string'),
     source: issueResult.evidence, association: { status: 'unlinked', pullRequests: [], scope: 'loaded open PRs only' },
+    comments: [],
   }));
+  for (const i of snapshot.issues) {
+    try {
+      const commentsData = await client.get(prefix + '/issues/' + i.number + '/comments?per_page=100&page=1');
+      if (Array.isArray(commentsData)) {
+        i.comments = commentsData.map((c) => ({
+          id: c.id,
+          user: typeof c.user === 'string' ? c.user : c.user?.login ?? 'unknown',
+          body: typeof c.body === 'string' ? c.body : '',
+          createdAt: c.created_at,
+        }));
+      }
+    } catch {
+      // Secondary detail enrichment; does not fail repo-level snapshot
+    }
+  }
   for (const p of prResult.data ?? []) {
     const sha = p.head.sha;
     const checksResult = await read(`${prefix}/commits/${sha}/check-runs?filter=latest&per_page=100&page=1`, (d) => Number.isSafeInteger(d?.total_count) && d.total_count >= 0 && Array.isArray(d.check_runs) && d.check_runs.every((c) => isSha(c.head_sha) && typeof c.status === 'string'));
@@ -65,8 +81,37 @@ export async function collectSnapshot(options, client, now = () => new Date().to
     const incomplete = !checksResult.data || !statusResult.data || mismatched || truncated;
     if (mismatched || truncated) snapshot.errors.push({ ...checksResult.evidence, message: 'CI evidence is truncated or contains a different HEAD; excluded mismatched checks.' });
     const conclusion = checkConclusion(checks, statuses, incomplete);
+    let reviewsData = null;
+    try {
+      reviewsData = await client.get(prefix + '/pulls/' + p.number + '/reviews?per_page=100&page=1');
+    } catch {
+      // Secondary detail enrichment; does not fail repo-level snapshot
+    }
+    const reviews = Array.isArray(reviewsData) ? reviewsData.map((r) => ({
+      id: r.id,
+      user: typeof r.user === 'string' ? r.user : r.user?.login ?? 'unknown',
+      body: typeof r.body === 'string' ? r.body : '',
+      state: typeof r.state === 'string' ? r.state.toLowerCase() : 'commented',
+      submittedAt: r.submitted_at,
+      commitId: r.commit_id,
+    })) : [];
+    let prReview = undefined;
+    const formal = [...reviews].reverse().find((r) => ['approved', 'changes_requested'].includes(r.state) || r.body.includes('**裁定：PASS**') || r.body.includes('**裁定：REVISE**') || r.body.includes('**裁定：BLOCKED**'));
+    if (formal) {
+      let verdict = 'none';
+      if (formal.state === 'approved' || formal.body.includes('PASS')) verdict = 'pass';
+      else if (formal.state === 'changes_requested' || formal.body.includes('REVISE')) verdict = 'revise';
+      else if (formal.body.includes('BLOCKED')) verdict = 'blocked';
+      prReview = {
+        verdict,
+        headSha: formal.commitId || sha,
+        by: { zh: formal.user, en: formal.user },
+      };
+    }
     snapshot.pullRequests.push({
       number: p.number, title: p.title, state: p.state, draft: p.draft, headSha: sha, changedFiles: p.changed_files ?? null,
+      reviews,
+      ...(prReview ? { review: prReview } : {}),
       url: `https://github.com/${repo}/pull/${p.number}`, source: prResult.evidence,
       ci: { headSha: sha, conclusion, completeness: incomplete ? 'partial' : 'complete', checks, statuses, sources: [checksResult.evidence, statusResult.evidence] },
       association: { status: 'unknown', issues: [], source: null },

@@ -336,4 +336,71 @@ describe('TaskView Controls & Live Inspector integration (Spec #110)', () => {
     expect(onTakeoverAi).toHaveBeenCalledWith('ChatGPT (Pro)');
     expect(onOpenClassic).toHaveBeenCalled();
   });
+
+  it('derives pause state chronologically: old resume -> new pause resolves to paused', async () => {
+    const olderResumeEv = {
+      id: 'ev-resume-1',
+      kind: 'readback' as const,
+      text: { zh: '已恢复', en: 'Resumed' },
+      raw: ghWriteModule.formatPauseBody('running'),
+      observedMinutesAgo: 10,
+    };
+    const newerPauseEv = {
+      id: 'ev-pause-2',
+      kind: 'readback' as const,
+      text: { zh: '已暂停', en: 'Paused' },
+      raw: ghWriteModule.formatPauseBody('paused'),
+      observedMinutesAgo: 2,
+    };
+    // Put older first or newer first; sorting by observedMinutesAgo must result in paused
+    const task: HudTask = {
+      ...baseTask,
+      evidence: [newerPauseEv, olderResumeEv],
+    };
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    live.push({ root, container });
+
+    await act(async () => {
+      root.render(<TaskView locale="zh-CN" task={task} onBack={vi.fn()} />);
+    });
+
+    const pauseBtn = container.querySelector('[data-testid="pause-toggle-button"]');
+    expect(pauseBtn?.textContent).toContain('继续');
+  });
+
+  it('derives pause state chronologically: old pause -> new resume resolves to running', async () => {
+    const olderPauseEv = {
+      id: 'ev-pause-1',
+      kind: 'readback' as const,
+      text: { zh: '已暂停', en: 'Paused' },
+      raw: ghWriteModule.formatPauseBody('paused'),
+      observedMinutesAgo: 20,
+    };
+    const newerResumeEv = {
+      id: 'ev-resume-2',
+      kind: 'readback' as const,
+      text: { zh: '已恢复', en: 'Resumed' },
+      raw: ghWriteModule.formatPauseBody('running'),
+      observedMinutesAgo: 1,
+    };
+    const task: HudTask = {
+      ...baseTask,
+      evidence: [olderPauseEv, newerResumeEv],
+    };
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    live.push({ root, container });
+
+    await act(async () => {
+      root.render(<TaskView locale="zh-CN" task={task} onBack={vi.fn()} />);
+    });
+
+    const pauseBtn = container.querySelector('[data-testid="pause-toggle-button"]');
+    expect(pauseBtn?.textContent).toContain('暂停');
+  });
 });

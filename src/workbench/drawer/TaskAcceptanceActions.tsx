@@ -9,7 +9,7 @@ export interface TaskAcceptanceActionsProps {
   locale: Locale;
   expectedHeadSha?: string;
   currentHeadSha?: string;
-  onRefreshHead?: () => void;
+  onRefreshHead?: () => Promise<void> | void;
   onAccepted?: () => void;
   onRequestChangesSent?: () => void;
 }
@@ -27,6 +27,7 @@ export function TaskAcceptanceActions({
   const [showRejectForm, setShowRejectForm] = useState(false);
   const [rejectText, setRejectText] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [result, setResult] = useState<GithubWriteResult | null>(null);
   const [ghAvailable, setGhAvailable] = useState(false);
   const [probed, setProbed] = useState(false);
@@ -65,11 +66,16 @@ export function TaskAcceptanceActions({
     liveHead && expectedHead && liveHead.toLowerCase() !== expectedHead.toLowerCase()
   );
 
-  const handleRefresh = () => {
-    if (liveHead) {
-      setExpectedHead(liveHead);
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await onRefreshHead?.();
+      if (liveHead) {
+        setExpectedHead(liveHead);
+      }
+    } finally {
+      setRefreshing(false);
     }
-    onRefreshHead?.();
   };
 
   const canWrite = !isMock && ghAvailable && !headMismatch && Boolean(expectedHead);
@@ -151,8 +157,8 @@ export function TaskAcceptanceActions({
                 ? `PR HEAD 已更新（当前：${liveHead}，基准：${expectedHead}），请先刷新核对后再验收。`
                 : `PR HEAD has been updated (Current: ${liveHead}, Baseline: ${expectedHead}). Please refresh and verify before accepting.`}
             </span>
-            <Button size="sm" variant="secondary" onClick={handleRefresh} icon={<Icon name="refresh" size={14} />}>
-              {isZh ? '刷新 HEAD' : 'Refresh HEAD'}
+            <Button size="sm" variant="secondary" disabled={refreshing} onClick={handleRefresh} icon={<Icon name="refresh" size={14} />}>
+              {refreshing ? (isZh ? '刷新中…' : 'Refreshing…') : (isZh ? '刷新 HEAD' : 'Refresh HEAD')}
             </Button>
           </div>
         </Notice>

@@ -253,9 +253,20 @@ function makeTask(
     stages: [],
     summary: guidanceText.summary,
     nextStep: guidanceText.nextStep,
-    ...(pr ? { pr: { number: pr.number, draft: pr.draft, headSha: pr.headSha },
-      ci: ciFor(pr) } : {}),
-    // Review verdicts, local execution, Agent online/quota/iteration are NOT in the snapshot.
+    ...(pr ? {
+      pr: {
+        number: pr.number,
+        draft: pr.draft,
+        headSha: pr.headSha,
+        ...(((pr as unknown as Record<string, unknown>).changedFiles != null)
+          ? { changedFiles: (pr as unknown as Record<string, unknown>).changedFiles as number }
+          : {}),
+      },
+      ci: ciFor(pr),
+    } : {}),
+    ...(((pr as unknown as Record<string, unknown>)?.review || (issue as unknown as Record<string, unknown>)?.review)
+      ? { review: ((pr as unknown as Record<string, unknown>)?.review || (issue as unknown as Record<string, unknown>)?.review) as HudTask['review'] }
+      : {}),
     evidence,
     ...(gap ? { gap } : {}),
   };
