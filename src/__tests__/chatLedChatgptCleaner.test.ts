@@ -286,7 +286,7 @@ describe('ChatGPT page scripts: ownership and readback fail closed', () => {
     document.body.innerHTML = '<aside data-testid="history"><div aria-busy="true"></div><a href="' + OTHER_ID_PATH + '">x</a></aside>';
     expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID, [OTHER_ID_PATH]))).ok).toBe(false);
     // two possible sidebars
-    document.body.innerHTML = '<aside data-testid="history"><a href="' + OTHER_ID_PATH + '">x</a></aside><nav aria-label="Chat history"></nav>';
+    document.body.innerHTML = '<aside data-testid="history"><a href="' + OTHER_ID_PATH + '">x</a></aside><div data-testid="history"></div>';
     expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID, [OTHER_ID_PATH]))).ok).toBe(false);
     // deleted: home page with an empty list and no explicit not-found evidence proves nothing
     document.body.innerHTML = '<aside data-testid="history"></aside><main><p>Welcome</p></main>';
@@ -300,6 +300,13 @@ describe('ChatGPT page scripts: ownership and readback fail closed', () => {
     // deleted: explicit not-found evidence is enough even with an empty list
     document.body.innerHTML = '<aside data-testid="history"></aside><main><h1>Conversation not found</h1></main>';
     expect(JSON.parse(runPageScript(buildConfirmGoneScript(CONVERSATION_ID))).ok).toBe(true);
+  });
+
+  it('picks the most specific unique history container even when a broad aside wraps it', () => {
+    window.history.replaceState({}, '', '/');
+    document.body.innerHTML =
+      '<aside><nav aria-label="聊天记录"><a href="' + OTHER_ID_PATH + '">x</a></nav></aside><main><h1>Conversation not found</h1></main>';
+    expect(JSON.parse(runPageScript(buildConfirmGoneScript(CONVERSATION_ID, [OTHER_ID_PATH]))).ok).toBe(true);
   });
 
   it('needs the readback evidence to hold twice', async () => {

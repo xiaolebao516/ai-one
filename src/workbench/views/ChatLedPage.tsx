@@ -45,8 +45,8 @@ function wideBounds(): DOMRectReadOnly {
   return { x, y, width, height, top: y, left: x, right: x + width, bottom: y + height, toJSON: () => ({}) };
 }
 
-function offscreenBounds(): DOMRectReadOnly {
-  return { x: -10_000, y: -10_000, width: 420, height: 320, top: -10_000, left: -10_000, right: -9_580, bottom: -9_680, toJSON: () => ({}) };
+function offscreenBounds(width = 420, height = 320): DOMRectReadOnly {
+  return { x: -10_000, y: -10_000, width, height, top: -10_000, left: -10_000, right: -10_000 + width, bottom: -10_000 + height, toJSON: () => ({}) };
 }
 
 /**
@@ -253,6 +253,10 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
     }
     try {
       await prepareProviderPage('chatgpt').catch(() => undefined);
+      // ChatGPT hides its history sidebar in a narrow window, and the readback needs the sidebar:
+      // give the parked (offscreen) page a desktop-sized viewport while cleaning up.
+      await host.provider.park('chatgpt', offscreenBounds(1280, 900)).catch(() => undefined);
+      await sleep(2_500);
       await executeCleanup(plan, cleaners, {
         onProgress: (_index, result) => {
           apply((run) => appendCleanupResult(run, result, Date.now()));
@@ -265,6 +269,7 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
       // Unexpected failure: nothing unconfirmed is replayed; the rest is left for manual cleanup.
       apply((run) => interruptCleanup(run, Date.now()));
     } finally {
+      await host.provider.park('chatgpt', offscreenBounds()).catch(() => undefined);
       setCleanupBusy(false);
     }
   };
