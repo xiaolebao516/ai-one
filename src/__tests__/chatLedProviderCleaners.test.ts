@@ -143,7 +143,7 @@ describe.each(cases)('$name cleaner URL and observed capabilities', (site) => {
     expect(await cleaner.confirmGone(url)).toBe(false);
     expect(await cleaner.confirmArchived(url)).toBe(false);
 
-    const run: ChatLedRun = {
+    const recordedRun: ChatLedRun = {
       id: 'manual-provider-cleanup', goal: 'Manual cleanup', coordinator: 'chatgpt',
       available: ['claude', 'gemini'], roundLimit: 2, round: 1, phase: 'finished',
       forwards: [], conversations: [{
@@ -151,7 +151,7 @@ describe.each(cases)('$name cleaner URL and observed capabilities', (site) => {
         registrationStatus: 'confirmed', registeredAt: 100,
       }], sessionInitializations: [], coordinatorReplies: [], createdAt: 100, updatedAt: 200,
     };
-    const plan = planCleanup(run, [cleaner]);
+    const plan = planCleanup(recordedRun, [cleaner]);
     expect(plan).toMatchObject([{ action: 'manual', irreversible: false }]);
     expect((await executeCleanup(plan, [cleaner]))[0].outcome).toBe('manual');
     expect(evalInPage).not.toHaveBeenCalled();
