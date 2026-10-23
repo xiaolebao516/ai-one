@@ -628,6 +628,9 @@ function ReplyCard({
         <Button size="sm" variant="secondary" onClick={onViewWeb}>{text.t('chatViewWeb')}</Button>
       </div>
 
+      {runtime.replyStates[provider]?.truncated ? (
+        <Notice tone="unknown">{text.t('chatForwardTruncated')}</Notice>
+      ) : null}
       {content ? (
         <div className="min-w-0 text-v2-body text-v2-ink-2">
           {expanded ? <MarkdownText text={content} /> : <p className="whitespace-pre-wrap break-words">{summary}</p>}
@@ -643,7 +646,15 @@ function ReplyCard({
               {expanded ? text.t('chatCollapse') : text.t('chatExpand')}
             </Button>
             <Button size="sm" variant="secondary" onClick={() => onQuote(content)}>{text.t('chatQuote')}</Button>
-            <Button size="sm" variant="secondary" disabled={busy} disabledReason={text.t('chatBusy', { provider: AI_PROVIDERS[provider].name })} onClick={onBeginForward}>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy || runtime.replyStates[provider]?.truncated === true}
+              disabledReason={runtime.replyStates[provider]?.truncated
+                ? text.t('chatForwardTruncated')
+                : text.t('chatBusy', { provider: AI_PROVIDERS[provider].name })}
+              onClick={onBeginForward}
+            >
               {text.t('chatForward')}
             </Button>
           </>
