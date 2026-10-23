@@ -477,24 +477,28 @@ export class ChatLedController {
     if (!(await this.waitWhilePaused()) || !live()) return;
     patch({ status: 'sending', startedAt: this.env.now() });
     let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+    // Once this target has timed out its late work must not start anything new (no session creation,
+    // no send): a stalled prepare can return after the run has finished or the user has moved on.
+    let timedOut = false;
+    const forwardLive = () => !timedOut && live();
     const work = (async () => {
       this.assertPersisted();
       const sendable = await this.env.sendableProviders();
       this.assertPersisted();
-      if (!live()) return;
+      if (!forwardLive()) return;
       if (!sendable.includes(forward.to)) throw new Error('Target AI is not logged in or its page is not ready.');
       patch({ status: 'waiting' });
-      const reply = await this.sendOwned(forward.to, forward.message, live);
-      if (!live()) return;
+      const reply = await this.sendOwned(forward.to, forward.message, forwardLive);
+      if (!forwardLive()) return;
       patch({ status: 'done', reply, replyChars: reply.length, finishedAt: this.env.now() });
     })();
     // A timed-out send can still finish later; it must never overwrite the settled timeout.
     work.catch(() => undefined);
     const deadline = new Promise<never>((_, reject) => {
-      timer = globalThis.setTimeout(
-        () => reject(new ForwardTimeoutError('Target AI exceeded the forwarding timeout.')),
-        CHAT_LED_FORWARD_TIMEOUT_MS,
-      );
+      timer = globalThis.setTimeout(() => {
+        timedOut = true;
+        reject(new ForwardTimeoutError('Target AI exceeded the forwarding timeout.'));
+      }, CHAT_LED_FORWARD_TIMEOUT_MS);
     });
     try {
       await Promise.race([work, deadline]);

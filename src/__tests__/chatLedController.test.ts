@@ -863,6 +863,43 @@ describe('chat-led parallel deadlines', () => {
     }
   });
 
+  it('never starts a session or send for a target whose forward already timed out', async () => {
+    vi.useFakeTimers();
+    try {
+      const { env, calls, events } = makeEnv({ chatgpt: [] });
+      let releasePrepare!: () => void;
+      let stallClaudePrepare = false; // only after the coordinator has issued the forward
+      env.prepare = vi.fn(async (provider: AIProvider) => {
+        if (provider === 'claude' && stallClaudePrepare) await new Promise<void>((resolve) => { releasePrepare = resolve; });
+      });
+      env.send = vi.fn(async (provider: AIProvider, text: string) => {
+        events.push('send:' + provider);
+        calls.push({ provider, text });
+        if (provider === 'chatgpt') {
+          const first = calls.filter((c) => c.provider === 'chatgpt').length === 1;
+          if (first) stallClaudePrepare = true;
+          return first ? SEND(['claude', 'gemini'], 'parallel') : DONE('complete');
+        }
+        return 'Gemini success';
+      });
+      const controller = await create(env);
+      const started = controller.start();
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(CHAT_LED_FORWARD_TIMEOUT_MS);
+      await started;
+      expect(controller.getRun().phase).toBe('finished');
+      expect(controller.getRun().forwards.find((f) => f.to === 'claude')?.status).toBe('timed-out');
+
+      // The stalled preparation returns only after the run is already finished.
+      releasePrepare();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(events).not.toContain('new:claude');
+      expect(events).not.toContain('send:claude');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('returns all target failures rather than freezing the coordinator', async () => {
     const { env, calls } = makeEnv({
       chatgpt: [SEND(['claude', 'gemini'], 'parallel'), DONE('handled')],
