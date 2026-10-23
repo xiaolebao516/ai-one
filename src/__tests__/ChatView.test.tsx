@@ -10,7 +10,7 @@ import { CHAT_RESPONSE_TIMEOUT_MS } from '../workbench/views/chat/chatModel';
 import type { ChatRuntime } from '../workbench/views/chat/useChatRuntime';
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(() => Promise.reject(new Error('no tauri')),
+  invoke: vi.fn(() => Promise.reject(new Error('no tauri'))),
   isTauri: vi.fn(() => false),
 }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
