@@ -9,6 +9,7 @@ import {
   reviewIsCurrent,
   shortSha,
   type HudTask,
+  type HudEvidence,
 } from '../../ui/taskHudModel';
 import { taskHudText } from '../../ui/taskHudText';
 import { Badge, Button, Card, Icon, Notice, SectionHeader } from '../../ui/v2';
@@ -18,7 +19,8 @@ import { TaskDrawer, type DrawerTabKey } from '../drawer/TaskDrawer';
 import { TaskNotificationIsland } from '../drawer/TaskNotificationIsland';
 import { TaskPauseControl, type PauseState } from '../drawer/TaskPauseControl';
 import { TaskTakeoverBanner } from '../drawer/TaskTakeoverBanner';
-import { derivePauseState } from '../../host/githubWrite';
+import { derivePauseState, formatCommentBody, formatPauseBody } from '../../host/githubWrite';
+import { getTakeoverAi, setStoredTakeoverAi } from '../workbenchStorage';
 import { StageStrip, TaskStatus } from '../TaskBits';
 import { workbenchText } from '../workbenchText';
 
@@ -54,7 +56,11 @@ export function TaskView({
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeDrawerTab, setActiveDrawerTab] = useState<DrawerTabKey>('dispatch');
-  const [takeoverAi, setTakeoverAi] = useState<string | null>(null);
+  const [takeoverAi, setTakeoverAi] = useState<string | null>(() => getTakeoverAi());
+  const [extraEvidence, setExtraEvidence] = useState<HudEvidence[]>([]);
+  const [reviewedHead, setReviewedHead] = useState<string>(() => task.pr?.headSha || '');
+
+  const allEvidence = useMemo(() => [...extraEvidence, ...task.evidence], [extraEvidence, task.evidence]);
 
   const openDrawer = (tab: DrawerTabKey) => {
     setActiveDrawerTab(tab);
@@ -63,19 +69,22 @@ export function TaskView({
 
   const handleTakeover = (name: string) => {
     setTakeoverAi(name);
+    setStoredTakeoverAi(name);
     onTakeoverAi?.(name);
     onOpenClassic?.();
   };
 
   const initialPauseState: PauseState = useMemo(() => {
-    for (const item of task.evidence) {
+    const pauseComments: { body: string }[] = [];
+    for (const item of allEvidence) {
       if (item.raw && item.raw.includes('ai-one:set_pause:v1')) {
-        const derived = derivePauseState([{ body: item.raw }]);
-        if (derived.paused) return 'paused';
+        pauseComments.push({ body: item.raw });
       }
     }
-    return 'none';
-  }, [task.evidence]);
+    if (pauseComments.length === 0) return 'none';
+    const derived = derivePauseState(pauseComments);
+    return derived.paused ? 'paused' : 'running';
+  }, [allEvidence]);
 
   // Team members derived from task or standard multi-AI workflow
   const teamMembers: TeamMember[] = [
@@ -121,7 +130,24 @@ export function TaskView({
             <h1 className="min-w-0 font-v2-serif text-v2-heading text-v2-ink">{pickText(task.title, locale)}</h1>
             <div className="flex flex-wrap items-center gap-v2-sm">
               <TaskStatus task={task} locale={locale} />
-              <TaskPauseControl task={task} locale={locale} initialPauseState={initialPauseState} />
+              <TaskPauseControl
+                task={{ ...task, evidence: allEvidence }}
+                locale={locale}
+                initialPauseState={initialPauseState}
+                onStateChange={(next) => {
+                  const ev: HudEvidence = {
+                    id: `user-pause-${Date.now()}`,
+                    kind: 'readback',
+                    text: {
+                      zh: next === 'paused' ? '你 · 已暂停任务' : '你 · 已恢复任务',
+                      en: next === 'paused' ? 'You · Paused task' : 'You · Resumed task',
+                    },
+                    raw: formatPauseBody(next === 'paused' ? 'paused' : 'running'),
+                    observedMinutesAgo: 0,
+                  };
+                  setExtraEvidence((prev) => [ev, ...prev]);
+                }}
+              />
             </div>
           </header>
 
@@ -159,9 +185,13 @@ export function TaskView({
                 {/* Acceptance actions on acceptance card */}
                 {task.status === 'accept' ? (
                   <TaskAcceptanceActions
-                    task={task}
+                    task={{ ...task, evidence: allEvidence }}
                     locale={locale}
+                    expectedHeadSha={reviewedHead}
                     currentHeadSha={task.pr?.headSha || ''}
+                    onRefreshHead={() => {
+                      if (task.pr?.headSha) setReviewedHead(task.pr.headSha);
+                    }}
                   />
                 ) : null}
               </Card>
@@ -210,15 +240,15 @@ export function TaskView({
               </div>
             </div>
 
-            {task.evidence.length ? (
+            {allEvidence.length ? (
               <ul className="mt-v2-sm grid gap-v2-sm">
-                {task.evidence.map((item) => (
+                {allEvidence.map((item) => (
                   <li key={item.id}>
                     <Card padding="sm" className="grid content-start gap-v2-xs">
                       <div className="flex flex-wrap items-center justify-between gap-v2-sm">
                         <span className="text-v2-body text-v2-ink">{pickText(item.text, locale)}</span>
                         <div className="flex items-center gap-v2-xs">
-                          <Badge tone={EVIDENCE_TONE[item.kind]}>{hud.evidence(item.kind, task.dataSource)}</Badge>
+                          <Badge tone={EVIDENCE_TONE[item.kind as keyof typeof EVIDENCE_TONE]}>{hud.evidence(item.kind, task.dataSource)}</Badge>
                           <span className="text-v2-micro text-v2-ink-3">
                             {formatAge(item.observedMinutesAgo, locale)}
                           </span>
@@ -240,7 +270,20 @@ export function TaskView({
 
           {/* Comment section (Design §6.4) */}
           <section aria-labelledby="task-comments">
-            <TaskCommentBox task={task} locale={locale} />
+            <TaskCommentBox
+              task={{ ...task, evidence: allEvidence }}
+              locale={locale}
+              onCommentSent={(sentText) => {
+                const ev: HudEvidence = {
+                  id: `user-comment-${Date.now()}`,
+                  kind: 'readback',
+                  text: { zh: '你 · 留言已发出并回读', en: 'You · Message sent and read back' },
+                  raw: formatCommentBody(sentText),
+                  observedMinutesAgo: 0,
+                };
+                setExtraEvidence((prev) => [ev, ...prev]);
+              }}
+            />
           </section>
         </div>
       </div>
@@ -314,7 +357,7 @@ export function TaskView({
         onClose={() => setDrawerOpen(false)}
         activeTab={activeDrawerTab}
         onTabChange={setActiveDrawerTab}
-        task={task}
+        task={{ ...task, evidence: allEvidence }}
         locale={locale}
         snapshot={dispatchSnapshot ?? undefined}
       />

@@ -66,7 +66,7 @@ export async function collectSnapshot(options, client, now = () => new Date().to
     if (mismatched || truncated) snapshot.errors.push({ ...checksResult.evidence, message: 'CI evidence is truncated or contains a different HEAD; excluded mismatched checks.' });
     const conclusion = checkConclusion(checks, statuses, incomplete);
     snapshot.pullRequests.push({
-      number: p.number, title: p.title, state: p.state, draft: p.draft, headSha: sha,
+      number: p.number, title: p.title, state: p.state, draft: p.draft, headSha: sha, changedFiles: p.changed_files ?? null,
       url: `https://github.com/${repo}/pull/${p.number}`, source: prResult.evidence,
       ci: { headSha: sha, conclusion, completeness: incomplete ? 'partial' : 'complete', checks, statuses, sources: [checksResult.evidence, statusResult.evidence] },
       association: { status: 'unknown', issues: [], source: null },

@@ -22,25 +22,50 @@ export function TaskNotificationIsland({ task, locale, onNavigate }: TaskNotific
     setDismissed(false);
   }, [task.status]);
 
-  // When window is in background / hidden, trigger desktop notification if available
+  // When window is in background / hidden, trigger desktop notification with category and action routing
   useEffect(() => {
     if (!needsAction || dismissed) return;
-    if (typeof document !== 'undefined' && document.hidden) {
-      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+
+    const triggerNotification = () => {
+      if (typeof document === 'undefined' || !document.hidden) return;
+      if (typeof window === 'undefined' || !('Notification' in window)) return;
+
+      const category = task.status === 'blocked'
+        ? (isZh ? '【阻塞】' : '[Blocked]')
+        : task.status === 'accept'
+        ? (isZh ? '【验收】' : '[Acceptance]')
+        : (isZh ? '【决策】' : '[Decision]');
+
+      const title = isZh
+        ? `${category} ai-one: 任务需要你处理`
+        : `${category} ai-one: Task needs you`;
+      const body = `${task.repo} · ${pickText(task.title, locale)}`;
+
+      const show = () => {
         try {
-          const n = new Notification(isZh ? 'ai-one: 任务需要你处理' : 'ai-one: Task needs you', {
-            body: pickText(task.title, locale),
-          });
+          const n = new Notification(title, { body });
           n.onclick = () => {
             window.focus();
             onNavigate?.();
           };
-        } catch {
-          // ignore notification errors
-        }
+        } catch { /* ignore */ }
+      };
+
+      if (Notification.permission === 'granted') {
+        show();
+      } else if (Notification.permission !== 'denied') {
+        Notification.requestPermission().then((perm) => {
+          if (perm === 'granted') show();
+        });
       }
-    }
-  }, [needsAction, dismissed, task.title, locale, isZh, onNavigate]);
+    };
+
+    triggerNotification();
+    document.addEventListener('visibilitychange', triggerNotification);
+    return () => {
+      document.removeEventListener('visibilitychange', triggerNotification);
+    };
+  }, [needsAction, dismissed, task.status, task.repo, task.title, locale, isZh, onNavigate]);
 
   if (!needsAction || dismissed) return null;
 

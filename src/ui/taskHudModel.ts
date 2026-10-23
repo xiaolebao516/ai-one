@@ -64,6 +64,8 @@ export interface HudPr {
   draft: boolean;
   /** Full 40-hex HEAD. Absent when it could not be read; never guessed. */
   headSha?: string;
+  /** Number of changed files in this PR (Design §6.1). */
+  changedFiles?: number;
 }
 
 /**

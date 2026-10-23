@@ -22,6 +22,7 @@ export function DiffTab({ task, locale }: DiffTabProps) {
           <div className="flex flex-wrap items-center justify-between gap-v2-sm">
             <span className="font-semibold text-v2-ink">
               PR #{pr.number} {pr.draft ? `(${isZh ? '草稿' : 'Draft'})` : ''}
+              {pr.changedFiles != null ? ` · ${pr.changedFiles} ${isZh ? '个文件变更' : 'files changed'}` : ''}
             </span>
             <Badge tone="run">{isZh ? '有变更' : 'Has diff'}</Badge>
           </div>

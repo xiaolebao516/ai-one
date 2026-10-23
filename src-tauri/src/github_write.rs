@@ -595,7 +595,7 @@ fn issue_number_from_url(url: &str) -> Option<u64> {
 }
 
 fn comment_body(text: &str) -> String {
-    format!("{COMMENT_PREFIX}\n{text}\n<!-- ai-one:comment:v1 -->")
+    format!("{COMMENT_PREFIX}\n\n{}\n\n<!-- ai-one:comment:v1 -->", text.trim())
 }
 
 fn pause_body(state: PauseState) -> String {
@@ -603,20 +603,21 @@ fn pause_body(state: PauseState) -> String {
         PauseState::Paused => "用户已暂停：请停止派发新工作，正在进行的一步可完成。",
         PauseState::Running => "用户已恢复：可继续派发。",
     };
-    format!("{COMMENT_PREFIX}\n{sentence}\n<!-- ai-one:set_pause:v1 -->")
+    format!("{COMMENT_PREFIX}\n\n{sentence}\n\n<!-- ai-one:set_pause:v1 -->")
 }
 
 fn accept_body(head: &str) -> String {
     format!(
-        "{COMMENT_PREFIX}\n【ai-one】用户验收通过（针对 HEAD {}）。\n<!-- ai-one:accept:v1 -->",
+        "{COMMENT_PREFIX}\n\n【ai-one】用户验收通过（针对 HEAD {}）。\n\n<!-- ai-one:accept:v1 -->",
         head.to_ascii_lowercase()
     )
 }
 
 fn request_changes_body(head: &str, text: &str) -> String {
     format!(
-        "{COMMENT_PREFIX}\n【ai-one】用户要求修改（针对 HEAD {}）：\n{text}\n<!-- ai-one:request_changes:v1 -->",
-        head.to_ascii_lowercase()
+        "{COMMENT_PREFIX}\n\n【ai-one】用户要求修改（针对 HEAD {}）：\n\n{}\n\n<!-- ai-one:request_changes:v1 -->",
+        head.to_ascii_lowercase(),
+        text.trim()
     )
 }
 
@@ -1869,23 +1870,23 @@ mod tests {
     #[test]
     fn formats_every_comment_template_with_prefix_and_final_marker() {
         let comment = comment_body("hello\nworld");
-        assert!(comment.starts_with("【ai-one 代用户发出】\nhello\nworld\n"));
+        assert!(comment.starts_with("【ai-one 代用户发出】\n\nhello\nworld\n\n"));
         assert!(comment.ends_with("<!-- ai-one:comment:v1 -->"));
         assert_eq!(
             pause_body(PauseState::Paused),
-            "【ai-one 代用户发出】\n用户已暂停：请停止派发新工作，正在进行的一步可完成。\n<!-- ai-one:set_pause:v1 -->"
+            "【ai-one 代用户发出】\n\n用户已暂停：请停止派发新工作，正在进行的一步可完成。\n\n<!-- ai-one:set_pause:v1 -->"
         );
         assert_eq!(
             pause_body(PauseState::Running),
-            "【ai-one 代用户发出】\n用户已恢复：可继续派发。\n<!-- ai-one:set_pause:v1 -->"
+            "【ai-one 代用户发出】\n\n用户已恢复：可继续派发。\n\n<!-- ai-one:set_pause:v1 -->"
         );
         assert_eq!(
             accept_body(&SHA.to_ascii_uppercase()),
-            format!("【ai-one 代用户发出】\n【ai-one】用户验收通过（针对 HEAD {SHA}）。\n<!-- ai-one:accept:v1 -->")
+            format!("【ai-one 代用户发出】\n\n【ai-one】用户验收通过（针对 HEAD {SHA}）。\n\n<!-- ai-one:accept:v1 -->")
         );
         assert_eq!(
             request_changes_body(SHA, "keep\nexact"),
-            format!("【ai-one 代用户发出】\n【ai-one】用户要求修改（针对 HEAD {SHA}）：\nkeep\nexact\n<!-- ai-one:request_changes:v1 -->")
+            format!("【ai-one 代用户发出】\n\n【ai-one】用户要求修改（针对 HEAD {SHA}）：\n\nkeep\nexact\n\n<!-- ai-one:request_changes:v1 -->")
         );
     }
 

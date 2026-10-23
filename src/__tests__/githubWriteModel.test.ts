@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   AI_ONE_COMMENT_PREFIX,
-  COMMENT_MARKER,
   PAUSE_MARKER,
   derivePauseState,
   formatAcceptBody,
@@ -12,40 +11,29 @@ import {
 } from '../host/githubWrite';
 
 describe('githubWrite helpers and models', () => {
-  it('formats comment body with prefix and comment marker', () => {
-    const formatted = formatCommentBody('请注意测试用例覆盖');
-    expect(formatted.startsWith(AI_ONE_COMMENT_PREFIX)).toBe(true);
-    expect(formatted.endsWith(COMMENT_MARKER)).toBe(true);
-    expect(formatted).toContain('请注意测试用例覆盖');
+    it('formats comment body with prefix, double newlines, trimmed text and comment marker', () => {
+    const formatted = formatCommentBody('  请注意测试用例覆盖  \n');
+    expect(formatted).toBe(`${AI_ONE_COMMENT_PREFIX}\n\n请注意测试用例覆盖\n\n<!-- ai-one:comment:v1 -->`);
   });
 
-  it('formats pause and resume bodies correctly', () => {
+  it('formats pause and resume bodies with exact double newlines and marker', () => {
     const paused = formatPauseBody('paused');
-    expect(paused.startsWith(AI_ONE_COMMENT_PREFIX)).toBe(true);
-    expect(paused.endsWith(PAUSE_MARKER)).toBe(true);
-    expect(paused).toContain('用户已暂停');
+    expect(paused).toBe(`${AI_ONE_COMMENT_PREFIX}\n\n用户已暂停：请停止派发新工作，正在进行的一步可完成。\n\n${PAUSE_MARKER}`);
 
     const running = formatPauseBody('running');
-    expect(running.startsWith(AI_ONE_COMMENT_PREFIX)).toBe(true);
-    expect(running.endsWith(PAUSE_MARKER)).toBe(true);
-    expect(running).toContain('用户已恢复');
+    expect(running).toBe(`${AI_ONE_COMMENT_PREFIX}\n\n用户已恢复：可继续派发。\n\n${PAUSE_MARKER}`);
   });
 
-  it('formats accept body with expected head and accept marker', () => {
+  it('formats accept body with expected head, double newlines and accept marker', () => {
     const sha = '1234567890123456789012345678901234567890';
-    const formatted = formatAcceptBody(sha);
-    expect(formatted.startsWith(AI_ONE_COMMENT_PREFIX)).toBe(true);
-    expect(formatted.endsWith('<!-- ai-one:accept:v1 -->')).toBe(true);
-    expect(formatted).toContain(sha);
+    const formatted = formatAcceptBody(sha.toUpperCase());
+    expect(formatted).toBe(`${AI_ONE_COMMENT_PREFIX}\n\n【ai-one】用户验收通过（针对 HEAD ${sha}）。\n\n<!-- ai-one:accept:v1 -->`);
   });
 
-  it('formats request changes body with expected head and text', () => {
+  it('formats request changes body with expected head, trimmed text, double newlines and marker', () => {
     const sha = 'abcdefabcdefabcdefabcdefabcdefabcdefabcd';
-    const formatted = formatRequestChangesBody(sha, '请补充深浅主题截图');
-    expect(formatted.startsWith(AI_ONE_COMMENT_PREFIX)).toBe(true);
-    expect(formatted.endsWith('<!-- ai-one:request_changes:v1 -->')).toBe(true);
-    expect(formatted).toContain(sha);
-    expect(formatted).toContain('请补充深浅主题截图');
+    const formatted = formatRequestChangesBody(sha, '  请补充深浅主题截图  \n');
+    expect(formatted).toBe(`${AI_ONE_COMMENT_PREFIX}\n\n【ai-one】用户要求修改（针对 HEAD ${sha}）：\n\n请补充深浅主题截图\n\n<!-- ai-one:request_changes:v1 -->`);
   });
 
   describe('derivePauseState', () => {

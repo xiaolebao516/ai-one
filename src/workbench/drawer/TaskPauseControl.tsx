@@ -23,12 +23,16 @@ export function TaskPauseControl({
   const [pauseState, setPauseState] = useState<PauseState>(initialPauseState);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<GithubWriteResult | null>(null);
-  const [ghAvailable, setGhAvailable] = useState(true);
+  const [ghAvailable, setGhAvailable] = useState(false);
+  const [_probed, setProbed] = useState(false);
 
   useEffect(() => {
     let active = true;
     githubWrite.status().then((s) => {
-      if (active) setGhAvailable(s.available);
+      if (active) {
+        setGhAvailable(s.available);
+        setProbed(true);
+      }
     });
     return () => {
       active = false;

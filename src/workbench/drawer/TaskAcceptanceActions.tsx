@@ -7,7 +7,9 @@ import { Button, Icon, Notice } from '../../ui/v2';
 export interface TaskAcceptanceActionsProps {
   task: HudTask;
   locale: Locale;
+  expectedHeadSha?: string;
   currentHeadSha?: string;
+  onRefreshHead?: () => void;
   onAccepted?: () => void;
   onRequestChangesSent?: () => void;
 }
@@ -15,7 +17,9 @@ export interface TaskAcceptanceActionsProps {
 export function TaskAcceptanceActions({
   task,
   locale,
+  expectedHeadSha,
   currentHeadSha,
+  onRefreshHead,
   onAccepted,
   onRequestChangesSent,
 }: TaskAcceptanceActionsProps) {
@@ -24,12 +28,25 @@ export function TaskAcceptanceActions({
   const [rejectText, setRejectText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<GithubWriteResult | null>(null);
-  const [ghAvailable, setGhAvailable] = useState(true);
+  const [ghAvailable, setGhAvailable] = useState(false);
+  const [probed, setProbed] = useState(false);
+
+  const baseline = expectedHeadSha || task.pr?.headSha || '';
+  const [expectedHead, setExpectedHead] = useState<string>(baseline);
+
+  useEffect(() => {
+    if (baseline && !expectedHead) {
+      setExpectedHead(baseline);
+    }
+  }, [baseline, expectedHead]);
 
   useEffect(() => {
     let active = true;
     githubWrite.status().then((s) => {
-      if (active) setGhAvailable(s.available);
+      if (active) {
+        setGhAvailable(s.available);
+        setProbed(true);
+      }
     });
     return () => {
       active = false;
@@ -41,12 +58,19 @@ export function TaskAcceptanceActions({
 
   if (!task.issue || !pr || task.status !== 'accept') return null;
 
-  const expectedHead = pr.headSha;
+  const liveHead = currentHeadSha || pr.headSha || '';
 
   // Check if live HEAD has changed compared to expectedHead from the task PR
   const headMismatch = Boolean(
-    currentHeadSha && expectedHead && currentHeadSha.toLowerCase() !== expectedHead.toLowerCase()
+    liveHead && expectedHead && liveHead.toLowerCase() !== expectedHead.toLowerCase()
   );
+
+  const handleRefresh = () => {
+    if (liveHead) {
+      setExpectedHead(liveHead);
+    }
+    onRefreshHead?.();
+  };
 
   const canWrite = !isMock && ghAvailable && !headMismatch && Boolean(expectedHead);
 
@@ -111,11 +135,26 @@ export function TaskAcceptanceActions({
 
   return (
     <div className="mt-v2-sm flex flex-col gap-v2-sm border-t border-v2-line/60 pt-v2-sm">
-      {!ghAvailable && !isMock ? (
+      {probed && !ghAvailable && !isMock ? (
         <Notice tone="block">
           {isZh
             ? '未安装 GitHub CLI 或未登录 GitHub，写回操作已禁用。'
             : 'GitHub CLI is not installed or not logged in; write actions are disabled.'}
+        </Notice>
+      ) : null}
+
+      {headMismatch ? (
+        <Notice tone="block">
+          <div className="flex flex-wrap items-center justify-between gap-v2-xs">
+            <span>
+              {isZh
+                ? `PR HEAD 已更新（当前：${liveHead}，基准：${expectedHead}），请先刷新核对后再验收。`
+                : `PR HEAD has been updated (Current: ${liveHead}, Baseline: ${expectedHead}). Please refresh and verify before accepting.`}
+            </span>
+            <Button size="sm" variant="secondary" onClick={handleRefresh} icon={<Icon name="refresh" size={14} />}>
+              {isZh ? '刷新 HEAD' : 'Refresh HEAD'}
+            </Button>
+          </div>
         </Notice>
       ) : null}
 
@@ -156,7 +195,7 @@ export function TaskAcceptanceActions({
 
         <span className="text-v2-micro text-v2-ink-3">
           {isZh ? '验收通过（不会合并）' : 'Acceptance (will not merge)'}
-          {expectedHead ? ` · HEAD: ${expectedHead.slice(0, 7)}` : ''}
+          {expectedHead ? ` · HEAD: ${expectedHead}` : ''}
         </span>
       </div>
 

@@ -355,10 +355,13 @@ export function derivePauseState(comments: { body: string }[]): { paused: boolea
   for (const comment of comments) {
     if (typeof comment?.body !== 'string') continue;
     const lines = comment.body.split(/\r?\n/u);
-    if (lines.length !== 3 || lines[0] !== COMMENT_PREFIX || lines[2] !== PAUSE_MARKER) continue;
-    if (lines[1] === '用户已暂停：请停止派发新工作，正在进行的一步可完成。') paused = true;
-    else if (lines[1] === '用户已恢复：可继续派发。') paused = false;
-    else continue;
+    if (lines.length === 5 && lines[0] === COMMENT_PREFIX && lines[1] === '' && lines[3] === '' && lines[4] === PAUSE_MARKER) {
+      if (lines[2] === '用户已暂停：请停止派发新工作，正在进行的一步可完成。') paused = true;
+      else if (lines[2] === '用户已恢复：可继续派发。') paused = false;
+    } else if (lines.length === 3 && lines[0] === COMMENT_PREFIX && lines[2] === PAUSE_MARKER) {
+      if (lines[1] === '用户已暂停：请停止派发新工作，正在进行的一步可完成。') paused = true;
+      else if (lines[1] === '用户已恢复：可继续派发。') paused = false;
+    }
   }
   return { paused };
 }
@@ -368,22 +371,22 @@ export const COMMENT_MARKER = '<!-- ai-one:comment:v1 -->';
 export { PAUSE_MARKER };
 
 export function formatCommentBody(text: string): string {
-  return `${COMMENT_PREFIX}\n\n${text}\n\n<!-- ai-one:comment:v1 -->`;
+  return `${COMMENT_PREFIX}\n\n${text.trim()}\n\n<!-- ai-one:comment:v1 -->`;
 }
 
 export function formatPauseBody(state: 'paused' | 'running'): string {
   const text = state === 'paused'
     ? '用户已暂停：请停止派发新工作，正在进行的一步可完成。'
     : '用户已恢复：可继续派发。';
-  return `${COMMENT_PREFIX}\n${text}\n${PAUSE_MARKER}`;
+  return `${COMMENT_PREFIX}\n\n${text}\n\n${PAUSE_MARKER}`;
 }
 
 export function formatAcceptBody(expectedHead: string): string {
-  return `${COMMENT_PREFIX}\n\n验收通过：完整 HEAD 为 \`${expectedHead}\`。\n\n<!-- ai-one:accept:v1 -->`;
+  return `${COMMENT_PREFIX}\n\n【ai-one】用户验收通过（针对 HEAD ${expectedHead.toLowerCase()}）。\n\n<!-- ai-one:accept:v1 -->`;
 }
 
 export function formatRequestChangesBody(expectedHead: string, text: string): string {
-  return `${COMMENT_PREFIX}\n\n要求修改（基于 HEAD \`${expectedHead}\`）：\n\n${text}\n\n<!-- ai-one:request_changes:v1 -->`;
+  return `${COMMENT_PREFIX}\n\n【ai-one】用户要求修改（针对 HEAD ${expectedHead.toLowerCase()}）：\n\n${text.trim()}\n\n<!-- ai-one:request_changes:v1 -->`;
 }
 
 export const githubWrite = {

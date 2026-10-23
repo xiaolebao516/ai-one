@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as ghWriteModule from '../host/githubWrite';
 import type { HudTask } from '../ui/taskHudModel';
 import { TaskView } from '../workbench/views/TaskView';
+import { getTakeoverAi, setStoredTakeoverAi } from '../workbench/workbenchStorage';
 
 const baseTask: HudTask = {
   id: 'task-test',
@@ -207,5 +208,132 @@ describe('TaskView Controls & Live Inspector integration (Spec #110)', () => {
       issue: 110,
       state: 'paused',
     });
+  });
+  it('mounted: comment submission appends readback evidence to list', async () => {
+    vi.spyOn(ghWriteModule.githubWrite, 'comment').mockResolvedValue({
+      status: 'confirmed',
+      code: 'ok',
+      message: '已确认',
+      steps: [],
+    });
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    live.push({ root, container });
+
+    await act(async () => {
+      root.render(<TaskView locale="zh-CN" task={baseTask} onBack={vi.fn()} />);
+    });
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea).toBeDefined();
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(textarea, '你好，请推进下一阶段');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const submitBtn = container.querySelector('button[data-testid="comment-submit"]') as HTMLButtonElement;
+    expect(submitBtn).toBeDefined();
+    await act(async () => {
+      submitBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    // Wait for async state resolution
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('你 · 留言已发出并回读');
+  });
+
+  it('mounted: HEAD mismatch shows notice and disables buttons until refresh', async () => {
+    const acceptTask: HudTask = {
+      ...baseTask,
+      status: 'accept',
+      pr: {
+        number: 126,
+        draft: false,
+        headSha: '1111111111111111111111111111111111111111',
+      },
+    };
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    live.push({ root, container });
+
+    // Initial render with matching HEAD
+    await act(async () => {
+      root.render(<TaskView locale="zh-CN" task={acceptTask} onBack={vi.fn()} />);
+    });
+
+    expect(container.textContent).toContain('HEAD: 1111111111111111111111111111111111111111');
+    expect(container.textContent).not.toContain('HEAD 已更新');
+
+    // Update with a newer live HEAD
+    const updatedTask: HudTask = {
+      ...acceptTask,
+      pr: {
+        ...acceptTask.pr!,
+        headSha: '2222222222222222222222222222222222222222',
+      },
+    };
+
+    await act(async () => {
+      root.render(<TaskView locale="zh-CN" task={updatedTask} onBack={vi.fn()} />);
+    });
+
+    expect(container.textContent).toContain('PR HEAD 已更新');
+    expect(container.textContent).toContain('刷新 HEAD');
+
+    // Click refresh HEAD
+    const refreshBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('刷新 HEAD'));
+    expect(refreshBtn).toBeDefined();
+
+    await act(async () => {
+      refreshBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).not.toContain('PR HEAD 已更新');
+    expect(container.textContent).toContain('HEAD: 2222222222222222222222222222222222222222');
+  });
+
+  it('persists takeover AI to storage on takeover and clears on dismiss', async () => {
+    setStoredTakeoverAi(null);
+    expect(getTakeoverAi()).toBeNull();
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    live.push({ root, container });
+
+    const onTakeoverAi = vi.fn();
+    const onOpenClassic = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <TaskView
+          locale="zh-CN"
+          task={baseTask}
+          onBack={vi.fn()}
+          onTakeoverAi={onTakeoverAi}
+          onOpenClassic={onOpenClassic}
+        />
+      );
+    });
+
+    const takeoverButtons = Array.from(container.querySelectorAll('button')).filter((b) => b.textContent?.includes('接管'));
+    expect(takeoverButtons.length).toBeGreaterThan(0);
+
+    await act(async () => {
+      takeoverButtons[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(getTakeoverAi()).toBe('ChatGPT (Pro)');
+    expect(onTakeoverAi).toHaveBeenCalledWith('ChatGPT (Pro)');
+    expect(onOpenClassic).toHaveBeenCalled();
   });
 });

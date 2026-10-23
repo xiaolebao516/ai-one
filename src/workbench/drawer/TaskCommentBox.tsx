@@ -15,12 +15,16 @@ export function TaskCommentBox({ task, locale, onCommentSent }: TaskCommentBoxPr
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<GithubWriteResult | null>(null);
-  const [ghAvailable, setGhAvailable] = useState(true);
+  const [ghAvailable, setGhAvailable] = useState(false);
+  const [probed, setProbed] = useState(false);
 
   useEffect(() => {
     let active = true;
     githubWrite.status().then((s) => {
-      if (active) setGhAvailable(s.available);
+      if (active) {
+        setGhAvailable(s.available);
+        setProbed(true);
+      }
     });
     return () => {
       active = false;
@@ -30,7 +34,7 @@ export function TaskCommentBox({ task, locale, onCommentSent }: TaskCommentBoxPr
   if (!task.issue) return null;
 
   const isMock = task.dataSource === 'mock';
-  const preview = text.trim() ? formatCommentBody(text) : '';
+  const preview = text.trim() ? formatCommentBody(text.trim()) : '';
   const canWrite = !isMock && ghAvailable;
 
   const handleSubmit = async () => {
@@ -73,7 +77,7 @@ export function TaskCommentBox({ task, locale, onCommentSent }: TaskCommentBoxPr
         </span>
       </div>
 
-      {!ghAvailable && !isMock ? (
+      {probed && !ghAvailable && !isMock ? (
         <Notice tone="block">
           {isZh
             ? '未安装 GitHub CLI 或未登录 GitHub，留言功能已禁用。'

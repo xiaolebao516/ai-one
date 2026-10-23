@@ -39,6 +39,8 @@ export interface WorkbenchProps {
   locale: Locale;
   /** Leaves the workbench for the classic multi-AI chat UI. */
   onOpenClassic: () => void;
+  /** Handles takeover of a specific AI. */
+  onTakeoverAi?: (name: string) => void;
   /** Reads GitHub; tests pass a controllable one. Must be a stable reference. */
   githubLoader?: GitHubLoader;
   /** Reads local Prodex metadata; tests pass a controllable one. Must be a stable reference. */
@@ -48,7 +50,7 @@ export interface WorkbenchProps {
 }
 
 /** The new ai-one front end (Spec #79 v2). The classic chat UI is only a capability library now. */
-export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader, isDesktop }: WorkbenchProps) {
+export function Workbench({ locale, onOpenClassic, onTakeoverAi, githubLoader, dispatchLoader, isDesktop }: WorkbenchProps) {
   const text = workbenchText(locale);
   const data = useWorkbenchData(githubLoader);
   const dispatch = useDispatchData({ source: data.prefs.source, repoPath: data.prefs.dispatchRepo, loader: dispatchLoader, isDesktop });
@@ -135,6 +137,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
         onBack={() => go({ view: 'tasks' })}
         dispatchSnapshot={dispatch.snapshot}
         onOpenClassic={onOpenClassic}
+        onTakeoverAi={onTakeoverAi}
       />
     );
   } else if (current.view === 'chat') {

@@ -148,6 +148,52 @@ function makeTask(
   const status = statusFor(labels, pr);
   const guidanceText = guidance(status);
   const evidence: HudEvidence[] = [...extraEvidence];
+  const snapRec = snapshot as unknown as Record<string, unknown>;
+  const prRec = pr as unknown as Record<string, unknown> | undefined;
+  const localRuns = (snapRec?.localEvidence as HudEvidence[]) || (prRec?.localEvidence as HudEvidence[]) || [];
+  if (Array.isArray(localRuns)) {
+    for (const r of localRuns) {
+      if (r && r.text) {
+        evidence.push({
+          id: r.id || (id + ':local:' + evidence.length),
+          kind: 'local',
+          text: r.text,
+          raw: r.raw,
+          observedMinutesAgo: r.observedMinutesAgo,
+        });
+      }
+    }
+  }
+  const prReviews = (prRec?.reviews as Array<{ id?: string; user?: string; body?: string; observedMinutesAgo?: number }>) || [];
+  if (Array.isArray(prReviews)) {
+    for (const r of prReviews) {
+      if (r && r.body) {
+        evidence.push({
+          id: r.id || (id + ':review:' + evidence.length),
+          kind: 'readback',
+          text: { zh: `GitHub 独立审计评论 · ${r.user || 'Reviewer'}`, en: `GitHub Review Comment · ${r.user || 'Reviewer'}` },
+          raw: r.body,
+          observedMinutesAgo: r.observedMinutesAgo,
+        });
+      }
+    }
+  }
+  const issueRec = issue as unknown as Record<string, unknown> | undefined;
+  const issueComments = (issueRec?.comments as Array<{ id?: string; user?: string; body?: string; observedMinutesAgo?: number }>) || [];
+  if (Array.isArray(issueComments)) {
+    for (const c of issueComments) {
+      if (c && c.body) {
+        evidence.push({
+          id: c.id || (id + ':comment:' + evidence.length),
+          kind: 'readback',
+          text: { zh: `Issue 评论 · ${c.user || 'User'}`, en: `Issue Comment · ${c.user || 'User'}` },
+          raw: c.body,
+          observedMinutesAgo: c.observedMinutesAgo,
+        });
+      }
+    }
+  }
+
   if (issue) {
     evidence.push(readback(id + ':issue', { en: 'Open Issue #' + issue.number + '; labels: ' + labels.join(', '),
       zh: '开放 Issue #' + issue.number + '；标签：' + labels.join('、') }, issue.source, now,

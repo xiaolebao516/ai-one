@@ -104,3 +104,19 @@ export function loadPrefs(storage: StorageLike | undefined = defaultStorage()): 
 export function savePrefs(prefs: WorkbenchPrefs, storage: StorageLike | undefined = defaultStorage()): void {
   write(STORAGE_KEYS.prefs, JSON.stringify(prefs), storage);
 }
+
+export const TAKEOVER_AI_KEY = "ai-one.takeover.ai";
+
+export function getTakeoverAi(storage: StorageLike | undefined = defaultStorage()): string | null {
+  return read(TAKEOVER_AI_KEY, storage);
+}
+
+export function setStoredTakeoverAi(name: string | null, storage: StorageLike | undefined = defaultStorage()): void {
+  if (name) {
+    write(TAKEOVER_AI_KEY, name, storage);
+  } else {
+    try {
+      (storage as StorageLike & { removeItem?: (k: string) => void })?.removeItem?.(TAKEOVER_AI_KEY);
+    } catch { /* ignore */ }
+  }
+}
