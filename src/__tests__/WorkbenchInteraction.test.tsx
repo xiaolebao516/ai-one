@@ -172,6 +172,43 @@ describe('unsaved flow leave guard across workbench entry points', () => {
     expect(h1(container)).toBe('Tasks');
   });
 
+  it('saves only the edited existing flow when navigation interrupts a queued new flow', async () => {
+    const container = await mount();
+    await click(navButton(container, 'Stages & flows'));
+    await settleWorkbench();
+    await click(buttonByText(container, 'Copy to edit'));
+    await click(buttonByText(container, 'Save'));
+    await settleWorkbench();
+    const before = JSON.parse(window.localStorage.getItem('ai-one.local-store.flows') ?? '{}') as {
+      flows?: Array<{ id: string; nameEn?: string }>;
+    };
+    expect(before.flows?.length).toBeGreaterThan(0);
+
+    const input = container.querySelector('#flows-current-title-input') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(input, 'Edited before leaving');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(input.value).toBe('Edited before leaving');
+    await click(buttonByText(container, '＋ New flow'));
+    expect(container.textContent).toContain('Save and continue');
+
+    await click(navButton(container, 'Tasks'));
+    expect(h1(container)).toBe('Stages & flows');
+    await click(buttonByText(container, 'Save and leave'));
+    expect(h1(container)).toBe('Tasks');
+    const onDisk = JSON.parse(window.localStorage.getItem('ai-one.local-store.flows') ?? '{}') as {
+      flows?: Array<{ id: string; nameEn?: string }>;
+    };
+    expect(onDisk.flows).toHaveLength(before.flows?.length ?? 0);
+    expect(onDisk.flows?.some((flow) => flow.nameEn === 'Edited before leaving')).toBe(true);
+
+    await click(navButton(container, 'Stages & flows'));
+    await settleWorkbench();
+    expect(container.textContent).toContain('Edited before leaving');
+  });
+
   it('saves a valid flow draft before leaving through a keyboard shortcut', async () => {
     const container = await mount();
     await enterFlowsWithUnsavedDraft(container);
