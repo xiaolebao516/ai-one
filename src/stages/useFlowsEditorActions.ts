@@ -168,7 +168,9 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
 
   const requestAction = (action: PendingEditorAction) => {
     if (context.mutationsDisabled) return;
-    if (context.hasUnsaved) {
+    const switchesFlow = action.kind === 'select-flow' || action.kind === 'create-flow' || action.kind === 'copy-flow' || action.kind === 'delete-flow';
+    const shouldProtect = context.draftDirty || (switchesFlow && context.flows.dirty);
+    if (shouldProtect) {
       context.setPendingAction(action);
       context.setFeedback(undefined);
       return;
