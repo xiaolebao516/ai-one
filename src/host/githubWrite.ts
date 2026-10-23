@@ -69,6 +69,7 @@ const MAX_TEXT_CHARS = 60_000;
 const MARKER_PREFIX = '<!-- ai-one:';
 const COMMENT_PREFIX = '【ai-one 代用户发出】';
 const PAUSE_MARKER = '<!-- ai-one:set_pause:v1 -->';
+// eslint-disable-next-line no-control-regex -- rejecting control characters is the point
 const CONTROL_CHAR_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
 const SHA_RE = /^[0-9a-fA-F]{40}$/u;
 
