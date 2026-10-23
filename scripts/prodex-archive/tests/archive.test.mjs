@@ -275,3 +275,18 @@ test('a live process on another slot with a stale heartbeat still blocks archivi
     assert.ok(fs.existsSync(file), 'the claim was not removed');
   } finally { other.release(); }
 });
+
+test('a leftover dead-process claim that names this thread blocks archive until cleared; a dead new-chat claim does not', async () => {
+  const home = temp();
+  addSlots(home, 2);
+  const mk = (slot, meta) => {
+    const c = claimSlot(home, slot, { pid: 2147483000, alive: () => true, meta });
+    return c;
+  };
+  mk(2, { task: '97', threadUrl: A });
+  await assert.rejects(finish(input(), { home, verify: () => true, archive: async () => {
+    throw new Error('MUST NOT CALL'); } }), /leftover claim on this thread/);
+  fs.rmSync(path.join(home, 'slot-claims', 'slot-2.json'));
+  mk(3, { task: '98' });
+  assert.equal((await finish({ ...input(), retry: true }, { home, verify: () => true, archive: async () => {} })).status, 'archived');
+});

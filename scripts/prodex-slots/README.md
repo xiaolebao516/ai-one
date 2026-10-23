@@ -77,6 +77,12 @@ stderr ends up in logs.
 
 ## Self-healing
 
+Heartbeat rule (#114): a claim whose owner pid exited is always removed. A claim with a stale heartbeat
+(over 2 minutes) but a live pid is removed too, **except** when it names a thread (`--thread-url`): that
+claim survives up to 24 hours, because the archiver relies on it to see an active user of the thread
+(the machine may simply have slept). `claimSlot`'s takeover uses the same rule. An archiving `release`
+runs no sweep at all.
+
 `list`, `run`, `ensure` and `release` sweep the claim directory first. A claim whose owner pid
 has exited, or that has had no heartbeat for 2 minutes, is removed and reported; `.tmp`
 leftovers go the same way (a same-inode hard link of the claim, or any temp older than the

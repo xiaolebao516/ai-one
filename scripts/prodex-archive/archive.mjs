@@ -174,7 +174,13 @@ function otherClaims(home, ownSlot, url) {
     if (!claim) continue;
     // A claim whose process has exited is not an active user of the thread (it is only a leftover);
     // a live process counts even if its heartbeat is stale, e.g. after the machine slept.
-    if (!processAlive(claim.pid)) continue;
+    if (!processAlive(claim.pid)) {
+      // The wrapper exited, but a prodex child it started could still be sending: a leftover claim that
+      // names THIS thread keeps blocking until a normal command's self-heal (`list`) has cleared it.
+      if (claimOwnership(claim).threadUrl === url)
+        throw new Error('Other slot has a leftover claim on this thread whose process exited; run `prodex-slots list` to clear it, confirm nothing is still sending, then retry');
+      continue;
+    }
     // `prodex-slots run` only accepts a claim without a thread URL for a NEW chat (continuing a thread
     // needs --target-url + the same --thread-url, and --continue is refused), so such a claim cannot be
     // using this thread. A claim that names this thread blocks; an unreadable claim file (handled
