@@ -454,6 +454,44 @@ describe('host send with outbox draining (#143)', () => {
     await host.provider.reload('chatgpt#3');
   });
 
+  it('a successful stop does not release the unknown-send quarantine; only a reload does', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('provider eval callback timed out'));
+    await expect(host.provider.send('chatgpt#2', 'A', { drainOutbox: true })).rejects.toThrow(/drain result unknown/);
+
+    invokeMock.mockResolvedValueOnce(JSON.stringify({ found: true, clicked: true }));
+    await expect(host.provider.stop('chatgpt#2')).resolves.toMatchObject({ outcome: 'clicked' });
+
+    invokeMock.mockResolvedValue(JSON.stringify({ sent: true }));
+    const before = invokeMock.mock.calls.length;
+    await expect(host.provider.send('chatgpt#2', 'B', { drainOutbox: true })).rejects.toThrow(/reload provider page/);
+    expect(invokeMock.mock.calls.length).toBe(before);
+
+    invokeMock.mockResolvedValue(undefined);
+    await host.provider.reload('chatgpt#2');
+    invokeMock.mockResolvedValue(JSON.stringify({ sent: true }));
+    await expect(host.provider.send('chatgpt#2', 'C', { drainOutbox: true })).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ['an empty object', '{}'],
+    ['null', 'null'],
+    ['a non-boolean sent', JSON.stringify({ sent: 'yes' })],
+    ['a bare number', '42'],
+  ])('treats %s as an unknown result: quarantine, not "not sent"', async (_name, raw) => {
+    invokeMock.mockResolvedValueOnce(raw);
+    await expect(host.provider.send('chatgpt#3', 'A', { drainOutbox: true })).rejects.toThrow(/malformed outbox drain result/);
+    await expect(host.provider.send('chatgpt#3', 'B', { drainOutbox: true })).rejects.toThrow(/reload provider page/);
+    invokeMock.mockResolvedValue(undefined);
+    await host.provider.reload('chatgpt#3');
+  });
+
+  it('an explicit sent:false is the only result that does not quarantine', async () => {
+    invokeMock.mockResolvedValueOnce(JSON.stringify({ sent: false, reason: 'expired' }));
+    await expect(host.provider.send('chatgpt#3', 'A', { drainOutbox: true })).rejects.toThrow(/could not be drained \(expired\)/);
+    invokeMock.mockResolvedValue(JSON.stringify({ sent: true }));
+    await expect(host.provider.send('chatgpt#3', 'B', { drainOutbox: true })).resolves.toBeUndefined();
+  });
+
   it('keeps the plain send unchanged when draining is not requested', async () => {
     invokeMock.mockResolvedValue(undefined);
     await host.provider.send('chatgpt#2', 'task C');
