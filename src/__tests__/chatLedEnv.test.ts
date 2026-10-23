@@ -31,4 +31,26 @@ describe('chat-led real provider preparation', () => {
     expect(mocks.park).toHaveBeenCalledWith('chatgpt', expect.anything());
     expect(mocks.eval).toHaveBeenCalledWith('chatgpt', expect.stringContaining('CHECK_STATUS'));
   });
+  it('treats "script evaluation is not ready" on a just-opened page as transient and keeps polling', async () => {
+    vi.useFakeTimers();
+    try {
+      let polls = 0;
+      let state: ProviderState = { provider: 'claude', webview: 'none', dom: 'unknown', login: 'unknown', thinking: false, lastStatusAt: 0 };
+      mocks.get.mockImplementation(async () => [state]);
+      mocks.open.mockImplementation(async () => {
+        state = { ...state, webview: 'loaded' };
+      });
+      mocks.eval.mockImplementation(async () => {
+        polls += 1;
+        if (polls < 3) throw new Error('script evaluation is not ready for provider: claude');
+        state = { ...state, dom: 'ready', login: 'logged_in', lastStatusAt: 5 };
+      });
+      const ready = prepareProviderPage('claude');
+      await vi.advanceTimersByTimeAsync(5000);
+      await ready;
+      expect(polls).toBeGreaterThanOrEqual(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

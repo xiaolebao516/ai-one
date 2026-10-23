@@ -16,6 +16,17 @@ describe('serializeResponseText with browser-parsed jsdom nodes', () => {
     expect(serializeResponseText(root)).toBe('Alpha & Beta\u00a0\u00a0Gamma delta <epsilon> #1');
   });
 
+  it('serialises ChatGPT wrapper code blocks (toolbar label + <code>, no <pre>) as fenced blocks', () => {
+    const root = document.createElement('div');
+    root.innerHTML =
+      '<p>Intro</p>' +
+      '<div data-markdown-copy="code-block"><div data-markdown-copy="exclude"><svg aria-hidden="true"></svg>' +
+      '<div class="truncate">ai-one-send</div><div><button aria-label="copy">c</button></div></div>' +
+      '<div><code><span><span>{"to":["claude"],"message":"hi"}</span></span></code></div></div>';
+
+    expect(serializeResponseText(root)).toBe('Intro\n\n```ai-one-send\n{"to":["claude"],"message":"hi"}\n```');
+  });
+
   it('keeps semantic heading, bold and emphasis formatting', () => {
     const root = document.createElement('div');
     root.innerHTML =

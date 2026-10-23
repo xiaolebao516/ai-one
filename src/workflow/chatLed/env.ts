@@ -85,9 +85,17 @@ export async function prepareProviderPage(provider: AIProvider): Promise<void> {
   }
   // Workbench hides loaded views. They must be shown offscreen again to obtain live DOM status.
   await host.provider.park(provider, parkedBounds());
-  await host.provider.eval(provider, `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({ v: 1, action: "CHECK_STATUS", provider })})`);
+  const checkStatusScript = `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({ v: 1, action: "CHECK_STATUS", provider })})`;
   const readyDeadline = Date.now() + PAGE_READY_TIMEOUT_MS;
   for (;;) {
+    // A page that was just opened or reloaded refuses script evaluation until its DOM is ready
+    // ("script evaluation is not ready"). That is a transient state, not a failure: ask again on the
+    // next poll until the readiness deadline.
+    try {
+      await host.provider.eval(provider, checkStatusScript);
+    } catch {
+      // not ready yet
+    }
     state = await stateOf(provider);
     const fresh = Boolean(state && state.lastStatusAt > previousStatusAt);
     if (state && fresh && isSendable(state)) break;
