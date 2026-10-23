@@ -12,7 +12,7 @@ import { createFlowDefinition, createStageDefinition, replaceFlowStage, uniqueFl
 import type { FlowsEditorActionContext, FlowsEditorActionHandlers, PendingEditorAction } from './flows/flowEditorTypes';
 
 export function createFlowsEditorActions(context: FlowsEditorActionContext): FlowsEditorActionHandlers {
-  const performAction = (action: PendingEditorAction, source = context.flows.file) => {
+  const performAction = (action: PendingEditorAction, source = context.flows.file, selectionSource = context.selection) => {
     if (!source || context.mutationsDisabled) return;
     context.setFeedback(undefined);
     context.setScopePrompt(false);
@@ -159,7 +159,7 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
     if (action.kind === 'import') {
       const next = resolveImportChoice(source, action.incoming, action.resolution);
       context.flows.updateFile(() => next);
-      context.setDraft(stageForSelection(next, context.selection));
+      context.setDraft(stageForSelection(next, selectionSource));
       context.setFeedback({ tone: 'neutral', message: context.text.t('importDone') });
       return;
     }
@@ -244,7 +244,7 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
       if (context.pendingAction) {
         const action = context.pendingAction;
         context.setPendingAction(null);
-        performAction(action, candidate);
+        performAction(action, candidate, selectionAfterSave);
       }
       return true;
     }
