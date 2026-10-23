@@ -629,6 +629,7 @@ export function useChatRuntime({
         } catch {
           // Keep the last observed state and let the sendability gate below decide per provider.
         }
+        if (resetFailures.size === 0) setNotice(undefined);
       }
 
       if (presetId === 'free') {
