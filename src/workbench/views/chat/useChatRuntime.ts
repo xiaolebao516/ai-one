@@ -626,7 +626,7 @@ export function useChatRuntime({
           freshened = [...freshenTargets];
         } catch (error) {
           if (error instanceof ProviderSessionResetError) {
-            freshened = error.completedProviders;
+            freshened = [...error.completedProviders];
             resetFailures = new Set(error.failures.map((failure) => failure.provider));
             setNotice({
               tone: 'block',
