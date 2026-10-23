@@ -1240,3 +1240,15 @@ test('an archiving release does not sweep other slots, so a stale-heartbeat live
   assert.equal(await h.run(archiveArgs), EXIT.OK);
   assert.ok(fs.existsSync(file), 'the other slot claim was not swept away');
 });
+
+test('self-heal keeps a live thread claim past the heartbeat window but still reaps a plain stale one', async () => {
+  const h = harness();
+  addSlots(h.home, 2);
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+  claimSlot(h.home, 2, { pid: 222, alive: () => true, meta: { task: '72' } });
+  const old = new Date(Date.now() - 10 * 60 * 1000);
+  for (const n of [1, 2]) fs.utimesSync(path.join(h.home, 'slot-claims', `slot-${n}.json`), old, old);
+  assert.equal(await h.run(['list']), EXIT.OK);
+  assert.ok(readClaim(h.home, 1), 'the live thread claim survives the sweep that a normal command runs');
+  assert.equal(readClaim(h.home, 2), null, 'a stale claim without a thread is still reaped');
+});
