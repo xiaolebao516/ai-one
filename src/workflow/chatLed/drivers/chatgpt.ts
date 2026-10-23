@@ -157,6 +157,9 @@ export function buildDeleteScript(path: string): string {
     '  if (!menu) return JSON.stringify({ ok: false, note: "No open options menu that belongs to the registered conversation" });',
     '  const element = findCandidate(SELECTORS.actionCandidates, /delete|remove|删除/i, /delete/i, menu);',
     '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Delete action not found or disabled" });',
+    '  // A dialog that already exists cannot be the one this click produces, so it could never be trusted later.',
+    '  if (window.document.querySelectorAll("[role=\\"dialog\\"], [role=\\"alertdialog\\"]").length > 0) return JSON.stringify({ ok: false, note: "A dialog is already open; refusing to continue" });',
+    '  window.__aiOneArmed = JSON.stringify({ path: expectedPath, action: "delete", at: Date.now() });',
     '  element.click();',
     '  return JSON.stringify({ ok: true, note: "Delete action selected" });',
   ].join('\n'));
@@ -168,6 +171,9 @@ export function buildArchiveScript(path: string): string {
     '  if (!menu) return JSON.stringify({ ok: false, note: "No open options menu that belongs to the registered conversation" });',
     '  const element = findCandidate(SELECTORS.actionCandidates, /archive|归档/i, /archive/i, menu);',
     '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Archive action not found or disabled" });',
+    '  // A dialog that already exists cannot be the one this click produces, so it could never be trusted later.',
+    '  if (window.document.querySelectorAll("[role=\\"dialog\\"], [role=\\"alertdialog\\"]").length > 0) return JSON.stringify({ ok: false, note: "A dialog is already open; refusing to continue" });',
+    '  window.__aiOneArmed = JSON.stringify({ path: expectedPath, action: "archive", at: Date.now() });',
     '  element.click();',
     '  return JSON.stringify({ ok: true, note: "Archive action selected" });',
   ].join('\n'));
@@ -181,6 +187,11 @@ export function buildConfirmScript(path: string, action: 'delete' | 'archive'): 
 
   return guardedScript(path, [
     '  const action = ' + JSON.stringify(action) + ';',
+    '  // Only a dialog produced by OUR click on this conversation may be confirmed: the click armed a marker.',
+    '  let armed = null;',
+    '  try { armed = JSON.parse(window.__aiOneArmed || "null"); } catch (error) { armed = null; }',
+    '  delete window.__aiOneArmed;',
+    '  if (!armed || armed.path !== expectedPath || armed.action !== action || typeof armed.at !== "number" || Date.now() - armed.at > 15000) return JSON.stringify({ ok: false, note: "No fresh confirmation armed by this cleanup; refusing to confirm" });',
     '  // The target menu was consumed by our click: no menu may be open, and the target trigger is collapsed.',
     '  if (window.document.querySelectorAll("[role=\\"menu\\"]").length > 0) return JSON.stringify({ ok: false, note: "A menu is still open; refusing to confirm" });',
     '  const trigger = findTrigger();',
@@ -199,7 +210,23 @@ export function buildReloadScript(): string {
   return '(() => { try { window.location.reload(); return JSON.stringify({ ok: true, note: "Reload requested" }); } catch (error) { return JSON.stringify({ ok: false, note: "Reload failed" }); } })()';
 }
 
-function buildSidebarCheckScript(id: string, requireGonePage: boolean): string {
+/** Sidebar state before the action: every other conversation currently listed (target excluded). */
+export function buildSnapshotScript(id: string): string {
+  return [
+    '(() => {',
+    '  const SELECTORS = ' + JSON.stringify(SELECTORS) + ';',
+    '  const sidebars = window.document.querySelectorAll(SELECTORS.sidebarRoots.join(","));',
+    '  if (sidebars.length !== 1) return JSON.stringify({ ok: false, note: "Expected exactly one history sidebar" });',
+    '  const sidebar = sidebars[0];',
+    '  if (sidebar.querySelector("[aria-busy=\\"true\\"], [data-testid*=\\"skeleton\\"], [class*=\\"skeleton\\"]")) return JSON.stringify({ ok: false, note: "History list is still loading" });',
+    '  const targetPath = "/c/" + ' + JSON.stringify(id.toLowerCase()) + ';',
+    '  const paths = Array.from(sidebar.querySelectorAll(SELECTORS.sidebarLinks.join(","))).map((link) => { try { return new URL(link.getAttribute("href") || "", window.location.origin).pathname.toLowerCase(); } catch (error) { return ""; } }).filter((path) => /^\\/c\\/[0-9a-f-]{36}$/.test(path) && path !== targetPath);',
+    '  return JSON.stringify({ ok: true, note: "Snapshot taken", others: Array.from(new Set(paths)) });',
+    '})()',
+  ].join('\n');
+}
+
+function buildSidebarCheckScript(id: string, requireGonePage: boolean, others: readonly string[]): string {
   const pageCondition = requireGonePage
     ? [
         '  const currentPath = window.location.pathname;',
@@ -210,21 +237,27 @@ function buildSidebarCheckScript(id: string, requireGonePage: boolean): string {
       ]
     : [];
 
+  // Completeness evidence: every other conversation that was listed BEFORE the action must still be
+  // listed now, so a partially loaded list can never make the target look gone. Without a non-empty
+  // snapshot the only acceptable evidence is an explicit "not found" page (delete); archive then
+  // cannot be confirmed and is left for manual cleanup.
   const confirmedExpression = requireGonePage
-    ? '(notFound || (atHome && links.length > 0)) && !stillListed'
-    : '!stillListed';
+    ? '(notFound || (atHome && expected.length > 0 && othersPresent)) && !stillListed'
+    : 'expected.length > 0 && othersPresent && !stillListed';
 
   return [
     '(() => {',
     '  const SELECTORS = ' + JSON.stringify(SELECTORS) + ';',
     '  const targetId = ' + JSON.stringify(id.toLowerCase()) + ';',
+    '  const expected = ' + JSON.stringify(others) + ';',
     '  const sidebars = window.document.querySelectorAll(SELECTORS.sidebarRoots.join(","));',
     '  if (sidebars.length !== 1) return JSON.stringify({ ok: false, note: "Expected exactly one history sidebar; cannot confirm" });',
     '  const sidebar = sidebars[0];',
     '  if (sidebar.querySelector("[aria-busy=\\"true\\"], [data-testid*=\\"skeleton\\"], [class*=\\"skeleton\\"]")) return JSON.stringify({ ok: false, note: "History list is still loading; cannot confirm" });',
     '  const links = sidebar.querySelectorAll(SELECTORS.sidebarLinks.join(","));',
     '  const targetPath = "/c/" + targetId;',
-    ...(requireGonePage ? [] : ['  if (links.length === 0) return JSON.stringify({ ok: false, note: "History list is empty or not loaded; cannot confirm" });']),
+    '  const listed = new Set(Array.from(links).map((link) => { try { return new URL(link.getAttribute("href") || "", window.location.origin).pathname.toLowerCase(); } catch (error) { return ""; } }));',
+    '  const othersPresent = expected.every((path) => listed.has(path));',
     '  const stillListed = Array.from(links).some((link) => (link.getAttribute("href") || "").toLowerCase().includes(targetPath));',
     ...pageCondition,
     '  const confirmed = ' + confirmedExpression + ';',
@@ -233,12 +266,24 @@ function buildSidebarCheckScript(id: string, requireGonePage: boolean): string {
   ].join('\n');
 }
 
-export function buildConfirmGoneScript(id: string): string {
-  return buildSidebarCheckScript(id, true);
+export function buildConfirmGoneScript(id: string, others: readonly string[] = []): string {
+  return buildSidebarCheckScript(id, true, others);
 }
 
-export function buildConfirmArchivedScript(id: string): string {
-  return buildSidebarCheckScript(id, false);
+export function buildConfirmArchivedScript(id: string, others: readonly string[] = []): string {
+  return buildSidebarCheckScript(id, false, others);
+}
+
+function parseSnapshot(raw: string): string[] | undefined {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return undefined;
+    const record = parsed as { ok?: unknown; others?: unknown };
+    if (record.ok !== true || !Array.isArray(record.others)) return undefined;
+    return record.others.filter((item): item is string => typeof item === 'string');
+  } catch {
+    return undefined;
+  }
 }
 
 function parseCleanerStep(raw: string): CleanerStep {
@@ -267,6 +312,15 @@ export function createChatGptCleaner(dependencies: ChatGptCleanerDependencies): 
     return step;
   };
 
+  // Per conversation id: the other conversations listed before the action (readback evidence).
+  const snapshots = new Map<string, string[]>();
+  const takeSnapshot = async (id: string): Promise<boolean> => {
+    const others = parseSnapshot(await dependencies.evalInPage(buildSnapshotScript(id)));
+    if (!others) return false;
+    snapshots.set(id, others);
+    return true;
+  };
+
   return {
     provider: 'chatgpt' satisfies AIProvider,
     supports: { delete: true, archive: true },
@@ -278,6 +332,8 @@ export function createChatGptCleaner(dependencies: ChatGptCleanerDependencies): 
 
       await dependencies.navigate(normalized.href);
       await dependencies.sleep(300);
+      // Without a readable, fully loaded sidebar there will be no way to confirm: do not act.
+      if (!(await takeSnapshot(normalized.id))) return { ok: false, note: 'History sidebar not loaded; refusing to act without a way to confirm' };
       const menu = await openMenu(normalized.path);
       if (!menu.ok) return menu;
 
@@ -295,6 +351,8 @@ export function createChatGptCleaner(dependencies: ChatGptCleanerDependencies): 
 
       await dependencies.navigate(normalized.href);
       await dependencies.sleep(300);
+      // Without a readable, fully loaded sidebar there will be no way to confirm: do not act.
+      if (!(await takeSnapshot(normalized.id))) return { ok: false, note: 'History sidebar not loaded; refusing to act without a way to confirm' };
       const menu = await openMenu(normalized.path);
       if (!menu.ok) return menu;
 
@@ -312,11 +370,12 @@ export function createChatGptCleaner(dependencies: ChatGptCleanerDependencies): 
 
       await dependencies.navigate(normalized.href);
       await dependencies.sleep(400);
-      const first = await evaluateStep(buildConfirmGoneScript(normalized.id));
+      const others = snapshots.get(normalized.id) ?? [];
+      const first = await evaluateStep(buildConfirmGoneScript(normalized.id, others));
       if (!first.ok) return false;
       // The evidence must hold twice, a moment apart, so a half-loaded page cannot pass.
       await dependencies.sleep(1_500);
-      const second = await evaluateStep(buildConfirmGoneScript(normalized.id));
+      const second = await evaluateStep(buildConfirmGoneScript(normalized.id, others));
       return second.ok;
     },
 
@@ -330,10 +389,11 @@ export function createChatGptCleaner(dependencies: ChatGptCleanerDependencies): 
       if (!reload.ok) return false;
 
       await dependencies.sleep(500);
-      const first = await evaluateStep(buildConfirmArchivedScript(normalized.id));
+      const others = snapshots.get(normalized.id) ?? [];
+      const first = await evaluateStep(buildConfirmArchivedScript(normalized.id, others));
       if (!first.ok) return false;
       await dependencies.sleep(1_500);
-      const second = await evaluateStep(buildConfirmArchivedScript(normalized.id));
+      const second = await evaluateStep(buildConfirmArchivedScript(normalized.id, others));
       return second.ok;
     },
   };

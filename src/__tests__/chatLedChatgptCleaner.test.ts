@@ -20,7 +20,14 @@ function runPageScript(script: string): string {
   return String(execute(window));
 }
 
+const OTHER_ID_PATH = '/c/123e4567-e89b-42d3-a456-426614174999';
+
+function arm(action: 'delete' | 'archive', path = CONVERSATION_PATH, at = Date.now()): void {
+  (window as unknown as Record<string, unknown>).__aiOneArmed = JSON.stringify({ path, action, at });
+}
+
 beforeEach(() => {
+  delete (window as unknown as Record<string, unknown>).__aiOneArmed;
   document.body.innerHTML = '';
   window.history.replaceState({}, '', '/');
 });
@@ -91,6 +98,7 @@ describe('ChatGPT page scripts', () => {
     archiveButton.addEventListener('click', archiveClick);
     deleteButton.addEventListener('click', deleteClick);
 
+    arm('delete');
     const result = JSON.parse(runPageScript(buildConfirmScript(CONVERSATION_PATH, 'delete'))) as { ok: boolean };
 
     expect(result.ok).toBe(true);
@@ -136,8 +144,14 @@ describe('ChatGPT page scripts', () => {
     document.body.innerHTML = '<aside data-testid="history"></aside>';
     expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID))).ok).toBe(false);
 
-    document.body.innerHTML = '<aside data-testid="history"><a href="/c/123e4567-e89b-42d3-a456-426614174999">Other</a></aside>';
-    expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID))).ok).toBe(true);
+    // Other conversations were listed before the action and are all still there: evidence.
+    document.body.innerHTML = '<aside data-testid="history"><a href="' + OTHER_ID_PATH + '">Other</a></aside>';
+    expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID, [OTHER_ID_PATH]))).ok).toBe(true);
+    // No snapshot (nothing to compare with): never confirmed.
+    expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID))).ok).toBe(false);
+    // Partially loaded list: a conversation that was listed before is missing, so the list is incomplete.
+    document.body.innerHTML = '<aside data-testid="history"><a href="/c/123e4567-e89b-42d3-a456-426614174888">Another</a></aside>';
+    expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID, [OTHER_ID_PATH]))).ok).toBe(false);
 
     document.body.innerHTML = '<aside data-testid="history"><a href="' + CONVERSATION_PATH + '">Still listed</a></aside>';
     expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID))).ok).toBe(false);
@@ -269,14 +283,20 @@ describe('ChatGPT page scripts: ownership and readback fail closed', () => {
   it('does not confirm when the history list is loading, ambiguous, or an empty home page', () => {
     window.history.replaceState({}, '', '/');
     // still loading
-    document.body.innerHTML = '<aside data-testid="history"><div aria-busy="true"></div><a href="/c/123e4567-e89b-42d3-a456-426614174999">x</a></aside>';
-    expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID))).ok).toBe(false);
+    document.body.innerHTML = '<aside data-testid="history"><div aria-busy="true"></div><a href="' + OTHER_ID_PATH + '">x</a></aside>';
+    expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID, [OTHER_ID_PATH]))).ok).toBe(false);
     // two possible sidebars
-    document.body.innerHTML = '<aside data-testid="history"><a href="/c/123e4567-e89b-42d3-a456-426614174999">x</a></aside><nav aria-label="Chat history"></nav>';
-    expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID))).ok).toBe(false);
+    document.body.innerHTML = '<aside data-testid="history"><a href="' + OTHER_ID_PATH + '">x</a></aside><nav aria-label="Chat history"></nav>';
+    expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID, [OTHER_ID_PATH]))).ok).toBe(false);
     // deleted: home page with an empty list and no explicit not-found evidence proves nothing
     document.body.innerHTML = '<aside data-testid="history"></aside><main><p>Welcome</p></main>';
     expect(JSON.parse(runPageScript(buildConfirmGoneScript(CONVERSATION_ID))).ok).toBe(false);
+    // deleted: home page that still lists everything seen before the action is evidence...
+    document.body.innerHTML = '<aside data-testid="history"><a href="' + OTHER_ID_PATH + '">x</a></aside><main><p>Welcome</p></main>';
+    expect(JSON.parse(runPageScript(buildConfirmGoneScript(CONVERSATION_ID, [OTHER_ID_PATH]))).ok).toBe(true);
+    // ...but not when part of the previously seen list is missing (still loading)
+    document.body.innerHTML = '<aside data-testid="history"><a href="/c/123e4567-e89b-42d3-a456-426614174888">x</a></aside><main><p>Welcome</p></main>';
+    expect(JSON.parse(runPageScript(buildConfirmGoneScript(CONVERSATION_ID, [OTHER_ID_PATH]))).ok).toBe(false);
     // deleted: explicit not-found evidence is enough even with an empty list
     document.body.innerHTML = '<aside data-testid="history"></aside><main><h1>Conversation not found</h1></main>';
     expect(JSON.parse(runPageScript(buildConfirmGoneScript(CONVERSATION_ID))).ok).toBe(true);
@@ -291,9 +311,58 @@ describe('ChatGPT page scripts: ownership and readback fail closed', () => {
   });
 });
 
+describe('ChatGPT page scripts: the confirmation must come from our own click', () => {
+  it('does not click a lone dialog that nothing armed (stray or belonging to another conversation)', () => {
+    window.history.replaceState({}, '', CONVERSATION_PATH);
+    document.body.innerHTML = '<div role="dialog"><button id="ok">Delete</button></div>';
+    const click = vi.fn();
+    document.getElementById('ok')?.addEventListener('click', click);
+
+    expect(JSON.parse(runPageScript(buildConfirmScript(CONVERSATION_PATH, 'delete'))).ok).toBe(false);
+    expect(click).not.toHaveBeenCalled();
+  });
+
+  it('rejects a marker for another path, another action, or a stale marker, and consumes it', () => {
+    window.history.replaceState({}, '', CONVERSATION_PATH);
+    document.body.innerHTML = '<div role="dialog"><button id="ok">Delete</button></div>';
+    const click = vi.fn();
+    document.getElementById('ok')?.addEventListener('click', click);
+
+    arm('delete', '/c/123e4567-e89b-42d3-a456-426614174777');
+    expect(JSON.parse(runPageScript(buildConfirmScript(CONVERSATION_PATH, 'delete'))).ok).toBe(false);
+    arm('archive');
+    expect(JSON.parse(runPageScript(buildConfirmScript(CONVERSATION_PATH, 'delete'))).ok).toBe(false);
+    arm('delete', CONVERSATION_PATH, Date.now() - 60_000);
+    expect(JSON.parse(runPageScript(buildConfirmScript(CONVERSATION_PATH, 'delete'))).ok).toBe(false);
+    expect(click).not.toHaveBeenCalled();
+
+    // a valid marker works exactly once
+    arm('delete');
+    expect(JSON.parse(runPageScript(buildConfirmScript(CONVERSATION_PATH, 'delete'))).ok).toBe(true);
+    expect(JSON.parse(runPageScript(buildConfirmScript(CONVERSATION_PATH, 'delete'))).ok).toBe(false);
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to start the delete when a dialog is already open (it could never be told apart later)', () => {
+    window.history.replaceState({}, '', CONVERSATION_PATH);
+    document.body.innerHTML = [
+      '<button data-testid="conversation-options-menu" id="trigger" aria-expanded="true" aria-controls="menu-1">Options</button>',
+      '<div role="menu" id="menu-1"><button data-testid="delete-chat-button" id="del">Delete</button></div>',
+      '<div role="dialog"><button>Something else</button></div>',
+    ].join('');
+    const click = vi.fn();
+    document.getElementById('del')?.addEventListener('click', click);
+
+    expect(JSON.parse(runPageScript(buildDeleteScript(CONVERSATION_PATH))).ok).toBe(false);
+    expect(click).not.toHaveBeenCalled();
+    expect((window as unknown as Record<string, unknown>).__aiOneArmed).toBeUndefined();
+  });
+});
+
 describe('ChatGPT cleaner orchestration', () => {
   it('navigates to the normalized URL and runs guarded deletion stages', async () => {
     const responses = [
+      JSON.stringify({ ok: true, note: 'Snapshot taken', others: [OTHER_ID_PATH] }),
       JSON.stringify({ ok: true, note: 'menu opened' }),
       JSON.stringify({ ok: true, note: 'delete selected' }),
       JSON.stringify({ ok: true, note: 'confirmed' }),
@@ -309,8 +378,22 @@ describe('ChatGPT cleaner orchestration', () => {
 
     expect(result.ok).toBe(true);
     expect(navigate).toHaveBeenCalledWith(url);
-    expect(evalInPage).toHaveBeenCalledTimes(3);
-    expect(evalInPage.mock.calls.every(([script]) => script.includes('window.location.pathname !== expectedPath'))).toBe(true);
+    expect(evalInPage).toHaveBeenCalledTimes(4);
+    // every acting script (not the read-only snapshot) carries the pathname guard
+    expect(evalInPage.mock.calls.slice(1).every(([script]) => script.includes('window.location.pathname !== expectedPath'))).toBe(true);
+  });
+
+  it('does not act at all when the sidebar snapshot cannot be taken', async () => {
+    const evalInPage = vi.fn(async (_script: string) => JSON.stringify({ ok: false, note: 'History list is still loading' }));
+    const cleaner = createChatGptCleaner({ evalInPage, navigate: vi.fn(async () => undefined), sleep: vi.fn(async () => undefined) });
+    const result = await cleaner.deleteConversation(CONVERSATION_URL);
+    expect(result.ok).toBe(false);
+    expect(evalInPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('never confirms archive readback without a snapshot from before the action', () => {
+    document.body.innerHTML = '<aside data-testid="history"><a href="' + OTHER_ID_PATH + '">x</a></aside>';
+    expect(JSON.parse(runPageScript(buildConfirmArchivedScript(CONVERSATION_ID))).ok).toBe(false);
   });
 
   it('does not navigate or evaluate scripts for an unsupported URL', async () => {
