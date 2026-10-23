@@ -2,7 +2,7 @@ import { useState, type DragEvent, type KeyboardEvent } from 'react';
 import type { StageDef } from '../flowModel';
 import { stageMoveTarget } from '../flowEditor';
 import { Badge, Card, cx } from '../../ui/v2';
-import type { FlowsText } from '../../workbench/views/flowsText';
+import { isChineseFlowsLocale, type FlowsText } from '../../workbench/views/flowsText';
 import type { Locale } from '../../i18n/resolve';
 
 interface FlowStageCardProps {
@@ -18,7 +18,7 @@ interface FlowStageCardProps {
 }
 
 function label(stage: StageDef, locale: Locale): string {
-  return locale.toLowerCase().startsWith('zh') ? stage.name : stage.nameEn ?? stage.name;
+  return isChineseFlowsLocale(locale) ? stage.name : stage.nameEn ?? stage.name;
 }
 
 function collaborationLabel(value: StageDef['collaboration'], text: FlowsText): string {
