@@ -105,7 +105,9 @@ export function StageEditor({
   const effectiveReadOnly = readOnly || stage.builtin || (selection.kind === 'flow' && Boolean(selectedFlow?.builtin));
   const references = usageFlows.map((flow) => label(flow, locale));
   const canDelete = selection.kind === 'library' && !stage.builtin && references.length === 0;
-  const unsupportedOverride = selection.kind === 'flow' && usageFlows.length > 1 && !canOverrideStageDraft(file.stages.find((item) => item.id === stage.id) ?? stage, draft);
+  const currentFlowUsesStage = Boolean(selectedFlow && selectedFlow.stages.some((ref) => ref.stageId === stage.id));
+  const canScopeToCurrentFlow = selection.kind === 'flow' || currentFlowUsesStage;
+  const unsupportedOverride = canScopeToCurrentFlow && usageFlows.length > 1 && !canOverrideStageDraft(file.stages.find((item) => item.id === stage.id) ?? stage, draft);
   const change = (patch: Partial<StageDef>) => {
     if (!effectiveReadOnly && !disabled) onChange({ ...draft, ...patch });
   };
@@ -216,7 +218,7 @@ export function StageEditor({
         <textarea id="flows-stage-note" rows={3} value={draft.note ?? ''} disabled={effectiveReadOnly || disabled} placeholder={text.t('notePlaceholder')} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => change({ note: event.target.value || undefined })} className={cx(textInputClass(), 'h-auto py-v2-sm')} />
       </div>
 
-      {selection.kind === 'flow' && usageFlows.length > 1 && scopePrompt ? (
+      {canScopeToCurrentFlow && usageFlows.length > 1 && scopePrompt ? (
         <Notice tone="unknown">
           <p>{text.t('sharedStage', { n: usageFlows.length })}</p>
           <p className="mt-1">{text.t('sharedStageHint')}</p>
