@@ -945,19 +945,15 @@ fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
                     continue;
                 }
 
-                let after_verb = cursor;
+                // Only "verb<space>" or "verb:<space>" are accepted; a bare colon is not a separator.
+                if lower.as_bytes().get(cursor) == Some(&b':') {
+                    cursor += 1;
+                }
+                let after_separator = cursor;
                 while cursor < lower.len() && lower.as_bytes()[cursor].is_ascii_whitespace() {
                     cursor += 1;
                 }
-                let mut has_separator = cursor > after_verb;
-                if cursor < lower.len() && lower.as_bytes()[cursor] == b':' {
-                    cursor += 1;
-                    has_separator = true;
-                    while cursor < lower.len() && lower.as_bytes()[cursor].is_ascii_whitespace() {
-                        cursor += 1;
-                    }
-                }
-                if !has_separator {
+                if cursor == after_separator {
                     continue;
                 }
 
@@ -1897,6 +1893,9 @@ mod tests {
         assert!(!body_links_issue("Closes #12", REPO, 1));
         assert!(!body_links_issue("Closes #12abc", REPO, 12));
         assert!(!body_links_issue("Closes #123", REPO, 12));
+        assert!(!body_links_issue("Closes:#12", REPO, 12));
+        assert!(!body_links_issue("Closes:owner/repo#12", REPO, 12));
+        assert!(body_links_issue("Closes: #12", REPO, 12));
         assert!(!body_links_issue("Closes #12_foo", REPO, 12));
         assert!(!body_links_issue("Discloses #12", REPO, 12));
         assert!(!body_links_issue("foo_Closes #12", REPO, 12));
@@ -1978,6 +1977,7 @@ mod tests {
             "\\` x\n`start\nCloses #12\nend`",
             "stray ` backtick\nCloses #12",
             "Closes #12_foo",
+            "Closes:#12",
             "<span title=\"Closes #12\">text</span>",
             "`Closes <!-- ` --> #12",
         ] {
