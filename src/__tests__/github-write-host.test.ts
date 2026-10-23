@@ -137,6 +137,12 @@ describe('host GitHub write bridge', () => {
         steps: [{ step: 'comment', state: 'confirmed' }, { step: 'label', state: 'skipped' }] },
       { status: 'partial', code: 'ok', message: okMessage, steps: [{ step: 'comment', state: 'confirmed' }] },
       { status: 'failed', code: 'ok', message: okMessage, steps: [] },
+      { status: 'failed', code: 'unconfirmed', message: '已发出，但没能确认；请先回读，不要重试', steps: [] },
+      { status: 'partial', code: 'unconfirmed', message: '已发出，但没能确认；请先回读，不要重试',
+        steps: [{ step: 'comment', state: 'confirmed' }, { step: 'label', state: 'failed' }] },
+      { status: 'partial', code: 'sub_issue_failed', message: 'Issue 已创建，但没能挂到父 Spec 下',
+        steps: [{ step: 'comment', state: 'confirmed' }, { step: 'label', state: 'failed' }] },
+      { status: 'failed', code: 'sub_issue_failed', message: 'Issue 已创建，但没能挂到父 Spec 下', steps: [] },
       { status: 'failed', code: 'unconfirmed', message: '已发出，但没能确认；请先回读，不要重试',
         steps: [{ step: 'comment', state: 'unconfirmed' }] },
       { status: 'partial', code: 'sub_issue_failed', message: okMessage,
@@ -149,6 +155,20 @@ describe('host GitHub write bridge', () => {
       expect(result.status).toBe('unconfirmed');
       expect(result.code).toBe('unconfirmed');
     }
+  });
+
+  it('passes a genuine partial sub-issue result through unchanged', async () => {
+    const partial = {
+      status: 'partial',
+      code: 'sub_issue_failed',
+      message: 'Issue 已创建，但没能挂到父 Spec 下',
+      steps: [{ step: 'create_issue', state: 'confirmed' }, { step: 'sub_issue', state: 'failed' }],
+      issueNumber: 9,
+      url: 'https://example.invalid/issue/9',
+    };
+    invokeMock.mockResolvedValueOnce(partial);
+    await expect(host.githubWrite.createIssue({ repo: 'owner/repo', title: 't', body: '', parentSpec: 7 }))
+      .resolves.toEqual(partial);
   });
 
   it('normalizes malformed status results and invoke failures', async () => {

@@ -277,6 +277,19 @@ function normalizeResult(value: unknown): GithubWriteResult {
   if (value.status === 'failed' && hasConfirmed) return unconfirmedResult();
   // Any unknown step means the write may have happened: only an unconfirmed total is honest.
   if (steps.some((step) => step.state === 'unconfirmed') && value.status !== 'unconfirmed') return unconfirmedResult();
+  // An explicit "unconfirmed" code can only travel with an unconfirmed total (never read as failed).
+  if (value.code === 'unconfirmed' && value.status !== 'unconfirmed') return unconfirmedResult();
+  // sub_issue_failed means: the issue was created and confirmed, only the parent link failed.
+  if (
+    value.code === 'sub_issue_failed'
+    && !(
+      value.status === 'partial'
+      && steps.some((step) => step.step === 'create_issue' && step.state === 'confirmed')
+      && steps.some((step) => step.step === 'sub_issue' && step.state === 'failed')
+    )
+  ) {
+    return unconfirmedResult();
+  }
   // The success wording is reserved for confirmed results.
   if ((value.message === MESSAGES.ok) !== (value.status === 'confirmed')) return unconfirmedResult();
 
