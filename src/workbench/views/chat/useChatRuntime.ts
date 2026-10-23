@@ -699,7 +699,7 @@ export function useChatRuntime({
         presetId: presetId as WorkflowPresetId,
         roles,
         targets: presetId === 'free' ? runTargets : undefined,
-        activeProviders: CHAT_PROVIDERS,
+        activeProviders: [...CHAT_PROVIDERS],
         locale,
       });
       if (!result.ok) {
