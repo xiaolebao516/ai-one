@@ -3,7 +3,7 @@ import type { FlowDef, FlowsFile, StageDef, ValidationIssue } from '../flowModel
 import type { StageSelection } from '../flowEditor';
 import type { Locale } from '../../i18n/resolve';
 import { Badge, Button, Card, EmptyState, Notice, Select } from '../../ui/v2';
-import type { FlowsText } from '../../workbench/views/flowsText';
+import { isChineseFlowsLocale, type FlowsText } from '../../workbench/views/flowsText';
 import { FlowFileMenu } from './FlowFileMenu';
 import { FlowStageCard } from './FlowStageCard';
 
@@ -36,7 +36,7 @@ interface FlowStageListProps {
 }
 
 function label(item: FlowDef | StageDef, locale: Locale): string {
-  return locale.toLowerCase().startsWith('zh') ? item.name : item.nameEn ?? item.name;
+  return isChineseFlowsLocale(locale) ? item.name : item.nameEn ?? item.name;
 }
 
 function stageIssue(stage: StageDef | undefined, flow: FlowDef, issues: ValidationIssue[]): boolean {
