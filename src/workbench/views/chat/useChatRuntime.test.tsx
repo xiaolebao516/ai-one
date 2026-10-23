@@ -18,17 +18,17 @@ const eventLogMock = vi.hoisted(() => ({ recordEventLog: vi.fn() }));
 vi.mock('../../../diagnostics/eventLogStore', () => eventLogMock);
 
 const mocks = vi.hoisted(() => {
-  const bridgeListeners = new Set<(message: any) => void>();
+  const bridgeListeners = new Set<(message: BridgeMessage) => void>();
   return {
     bridgeListeners,
     host: {
       app: { isDesktop: vi.fn(() => true) },
       connections: {
-        get: vi.fn(async (): Promise<any[]> => []),
-        onUpdate: vi.fn(async (_handler: any) => () => undefined),
+        get: vi.fn(async (): Promise<ProviderState[]> => []),
+        onUpdate: vi.fn(async (_handler: (state: ProviderState) => void) => () => undefined),
       },
       bridge: {
-        onMessage: vi.fn(async (handler: (message: any) => void) => {
+        onMessage: vi.fn(async (handler: (message: BridgeMessage) => void) => {
           bridgeListeners.add(handler);
           return () => bridgeListeners.delete(handler);
         }),
@@ -59,6 +59,7 @@ function providerState(provider: AIProvider): ProviderState {
 
 let currentRuntime: ChatRuntime | undefined;
 const roots: { root: Root; container: HTMLElement }[] = [];
+const startBridgePull = async () => () => undefined;
 
 function RuntimeHarness({ runWorkflow }: { runWorkflow: NonNullable<ChatRuntimeOptions['runWorkflow']> }) {
   currentRuntime = useChatRuntime({
@@ -67,7 +68,7 @@ function RuntimeHarness({ runWorkflow }: { runWorkflow: NonNullable<ChatRuntimeO
     isDesktop: true,
     host: mocks.host as unknown as ChatRuntimeHost,
     runWorkflow,
-    startBridgePull: async () => () => undefined,
+    startBridgePull,
   });
   return null;
 }
@@ -96,6 +97,7 @@ async function mount(runWorkflow: NonNullable<ChatRuntimeOptions['runWorkflow']>
 }
 
 beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   currentRuntime = undefined;
   window.localStorage.clear();
   mocks.bridgeListeners.clear();
@@ -103,7 +105,7 @@ beforeEach(() => {
   mocks.host.app.isDesktop.mockReturnValue(true);
   mocks.host.connections.get.mockResolvedValue(ALL_AI_PROVIDERS.map(providerState));
   mocks.host.connections.onUpdate.mockImplementation(async () => () => undefined);
-  mocks.host.bridge.onMessage.mockImplementation(async (handler: (message: any) => void) => {
+  mocks.host.bridge.onMessage.mockImplementation(async (handler: (message: BridgeMessage) => void) => {
     mocks.bridgeListeners.add(handler);
     return () => mocks.bridgeListeners.delete(handler);
   });
@@ -217,7 +219,7 @@ describe('useChatRuntime workflow ownership', () => {
     vi.useFakeTimers();
     let allowWrites = false;
     const originalSetItem = Storage.prototype.setItem;
-    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
       if (key === CONVERSATION_SESSIONS_STORAGE_KEY && !allowWrites) throw new Error('storage temporarily unavailable');
       return originalSetItem.call(this, key, value);
     });
@@ -248,7 +250,7 @@ describe('useChatRuntime workflow ownership', () => {
     window.localStorage.setItem(CONVERSATION_SESSIONS_STORAGE_KEY, JSON.stringify([oldSession]));
     vi.useFakeTimers();
     const originalSetItem = Storage.prototype.setItem;
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
       if (key === CONVERSATION_SESSIONS_STORAGE_KEY && JSON.parse(value).length > 1) {
         const error = new Error('quota');
         error.name = 'QuotaExceededError';
