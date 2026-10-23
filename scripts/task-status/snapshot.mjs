@@ -19,35 +19,28 @@ export function extractReviewVerdict(body, state) {
     }
 
     const verdictsFound = [];
-    // Line-anchored formal verdict markers (e.g. **裁定：BLOCKED**, ## 裁定：PASS, 本轮裁定：REVISE)
-    const lineVerdictPattern = /^(?:\*\*|##+\s*|#\s*)?(?:(?:本轮|当前|最终|本次)?\s*(?:裁定|verdict))[：:\s*]+\s*(PASS|REVISE|BLOCKED)\b/i;
-    // Standalone verdict line (e.g. PASS, BLOCKED)
+    const verdictPattern = /(?:\*\*|##+\s*|#\s*)?(?:(?:本轮|当前|最终|本次)?\s*(?:裁定|verdict))[：:\s*]+\s*(PASS|REVISE|BLOCKED)\b/gi;
     const standalonePattern = /^(?:\*\*|##+\s*|#\s*)?(PASS|REVISE|BLOCKED)(?:\*\*)?$/i;
 
     for (const line of unquotedLines) {
-      // Handle lines with historical mentions (e.g. '上一轮 **裁定：PASS**，本轮 **裁定：BLOCKED**')
-      if (/(?:上一轮|上一次|历史|前一轮|旧裁定|之前|往期|previous|prior)/i.test(line)) {
-        const parts = line.split(/[，,；;。\n]/);
-        for (const part of parts) {
-          const trimmedPart = part.trim();
-          if (/(?:上一轮|上一次|历史|前一轮|旧裁定|之前|往期|previous|prior)/i.test(trimmedPart)) {
-            continue;
-          }
-          const pMatch = trimmedPart.match(/(?:\*\*|##+\s*|#\s*)?(?:(?:本轮|当前|最终|本次)?\s*(?:裁定|verdict))[：:\s*]+\s*(PASS|REVISE|BLOCKED)\b/i);
-          if (pMatch) verdictsFound.push(pMatch[1].toUpperCase());
+      // Split each line into clauses by punctuation (comma, semicolon, period, pipe, slash, newline)
+      const clauses = line.split(/[，,；;。|/\n]/);
+      for (const rawClause of clauses) {
+        const clause = rawClause.trim();
+        if (!clause) continue;
+        // Skip clauses explicitly discussing past/historical verdicts
+        if (/(?:上一轮|上一次|历史|前一轮|旧裁定|之前|往期|previous|prior)/i.test(clause)) {
+          continue;
         }
-        continue;
-      }
 
-      const vMatch = line.match(lineVerdictPattern);
-      if (vMatch) {
-        verdictsFound.push(vMatch[1].toUpperCase());
-        continue;
-      }
+        for (const match of clause.matchAll(verdictPattern)) {
+          verdictsFound.push(match[1].toUpperCase());
+        }
 
-      const sMatch = line.match(standalonePattern);
-      if (sMatch) {
-        verdictsFound.push(sMatch[1].toUpperCase());
+        const sMatch = clause.match(standalonePattern);
+        if (sMatch) {
+          verdictsFound.push(sMatch[1].toUpperCase());
+        }
       }
     }
 

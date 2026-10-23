@@ -308,6 +308,47 @@ test('review verdict resolution parses explicit verdict even when text mentions 
   const s7 = await collect(fixture({ reviews: [multiCurrentConflict] }));
   assert.equal(s7.pullRequests[0].review.verdict, 'blocked');
 
+  // Same-line conflicting markers separated by punctuation must resolve fail-closed
+  const sameLineConflict1 = {
+    id: 1071,
+    user: 'reviewer',
+    body: '本轮裁定：PASS；本次裁定：BLOCKED',
+    state: 'commented',
+    commit_id: sha,
+  };
+  const s71 = await collect(fixture({ reviews: [sameLineConflict1] }));
+  assert.equal(s71.pullRequests[0].review.verdict, 'blocked');
+
+  const sameLineConflict2 = {
+    id: 1072,
+    user: 'reviewer',
+    body: '本轮裁定：BLOCKED；本次裁定：PASS',
+    state: 'commented',
+    commit_id: sha,
+  };
+  const s72 = await collect(fixture({ reviews: [sameLineConflict2] }));
+  assert.equal(s72.pullRequests[0].review.verdict, 'blocked');
+
+  const sameLineConflict3 = {
+    id: 1073,
+    user: 'reviewer',
+    body: '本轮裁定：REVISE / 本次裁定：BLOCKED',
+    state: 'commented',
+    commit_id: sha,
+  };
+  const s73 = await collect(fixture({ reviews: [sameLineConflict3] }));
+  assert.equal(s73.pullRequests[0].review.verdict, 'blocked');
+
+  const sameLineConflict4 = {
+    id: 1074,
+    user: 'reviewer',
+    body: '本轮裁定：PASS, 本次裁定：REVISE',
+    state: 'commented',
+    commit_id: sha,
+  };
+  const s74 = await collect(fixture({ reviews: [sameLineConflict4] }));
+  assert.equal(s74.pullRequests[0].review.verdict, 'revise');
+
   // Narrative mentioning previous pass followed by formal BLOCKED on next line
   const narrativeNextLine = {
     id: 108,
