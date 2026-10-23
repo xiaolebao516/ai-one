@@ -269,8 +269,10 @@ function realPage(site: (typeof cases)[number], extraTarget = false) {
   const row = (path: string, title: string) => claude
     ? `<div data-row><a data-row-main-button href="${path}"><span>${title}</span></a><button data-row-action aria-haspopup="menu" aria-label="${title} 的更多选项"></button></div>`
     : `<gem-nav-list-item data-test-id="conversation"><a href="${path}" aria-label="${title}"></a><gem-icon-button data-test-id="actions-menu-button" aria-haspopup="menu"><button aria-label="“${title}”的更多选项"></button></gem-icon-button></gem-nav-list-item>`;
-  document.body.innerHTML = '<aside>' + row(site.path, 'Mine') + row(site.peer, 'Other')
-    + (extraTarget ? row(site.path, 'Duplicate') : '') + '</aside>';
+  // Real structure: Claude's list lives in the sidebar <aside>; Gemini's in <bard-sidenav> (not an <aside>).
+  const root = claude ? 'aside' : 'bard-sidenav';
+  document.body.innerHTML = '<' + root + '>' + row(site.path, 'Mine') + row(site.peer, 'Other')
+    + (extraTarget ? row(site.path, 'Duplicate') : '') + '</' + root + '>';
 }
 
 function realConfig(site: (typeof cases)[number]): ProviderCleanerConfig {
@@ -288,7 +290,7 @@ describe.each(cases)('$name inspected DOM fixtures', (site) => {
     realPage(site, true);
     expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'snapshot')).ok).toBe(false);
     realPage(site);
-    document.querySelector('aside')?.insertAdjacentHTML('beforeend', '<div aria-busy="true">Loading</div>');
+    document.querySelector('aside, bard-sidenav')?.insertAdjacentHTML('beforeend', '<div aria-busy="true">Loading</div>');
     expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'snapshot')).ok).toBe(false);
     document.querySelector('[aria-busy="true"]')?.remove();
     expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'snapshot'))).toMatchObject({

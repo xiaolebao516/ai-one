@@ -9,7 +9,7 @@ import {
 
 // Confirmation dialog structure is unverified on the real site; unknown or ambiguous dialogs must fail closed.
 export const SELECTORS: ProviderCleanupSelectors = {
-  historyRoot: "aside",
+  historyRoot: "bard-sidenav",
   historyLink: "gem-nav-list-item[data-test-id=\"conversation\"] a[href^=\"/app/\"]",
   loading: "[aria-busy=\"true\"],[data-loading=\"true\"]",
   row: "gem-nav-list-item[data-test-id=\"conversation\"]",

@@ -9,7 +9,7 @@ import {
 
 // Confirmation dialog structure is unverified on the real site; unknown or ambiguous dialogs must fail closed.
 export const SELECTORS: ProviderCleanupSelectors = {
-  historyRoot: "aside",
+  historyRoot: "aside:has(a[data-row-main-button][href^=\"/chat/\"])",
   historyLink: "a[data-row-main-button][href^=\"/chat/\"]",
   loading: "[aria-busy=\"true\"],[data-loading=\"true\"]",
   row: "div[data-row]",
