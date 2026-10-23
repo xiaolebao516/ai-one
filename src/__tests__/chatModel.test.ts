@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AIProvider, ProviderState } from '../../shared/types';
 import {
   CHAT_PRESET_IDS,
+  CHAT_RESPONSE_TIMEOUT_MS,
   buildForwardMessage,
   buildTaskPrefill,
   busyTargets,
@@ -101,5 +102,18 @@ describe('chat model login and card state', () => {
     });
     expect(settled.chatgpt).toMatchObject({ status: 'completed', content: 'success' });
     expect(settled.claude).toMatchObject({ status: 'failed', content: 'partial' });
+    expect(settlePendingTargets(['claude'], {
+      claude: { status: 'generating', content: 'partial', startedAt: 10 },
+    }, {
+      chatgpt: state('chatgpt'),
+      claude: state('claude'),
+      gemini: state('gemini'),
+      grok: state('grok'),
+      meta: state('meta'),
+    }, 10 + CHAT_RESPONSE_TIMEOUT_MS).claude).toMatchObject({
+      status: 'timedOut',
+      content: 'partial',
+      startedAt: 10,
+    });
   });
 });
