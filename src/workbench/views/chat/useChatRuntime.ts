@@ -220,7 +220,7 @@ export function useChatRuntime({
   const pullBridgeRef = useRef(new Map<AIProvider, PullBridgeState>());
   const activeResponsesRef = useRef(new Map<AIProvider, ActiveProviderResponse>());
   const busyProvidersRef = useRef(new Set<AIProvider>());
-  const activeWorkflowRunRef = useRef<string>();
+  const activeWorkflowRunRef = useRef<string | undefined>(undefined);
   const busyStartedAtRef = useRef(new Map<AIProvider, number>());
   const runSessionByProviderRef = useRef(new Map<AIProvider, string>());
   const runIdByProviderRef = useRef(new Map<AIProvider, string>());
