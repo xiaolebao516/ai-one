@@ -160,6 +160,14 @@ export function FlowFileMenu({ file, flowId, text, fs, disabled = false, onImpor
 
   const applyChoice = () => {
     if (!pending || (conflictCount > 0 && !pending.choice)) return;
+    const currentPlan = planImport(file, pending.incoming);
+    if (JSON.stringify(currentPlan) !== JSON.stringify(pending.plan)) {
+      setPending({ ...pending, plan: currentPlan, choice: '' });
+      setFeedback(text.t('importStalePreview'));
+      setFeedbackTone('block');
+      setOpen(true);
+      return;
+    }
     onImport(pending.incoming, pending.choice || 'keep-both');
     setPending(null);
     setFeedback(undefined);

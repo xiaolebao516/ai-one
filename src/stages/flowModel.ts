@@ -251,6 +251,10 @@ function isFlowsShape(value: unknown): value is FlowsFile & { kind?: 'flow' } {
   return true;
 }
 
+function normalizeResource(resource: string): string {
+  return resource.trim().toLowerCase();
+}
+
 function normalizeRole(role: string): string {
   return role.trim().toLocaleLowerCase();
 }
@@ -312,11 +316,15 @@ function validateParticipants(
     const auditors = valid.filter((participant) => isAuditRole(participant.role));
     if (authors.length === 0) issues.push(issue('missing-author', path, stageId, flowId));
     if (auditors.length === 0) issues.push(issue('missing-audit', path, stageId, flowId));
-    // Same resource is allowed only when the auditor explicitly starts a fresh session.
-    const independentPair = authors.some((author) =>
-      auditors.some((auditor) => author.resource !== auditor.resource || auditor.freshSession === true),
+    // Normalize resource IDs and reject every same-resource author/audit pair unless that
+    // auditor explicitly starts a fresh session. A different author must not hide self-review.
+    const sameResourcePair = authors.some((author) =>
+      auditors.some((auditor) =>
+        normalizeResource(author.resource) === normalizeResource(auditor.resource) &&
+        auditor.freshSession !== true,
+      ),
     );
-    if (authors.length > 0 && auditors.length > 0 && !independentPair) {
+    if (authors.length > 0 && auditors.length > 0 && sameResourcePair) {
       issues.push(issue('same-author-audit-session', path, stageId, flowId));
     }
   }

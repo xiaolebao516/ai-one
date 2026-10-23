@@ -5,9 +5,13 @@ import { Badge, Card, cx } from '../../ui/v2';
 import { isChineseFlowsLocale, type FlowsText } from '../../workbench/views/flowsText';
 import type { Locale } from '../../i18n/resolve';
 
+export const FLOW_STAGE_DRAG_MIME = 'application/x-ai-one-flow-stage+json';
+
 interface FlowStageCardProps {
   stage: StageDef;
   index: number;
+  stageCount: number;
+  dragSource: string;
   locale: Locale;
   text: FlowsText;
   selected: boolean;
@@ -34,6 +38,8 @@ function collaborationLabel(value: StageDef['collaboration'], text: FlowsText): 
 export function FlowStageCard({
   stage,
   index,
+  stageCount,
+  dragSource,
   locale,
   text,
   selected,
@@ -56,6 +62,8 @@ export function FlowStageCard({
       return;
     }
     event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(FLOW_STAGE_DRAG_MIME, JSON.stringify({ source: dragSource, index }));
+    // Keep plain text for WebView drag compatibility; drops never trust this unscoped value.
     event.dataTransfer.setData('text/plain', String(index));
     setDragging(true);
   };
@@ -64,8 +72,29 @@ export function FlowStageCard({
     event.preventDefault();
     setDragging(false);
     if (readOnly) return;
-    const from = Number(event.dataTransfer.getData('text/plain'));
-    if (Number.isInteger(from) && from >= 0) onMove(from, index);
+    const raw = event.dataTransfer.getData(FLOW_STAGE_DRAG_MIME);
+    if (!raw) return;
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(raw) as unknown;
+    } catch {
+      return;
+    }
+    if (typeof payload !== 'object' || payload === null) return;
+    const candidate = payload as { source?: unknown; index?: unknown };
+    const from = candidate.index;
+    if (
+      candidate.source !== dragSource ||
+      typeof from !== 'number' ||
+      !Number.isInteger(from) ||
+      from < 0 ||
+      from >= stageCount ||
+      index < 0 ||
+      index >= stageCount ||
+      from === index
+    ) return;
+    onMove(from, index);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {

@@ -72,6 +72,7 @@ export function FlowStageList({
   onImport,
 }: FlowStageListProps) {
   const readOnly = disabled || flow.builtin;
+  const dragSource = JSON.stringify({ flowId: flow.id, stageIds: flow.stages.map((ref) => ref.stageId) });
   const flowIssues = issues.filter((issue) => issue.flowId === flow.id);
   const stageOptions = [
     { value: '', label: text.t('selectStage'), disabled: true },
@@ -167,6 +168,8 @@ export function FlowStageList({
               <FlowStageCard
                 stage={effective}
                 index={index}
+                stageCount={flow.stages.length}
+                dragSource={dragSource}
                 locale={locale}
                 text={text}
                 selected={selection?.kind === 'flow' && selection.flowId === flow.id && selection.index === index}

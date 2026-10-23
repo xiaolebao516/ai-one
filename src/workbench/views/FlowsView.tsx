@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { LocalStoreFs } from '../../host/localStore';
 import type { Locale } from '../../i18n/resolve';
 import { Badge, Button, LoadingState, Notice } from '../../ui/v2';
@@ -6,15 +7,49 @@ import { FlowWorkspace } from '../../stages/flows/FlowWorkspace';
 import { useFlowsEditor } from '../../stages/useFlowsEditor';
 import { flowsText } from './flowsText';
 
+export interface FlowsLeaveGuard {
+  readonly hasUnsaved: boolean;
+  saveCurrent: () => Promise<boolean>;
+}
+
 export interface FlowsViewProps {
   locale: Locale;
   /** Tests inject an in-memory LocalStoreFs; production resolves the Tauri/browser implementation. */
   fs?: LocalStoreFs;
+  onLeaveGuardChange?: (guard: FlowsLeaveGuard | null) => void;
+  leavePrompt?: boolean;
+  leaveSaving?: boolean;
+  onSaveAndLeave?: () => void;
+  onDiscardAndLeave?: () => void;
+  onStayOnPage?: () => void;
 }
 
-export function FlowsView({ locale, fs }: FlowsViewProps) {
+export function FlowsView({
+  locale,
+  fs,
+  onLeaveGuardChange,
+  leavePrompt = false,
+  leaveSaving = false,
+  onSaveAndLeave,
+  onDiscardAndLeave,
+  onStayOnPage,
+}: FlowsViewProps) {
   const text = flowsText(locale);
   const editor = useFlowsEditor(locale, fs);
+  const editorRef = useRef(editor);
+  editorRef.current = editor;
+  const leaveGuardRef = useRef<FlowsLeaveGuard | null>(null);
+  if (!leaveGuardRef.current) {
+    leaveGuardRef.current = {
+      get hasUnsaved() { return editorRef.current.hasUnsaved; },
+      saveCurrent: () => editorRef.current.saveCurrent(),
+    };
+  }
+
+  useEffect(() => {
+    onLeaveGuardChange?.(leaveGuardRef.current);
+    return () => onLeaveGuardChange?.(null);
+  }, [onLeaveGuardChange]);
 
   return (
     <div className="mx-auto grid min-h-full max-w-[1800px] gap-v2-lg p-v2-page">
@@ -47,6 +82,16 @@ export function FlowsView({ locale, fs }: FlowsViewProps) {
         </Notice>
       ) : null}
       {editor.operationError ? <Notice tone="block" title={text.t('saveFailed')}>{editor.operationError}</Notice> : null}
+      {leavePrompt ? (
+        <Notice tone="unknown" title={text.t('dirty')} live="assertive">
+          <p>{text.t('leaveUnsavedMessage')}</p>
+          <div className="mt-v2-sm flex flex-wrap gap-v2-sm">
+            <Button size="sm" disabled={leaveSaving} onClick={onSaveAndLeave}>{text.t('leaveSave')}</Button>
+            <Button size="sm" variant="secondary" disabled={leaveSaving} onClick={onDiscardAndLeave}>{text.t('leaveDiscard')}</Button>
+            <Button size="sm" variant="ghost" disabled={leaveSaving} onClick={onStayOnPage}>{text.t('leaveStay')}</Button>
+          </div>
+        </Notice>
+      ) : null}
 
       <FlowWorkspace editor={editor} locale={locale} text={text} fs={fs} />
       <FlowSecurityRules text={text} />

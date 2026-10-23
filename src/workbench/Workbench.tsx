@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { ALL_AI_PROVIDERS } from '../../shared/constants';
 import { host } from '../host';
 import type { Locale } from '../i18n/resolve';
@@ -29,13 +29,15 @@ import {
 import { workbenchText, type WorkbenchText } from './workbenchText';
 import { HomeView } from './views/HomeView';
 import { ChatLedPage } from './views/ChatLedPage';
-import { FlowsView } from './views/FlowsView';
+import { FlowsView, type FlowsLeaveGuard } from './views/FlowsView';
 import { PlannedView } from './views/PlannedView';
 import { ResourcesView } from './views/ResourcesView';
 import { TaskView } from './views/TaskView';
 import { TasksView } from './views/TasksView';
 
 const NAV_ICON: Record<NavView, V2IconName> = { home: 'home', tasks: 'list', chat: 'message', flows: 'flow', resources: 'users' };
+
+type WorkbenchLeaveTarget = { kind: 'route'; route: WorkbenchRoute } | { kind: 'classic' };
 
 export interface WorkbenchProps {
   locale: Locale;
@@ -57,6 +59,12 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
   const channel = channelView(dispatch);
   const [route, setRoute] = useState<WorkbenchRoute>(HOME_ROUTE);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [pendingLeave, setPendingLeave] = useState<WorkbenchLeaveTarget | null>(null);
+  const [leaveSaving, setLeaveSaving] = useState(false);
+  const flowsLeaveGuardRef = useRef<FlowsLeaveGuard | null>(null);
+  const registerFlowsLeaveGuard = useCallback((guard: FlowsLeaveGuard | null) => {
+    flowsLeaveGuardRef.current = guard;
+  }, []);
   const mainRef = useRef<HTMLElement | null>(null);
   const mode = resolveTheme(data.prefs.theme, useSystemDark());
   const current = resolveRoute(route, data.tasks);
@@ -66,7 +74,44 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
   useEffect(() => {
     if (fellBack && data.health !== 'loading') setRoute({ view: 'tasks' });
   }, [fellBack, data.health]);
-  const go = (next: WorkbenchRoute) => setRoute(next);
+  const leaveTo = (target: WorkbenchLeaveTarget | null) => {
+    setPendingLeave(null);
+    if (!target) return;
+    if (target.kind === 'classic') onOpenClassic();
+    else setRoute(target.route);
+  };
+  const requestNavigation = (target: WorkbenchLeaveTarget) => {
+    const leavesFlows = current.view === 'flows' && (
+      target.kind === 'classic' ||
+      target.route.view !== current.view ||
+      target.route.taskId !== current.taskId
+    );
+    if (leavesFlows && flowsLeaveGuardRef.current?.hasUnsaved) {
+      setPendingLeave(target);
+      return;
+    }
+    leaveTo(target);
+  };
+  const go = (next: WorkbenchRoute) => requestNavigation({ kind: 'route', route: next });
+  const goRef = useRef(go);
+  goRef.current = go;
+  const openClassic = () => requestNavigation({ kind: 'classic' });
+  const saveAndLeave = async () => {
+    const target = pendingLeave;
+    const guard = flowsLeaveGuardRef.current;
+    if (!target || !guard || leaveSaving) return;
+    setLeaveSaving(true);
+    try {
+      if (!(await guard.saveCurrent())) return;
+      leaveTo(target);
+    } finally {
+      setLeaveSaving(false);
+    }
+  };
+  const discardAndLeave = () => {
+    if (leaveSaving) return;
+    leaveTo(pendingLeave);
+  };
   const openTask = (task: HudTask) => go({ view: 'task', taskId: task.id });
 
   useHideProviderWebviews();
@@ -94,7 +139,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
       } else if (!paletteOpenRef.current && !isEditableTarget(event.target)) {
         // Page switching never steals keys from a text field or the open palette.
         event.preventDefault();
-        setRoute({ view: shortcut.view });
+        goRef.current({ view: shortcut.view });
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -109,7 +154,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
     else if (action.kind === 'source') data.setSource(action.source);
     else if (action.kind === 'refresh') data.refresh();
     else if (action.kind === 'theme') data.setTheme(nextTheme(data.prefs.theme));
-    else onOpenClassic();
+    else openClassic();
   };
 
   const task = current.view === 'task' ? data.tasks.find((item) => item.id === current.taskId) : undefined;
@@ -137,7 +182,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
         body={text.t('chatBody')}
         badge={text.t('plannedBadge')}
         action={
-          <Button onClick={onOpenClassic} icon={<Icon name="external" size={14} />}>
+          <Button onClick={openClassic} icon={<Icon name="external" size={14} />}>
             {text.t('chatOpenClassic')}
           </Button>
         }
@@ -146,9 +191,19 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
   } else if (current.view === 'chatled') {
     view = <ChatLedPage locale={locale} />;
   } else if (current.view === 'flows') {
-    view = <FlowsView locale={locale} />;
+    view = (
+      <FlowsView
+        locale={locale}
+        onLeaveGuardChange={registerFlowsLeaveGuard}
+        leavePrompt={pendingLeave !== null}
+        leaveSaving={leaveSaving}
+        onSaveAndLeave={() => { void saveAndLeave(); }}
+        onDiscardAndLeave={discardAndLeave}
+        onStayOnPage={() => setPendingLeave(null)}
+      />
+    );
   } else {
-    view = <ResourcesView locale={locale} dispatch={dispatch} repoPath={data.prefs.dispatchRepo} onSetRepo={data.setDispatchRepo} onOpenClassic={onOpenClassic} />;
+    view = <ResourcesView locale={locale} dispatch={dispatch} repoPath={data.prefs.dispatchRepo} onSetRepo={data.setDispatchRepo} onOpenClassic={openClassic} />;
   }
 
   return (
@@ -174,7 +229,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
           onNavigate={(next) => go({ view: next })}
           onOpenTask={openTask}
           onTheme={() => data.setTheme(nextTheme(data.prefs.theme))}
-          onOpenClassic={onOpenClassic}
+          onOpenClassic={openClassic}
         />
         <main ref={mainRef} tabIndex={-1} className="min-w-0 flex-1 overflow-auto rounded-tl-v2-xl border-l border-t border-v2-line bg-v2-panel">
           <SourceBar text={text} data={data} locale={locale} />
