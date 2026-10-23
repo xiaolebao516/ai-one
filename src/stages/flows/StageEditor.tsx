@@ -152,7 +152,7 @@ export function StageEditor({
 
       <div className="grid gap-v2-xs">
         <span className={fieldLabelClass()}>{text.t('collaboration')}</span>
-        <Select id="flows-stage-collaboration" label={text.t('collaboration')} hideLabel options={collabOptions} value={draft.collaboration} disabled={effectiveReadOnly || disabled} onChange={(value) => change({ collaboration: value as StageDef['collaboration'] })} className="w-full" />
+        <Select id="flows-stage-collaboration" label={text.t('collaboration')} hideLabel options={collabOptions} value={draft.collaboration} disabled={effectiveReadOnly || disabled} onChange={(value) => change({ collaboration: value as StageDef['collaboration'], ...(value === 'author-review' && draft.reworkLimit === undefined ? { reworkLimit: 3 } : {}) })} className="w-full" />
       </div>
 
       <section className="grid gap-v2-sm" aria-labelledby="flows-participants-title">
@@ -211,7 +211,7 @@ export function StageEditor({
       {draft.collaboration === 'author-review' ? (
         <div className="grid gap-v2-xs">
           <label className={fieldLabelClass()} htmlFor="flows-stage-rework">{text.t('reworkLimit')}</label>
-          <input id="flows-stage-rework" type="number" min={1} max={10} step={1} className={textInputClass()} value={draft.reworkLimit ?? 3} disabled={effectiveReadOnly || disabled} onChange={(event: ChangeEvent<HTMLInputElement>) => change({ reworkLimit: event.target.value === '' ? undefined : Number(event.target.value) })} />
+          <input id="flows-stage-rework" type="number" min={1} max={10} step={1} className={textInputClass()} value={draft.reworkLimit ?? 3} disabled={effectiveReadOnly || disabled} onChange={(event: ChangeEvent<HTMLInputElement>) => { if (event.target.value !== '') change({ reworkLimit: Number(event.target.value) }); }} />
         </div>
       ) : null}
 
