@@ -31,11 +31,9 @@ export interface FlowsEditorActionContext {
   file: FlowsFile | null;
   selectedFlow?: FlowDef;
   selectedStage?: StageDef;
-  selectedFlowId: string;
   selection: StageSelection | null;
   draft?: StageDef;
   draftDirty: boolean;
-  hasUnsaved: boolean;
   mutationsDisabled: boolean;
   pendingAction: PendingEditorAction | null;
   insertIndex: number | null;
