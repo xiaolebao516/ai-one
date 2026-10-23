@@ -342,9 +342,14 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
         <aside className={`w-[180px] shrink-0 flex-col gap-v2-sm border-r border-v2-line pr-v2-md ${sidebarOpen ? 'flex' : 'hidden'} min-[1100px]:flex max-[1099px]:fixed max-[1099px]:inset-y-16 max-[1099px]:left-0 max-[1099px]:z-20 max-[1099px]:bg-v2-panel max-[1099px]:p-v2-md max-[1099px]:shadow-v2-float`}>
           <div className="flex items-center justify-between gap-v2-xs">
             <span className="text-v2-meta font-semibold text-v2-ink-2">{text.t('chatConversations')}</span>
-            <Button size="sm" variant="secondary" onClick={() => { runtime.newConversation(); setDraft(''); setAttachments([]); setRenameOpen(false); setForwardSource(undefined); setActionNotice(undefined); }}>
-              {text.t('chatNewConversation')}
-            </Button>
+            <div className="flex items-center gap-v2-xs">
+              <Button size="sm" variant="secondary" className="min-[1100px]:hidden" onClick={() => setSidebarOpen(false)}>
+                {text.t('chatCloseConversations')}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => { runtime.newConversation(); setDraft(''); setAttachments([]); setRenameOpen(false); setForwardSource(undefined); setActionNotice(undefined); }}>
+                {text.t('chatNewConversation')}
+              </Button>
+            </div>
           </div>
           <div className="grid gap-v2-xs overflow-y-auto">
             {runtime.sessions.map((session) => (
