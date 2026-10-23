@@ -75,8 +75,10 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
       persistedRef.current = saved.persisted;
       runsRef.current = saved.runs;
       setRuns(saved.runs);
+      if (!saved.persisted) setError(text.t('chatLedRunPersistFailed'));
+      return saved.persisted;
     },
-    [storage],
+    [storage, text],
   );
 
   const cleaners = useMemo(
@@ -119,6 +121,14 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
       const controller = await ChatLedController.create(env, { id: newRunId(), goal: trimmed, candidates: CANDIDATES });
       controllers.current.set(controller.getRun().id, controller);
       persist(controller.getRun());
+      if (!persistedRef.current) {
+        controllers.current.delete(controller.getRun().id);
+        const remaining = runsRef.current.filter((run) => run.id !== controller.getRun().id);
+        runsRef.current = remaining;
+        setRuns(remaining);
+        setError(text.t('chatLedRunPersistFailed'));
+        return;
+      }
       controller.subscribe(persist);
       setSelectedId(controller.getRun().id);
       setGoal('');
@@ -252,22 +262,26 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
       return;
     }
     try {
-      await prepareProviderPage('chatgpt').catch(() => undefined);
-      // ChatGPT hides its history sidebar in a narrow window, and the readback needs the sidebar:
-      // give the parked (offscreen) page a desktop-sized viewport while cleaning up.
-      await host.provider.park('chatgpt', offscreenBounds(1280, 900)).catch(() => undefined);
+      // These are prerequisites, not best-effort hints: no destructive cleaner action may run if
+      // provider preparation or viewport parking fails.
+      await prepareProviderPage('chatgpt');
+      await host.provider.park('chatgpt', offscreenBounds(1280, 900));
       await sleep(2_500);
       await executeCleanup(plan, cleaners, {
         onProgress: (_index, result) => {
           apply((run) => appendCleanupResult(run, result, Date.now()));
-          // Throwing stops the batch: a result that could not be saved must not be followed by more deletions.
-          if (!persistedRef.current) throw new Error('progress not persisted');
+          if (!persistedRef.current) throw new Error('Cleanup progress checkpoint could not be saved.');
         },
       });
       apply((run) => finishCleanup(run, Date.now()));
-    } catch {
-      // Unexpected failure: nothing unconfirmed is replayed; the rest is left for manual cleanup.
-      apply((run) => interruptCleanup(run, Date.now()));
+      if (!persistedRef.current) throw new Error('Cleanup completion checkpoint could not be saved.');
+    } catch (cause) {
+      // A failed checkpoint or setup step leaves every unconfirmed conversation manual-only.
+      setError(cause instanceof Error ? cause.message : String(cause));
+      apply((run) => interruptCleanup(
+        run.cleanupRunning ? run : { ...run, cleanupRunning: true },
+        Date.now(),
+      ));
     } finally {
       await host.provider.park('chatgpt', offscreenBounds()).catch(() => undefined);
       setCleanupBusy(false);

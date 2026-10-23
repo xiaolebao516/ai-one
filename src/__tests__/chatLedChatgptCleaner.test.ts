@@ -5,6 +5,7 @@ import {
   buildConfirmArchivedScript,
   buildConfirmGoneScript,
   buildDeleteScript,
+  buildSnapshotScript,
   buildConfirmScript,
   buildOpenMenuScript,
   createChatGptCleaner,
@@ -23,11 +24,20 @@ function runPageScript(script: string): string {
 const OTHER_ID_PATH = '/c/123e4567-e89b-42d3-a456-426614174999';
 
 function arm(action: 'delete' | 'archive', path = CONVERSATION_PATH, at = Date.now()): void {
-  (window as unknown as Record<string, unknown>).__aiOneArmed = JSON.stringify({ path, action, at });
+  const globals = window as unknown as Record<string, unknown>;
+  const dialog = document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"]');
+  globals.__aiOneArmed = JSON.stringify({ path, action, at, targetTitle: 'Mine' });
+  globals.__aiOneDialogWatch = {
+    path, action, at, targetTitle: 'Mine', dialog, invalid: false, observer: { disconnect: vi.fn() },
+  };
 }
 
 beforeEach(() => {
-  delete (window as unknown as Record<string, unknown>).__aiOneArmed;
+  const globals = window as unknown as Record<string, unknown>;
+  const watch = globals.__aiOneDialogWatch as { observer?: { disconnect?: () => void } } | undefined;
+  watch?.observer?.disconnect?.();
+  delete globals.__aiOneArmed;
+  delete globals.__aiOneDialogWatch;
   document.body.innerHTML = '';
   window.history.replaceState({}, '', '/');
 });
@@ -68,6 +78,7 @@ describe('ChatGPT page scripts', () => {
   it('clicks a matching delete action after the pathname guard passes', () => {
     window.history.replaceState({}, '', CONVERSATION_PATH);
     document.body.innerHTML = [
+      '<h1>Mine</h1>',
       '<button data-testid="conversation-options-menu" id="trigger" aria-expanded="true" aria-controls="menu-1">Options</button>',
       '<div role="menu" id="menu-1"><button data-testid="delete-chat-button">Delete</button></div>',
     ].join('');
@@ -82,10 +93,24 @@ describe('ChatGPT page scripts', () => {
     expect(click).toHaveBeenCalledTimes(1);
   });
 
+
+  it('fails closed when pointerdown does not actually open the target menu', () => {
+    window.history.replaceState({}, '', CONVERSATION_PATH);
+    document.body.innerHTML = '<h1>Mine</h1><button data-testid="conversation-options-menu" id="trigger" aria-expanded="false">Options</button>';
+    const pointerDown = vi.fn();
+    document.getElementById('trigger')?.addEventListener('pointerdown', pointerDown);
+
+    const result = JSON.parse(runPageScript(buildOpenMenuScript(CONVERSATION_PATH))) as { ok: boolean; note: string };
+
+    expect(result.ok).toBe(false);
+    expect(result.note).toContain('did not open');
+    expect(pointerDown).toHaveBeenCalledTimes(1);
+  });
+
   it('does not click an archive confirmation while deleting', () => {
     window.history.replaceState({}, '', CONVERSATION_PATH);
     document.body.innerHTML = [
-      '<div role="dialog">',
+      '<div role="dialog" aria-modal="true"><p>Delete Mine?</p>',
       '<button data-testid="confirm-archive-button">Archive</button>',
       '<button data-testid="confirm-delete-button">Delete</button>',
       '</div>',
@@ -109,6 +134,7 @@ describe('ChatGPT page scripts', () => {
   it('opens options and selects archive actions only on the registered path', () => {
     window.history.replaceState({}, '', CONVERSATION_PATH);
     document.body.innerHTML = [
+      '<h1>Mine</h1>',
       '<button data-testid="conversation-options-menu" aria-label="Conversation options" id="trigger" aria-expanded="true" aria-controls="menu-1">Options</button>',
       '<div role="menu" id="menu-1"><button data-testid="archive-chat-button">Archive</button></div>',
     ].join('');
@@ -117,7 +143,7 @@ describe('ChatGPT page scripts', () => {
     if (!menuButton || !archiveButton) throw new Error('Test fixture buttons were not created');
     const menuClick = vi.fn();
     const archiveClick = vi.fn();
-    menuButton.addEventListener('click', menuClick);
+    menuButton.addEventListener('pointerdown', menuClick);
     archiveButton.addEventListener('click', archiveClick);
 
     expect(JSON.parse(runPageScript(buildOpenMenuScript(CONVERSATION_PATH))).ok).toBe(true);
@@ -127,7 +153,7 @@ describe('ChatGPT page scripts', () => {
   });
 
   it('confirms deletion only when the page is gone and the sidebar no longer lists the conversation', () => {
-    window.history.replaceState({}, '', '/');
+    window.history.replaceState({}, '', CONVERSATION_PATH);
     document.body.innerHTML = '<aside data-testid="history"></aside><main><h1>Conversation not found</h1></main>';
 
     expect(JSON.parse(runPageScript(buildConfirmGoneScript(CONVERSATION_ID))).ok).toBe(true);
@@ -164,10 +190,19 @@ describe('ChatGPT page scripts', () => {
 describe('ChatGPT page scripts: only the registered conversation is touched', () => {
   it('finds the nested current ChatGPT row but never climbs into a multi-conversation container', () => {
     window.history.replaceState({}, '', CONVERSATION_PATH);
-    document.body.innerHTML = '<nav aria-label="聊天记录"><div><div><div><a href="' + CONVERSATION_PATH + '">Mine</a></div></div><button aria-haspopup="menu" aria-label="聊天操作" id="mine">...</button></div><div><a href="' + OTHER_ID_PATH + '">Other</a><button aria-label="More options" id="other">...</button></div></nav>';
-    const mine = vi.fn(); const other = vi.fn();
-    document.getElementById('mine')?.addEventListener('click', mine);
-    document.getElementById('other')?.addEventListener('click', other);
+    document.body.innerHTML = '<nav aria-label="聊天记录"><div><div><div><a href="' + CONVERSATION_PATH + '">Mine</a></div></div><button aria-haspopup="menu" aria-expanded="false" aria-label="聊天操作" id="mine">...</button></div><div><a href="' + OTHER_ID_PATH + '">Other</a><button aria-label="More options" id="other">...</button></div></nav>';
+    const mine = vi.fn(() => {
+      const trigger = document.getElementById('mine');
+      trigger?.setAttribute('aria-expanded', 'true');
+      trigger?.setAttribute('aria-controls', 'menu-mine');
+      const menu = document.createElement('div');
+      menu.id = 'menu-mine';
+      menu.setAttribute('role', 'menu');
+      document.body.append(menu);
+    });
+    const other = vi.fn();
+    document.getElementById('mine')?.addEventListener('pointerdown', mine);
+    document.getElementById('other')?.addEventListener('pointerdown', other);
     expect(JSON.parse(runPageScript(buildOpenMenuScript(CONVERSATION_PATH))).ok).toBe(true);
     expect(mine).toHaveBeenCalledTimes(1);
     expect(other).not.toHaveBeenCalled();
@@ -230,8 +265,8 @@ describe('ChatGPT page scripts: only the registered conversation is touched', ()
     window.history.replaceState({}, '', CONVERSATION_PATH);
     document.body.innerHTML = [
       '<button data-testid="confirm-delete-button" id="stray">Delete</button>',
-      '<div role="dialog"><button id="a">Delete</button></div>',
-      '<div role="dialog"><button id="b">Delete</button></div>',
+      '<div role="dialog" aria-modal="true"><button id="a">Delete</button></div>',
+      '<div role="dialog" aria-modal="true"><button id="b">Delete</button></div>',
     ].join('');
     const clicks = vi.fn();
     for (const id of ['stray', 'a', 'b']) document.getElementById(id)?.addEventListener('click', clicks);
@@ -279,7 +314,7 @@ describe('ChatGPT page scripts: ownership and readback fail closed', () => {
     window.history.replaceState({}, '', CONVERSATION_PATH);
     document.body.innerHTML = [
       '<nav><ul><li><a href="' + CONVERSATION_PATH + '">Mine</a><button id="mine" aria-label="More options" aria-expanded="true" aria-controls="menu-mine">...</button></li></ul></nav>',
-      '<div role="dialog"><button id="ok">Delete</button></div>',
+      '<div role="dialog" aria-modal="true"><button id="ok">Delete</button></div>',
     ].join('');
     const click = vi.fn();
     document.getElementById('ok')?.addEventListener('click', click);
@@ -287,7 +322,7 @@ describe('ChatGPT page scripts: ownership and readback fail closed', () => {
 
     document.body.innerHTML = [
       '<div role="menu"><button>Other</button></div>',
-      '<div role="dialog"><button id="ok">Delete</button></div>',
+      '<div role="dialog" aria-modal="true"><button id="ok">Delete</button></div>',
     ].join('');
     document.getElementById('ok')?.addEventListener('click', click);
     expect(JSON.parse(runPageScript(buildConfirmScript(CONVERSATION_PATH, 'delete'))).ok).toBe(false);
@@ -335,7 +370,7 @@ describe('ChatGPT page scripts: ownership and readback fail closed', () => {
 describe('ChatGPT page scripts: the confirmation must come from our own click', () => {
   it('does not click a lone dialog that nothing armed (stray or belonging to another conversation)', () => {
     window.history.replaceState({}, '', CONVERSATION_PATH);
-    document.body.innerHTML = '<div role="dialog"><button id="ok">Delete</button></div>';
+    document.body.innerHTML = '<div role="dialog" aria-modal="true"><p>Delete Mine?</p><button id="ok">Delete</button></div>';
     const click = vi.fn();
     document.getElementById('ok')?.addEventListener('click', click);
 
@@ -345,7 +380,7 @@ describe('ChatGPT page scripts: the confirmation must come from our own click', 
 
   it('rejects a marker for another path, another action, or a stale marker, and consumes it', () => {
     window.history.replaceState({}, '', CONVERSATION_PATH);
-    document.body.innerHTML = '<div role="dialog"><button id="ok">Delete</button></div>';
+    document.body.innerHTML = '<div role="dialog" aria-modal="true"><p>Delete Mine?</p><button id="ok">Delete</button></div>';
     const click = vi.fn();
     document.getElementById('ok')?.addEventListener('click', click);
 
@@ -364,12 +399,54 @@ describe('ChatGPT page scripts: the confirmation must come from our own click', 
     expect(click).toHaveBeenCalledTimes(1);
   });
 
+
+  it('rejects a newly armed Delete dialog whose body names another conversation', () => {
+    window.history.replaceState({}, '', CONVERSATION_PATH);
+    document.body.innerHTML = '<div role="dialog" aria-modal="true"><p>Delete Other chat?</p><button id="ok">Delete</button></div>';
+    const click = vi.fn();
+    document.getElementById('ok')?.addEventListener('click', click);
+    arm('delete');
+
+    expect(JSON.parse(runPageScript(buildConfirmScript(CONVERSATION_PATH, 'delete'))).ok).toBe(false);
+    expect(click).not.toHaveBeenCalled();
+  });
+
+  it('confirms only the dialog node observed after the registered target action', async () => {
+    window.history.replaceState({}, '', CONVERSATION_PATH);
+    document.body.innerHTML = [
+      '<div role="dialog" aria-modal="false"><p>Completed task</p></div>',
+      '<nav aria-label="History"><div><a href="' + CONVERSATION_PATH + '">Mine</a><button data-testid="conversation-options-menu" id="trigger" aria-expanded="true" aria-controls="menu-1">Options</button></div></nav>',
+      '<div role="menu" id="menu-1"><button data-testid="delete-chat-button" id="delete">Delete</button></div>',
+    ].join('');
+    const deleteClick = vi.fn(() => {
+      document.getElementById('trigger')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('menu-1')?.remove();
+      const dialog = document.createElement('div');
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      dialog.innerHTML = '<p>Delete Mine?</p><button data-testid="confirm-delete-button" id="confirm">Delete</button>';
+      document.body.append(dialog);
+    });
+    const confirmClick = vi.fn();
+    document.getElementById('delete')?.addEventListener('click', deleteClick);
+    document.body.addEventListener('click', (event) => {
+      if ((event.target as HTMLElement).id === 'confirm') confirmClick();
+    });
+
+    expect(JSON.parse(runPageScript(buildDeleteScript(CONVERSATION_PATH))).ok).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(JSON.parse(runPageScript(buildConfirmScript(CONVERSATION_PATH, 'delete'))).ok).toBe(true);
+    expect(deleteClick).toHaveBeenCalledTimes(1);
+    expect(confirmClick).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses to start the delete when a dialog is already open (it could never be told apart later)', () => {
     window.history.replaceState({}, '', CONVERSATION_PATH);
     document.body.innerHTML = [
+      '<h1>Mine</h1>',
       '<button data-testid="conversation-options-menu" id="trigger" aria-expanded="true" aria-controls="menu-1">Options</button>',
       '<div role="menu" id="menu-1"><button data-testid="delete-chat-button" id="del">Delete</button></div>',
-      '<div role="dialog"><button>Something else</button></div>',
+      '<div role="dialog" aria-modal="true"><button>Something else</button></div>',
     ].join('');
     const click = vi.fn();
     document.getElementById('del')?.addEventListener('click', click);
@@ -381,12 +458,44 @@ describe('ChatGPT page scripts: the confirmation must come from our own click', 
 });
 
 describe('ChatGPT cleaner orchestration', () => {
+  it('requires the target to be positively present before attempting cleanup', async () => {
+    const evalInPage = vi.fn(async () => JSON.stringify(JSON.stringify({
+      ok: true, targetPresent: false, others: [OTHER_ID_PATH],
+    })));
+    const navigate = vi.fn(async () => undefined);
+    const cleaner = createChatGptCleaner({ evalInPage, navigate, sleep: vi.fn(async () => undefined) });
+
+    const result = await cleaner.deleteConversation(CONVERSATION_URL);
+
+    expect(result.ok).toBe(false);
+    expect(result.note).toContain('without a way to confirm');
+    expect(evalInPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not accept a generic alert containing 404 as target-specific deletion evidence', () => {
+    window.history.replaceState({}, '', '/');
+    document.body.innerHTML = '<aside data-testid="history"></aside><main><div role="alert">404: generic request failed</div></main>';
+    expect(JSON.parse(runPageScript(buildConfirmGoneScript(CONVERSATION_ID))).ok).toBe(false);
+  });
+
+  it('snapshot reports target presence only from the exact selected history sidebar', () => {
+    window.history.replaceState({}, '', '/');
+    document.body.innerHTML = '<aside data-testid="history"><a href="' + OTHER_ID_PATH + '">Other</a></aside>';
+    const absent = JSON.parse(runPageScript(buildSnapshotScript(CONVERSATION_ID))) as { ok: boolean; targetPresent?: boolean };
+    expect(absent.ok).toBe(false);
+    expect(absent.targetPresent).toBeUndefined();
+
+    document.body.innerHTML = '<aside data-testid="history"><a href="' + CONVERSATION_PATH + '">Mine</a><a href="' + OTHER_ID_PATH + '">Other</a></aside>';
+    const present = JSON.parse(runPageScript(buildSnapshotScript(CONVERSATION_ID))) as { ok: boolean; targetPresent?: boolean; others?: string[] };
+    expect(present).toMatchObject({ ok: true, targetPresent: true, others: [OTHER_ID_PATH] });
+  });
+
   it('decodes the JSON-string result envelope returned by real WebView2 callbacks', async () => {
     const responses = [
-      { ok: true, others: [OTHER_ID_PATH] },
+      { ok: true, targetPresent: true, others: [OTHER_ID_PATH] },
       { ok: true }, { ok: true }, { ok: true },
       { ok: true }, { ok: true },
-      { ok: true, others: [OTHER_ID_PATH] },
+      { ok: true, targetPresent: true, others: [OTHER_ID_PATH] },
       { ok: true }, { ok: true }, { ok: true },
       { ok: true }, { ok: true }, { ok: true },
     ];
@@ -401,7 +510,7 @@ describe('ChatGPT cleaner orchestration', () => {
 
   it('navigates to the normalized URL and runs guarded deletion stages', async () => {
     const responses = [
-      JSON.stringify({ ok: true, note: 'Snapshot taken', others: [OTHER_ID_PATH] }),
+      JSON.stringify({ ok: true, note: 'Snapshot taken', targetPresent: true, others: [OTHER_ID_PATH] }),
       JSON.stringify({ ok: true, note: 'menu opened' }),
       JSON.stringify({ ok: true, note: 'delete selected' }),
       JSON.stringify({ ok: true, note: 'confirmed' }),

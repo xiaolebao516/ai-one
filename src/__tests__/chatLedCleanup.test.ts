@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AIProvider } from '../../shared/types';
 import type { ChatLedRun, RegisteredConversation } from '../workflow/chatLed/types';
 import {
+  CleanupCheckpointError,
   executeCleanup,
   planCleanup,
   summarizeCleanup,
@@ -290,18 +291,18 @@ describe('chat-led cleanup execution', () => {
 });
 
 describe('chat-led cleanup stops when progress cannot be saved', () => {
-  it('leaves everything after the failed checkpoint for manual cleanup and never touches it', async () => {
+  it('throws on a failed checkpoint and never touches later items', async () => {
     const cleaner = makeCleaner();
     const run = makeRun([conversation(FIRST_URL), conversation(SECOND_URL)]);
     const plan = planCleanup(run, [cleaner]);
-    const results = await executeCleanup(plan, [cleaner], {
+
+    await expect(executeCleanup(plan, [cleaner], {
       onProgress: () => {
         throw new Error('storage full');
       },
-    });
-    expect(results.map((r) => r.outcome)).toEqual(['deleted', 'manual']);
+    })).rejects.toBeInstanceOf(CleanupCheckpointError);
+
     expect(cleaner.deleteConversation).toHaveBeenCalledTimes(1);
     expect(cleaner.deleteConversation).toHaveBeenCalledWith(FIRST_URL);
-    expect(results[1].note).toContain('progress could not be saved');
   });
 });

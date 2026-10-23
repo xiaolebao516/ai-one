@@ -1,0 +1,216 @@
+// @vitest-environment jsdom
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AIProvider } from '../../shared/types';
+import type { ChatLedEnv } from '../workflow/chatLed/controller';
+import type { ChatLedRun } from '../workflow/chatLed/types';
+import { CHAT_LED_STORAGE_KEY } from '../workflow/chatLed/store';
+import { ChatLedPage } from '../workbench/views/ChatLedPage';
+
+const mocks = vi.hoisted(() => ({
+  provider: {
+    eval: vi.fn(async () => ''),
+    evalWithCallback: vi.fn(async () => ''),
+    park: vi.fn(async () => undefined),
+    show: vi.fn(async () => undefined),
+  },
+  createRealChatLedEnv: vi.fn(),
+  prepareProviderPage: vi.fn(async () => undefined),
+  cleaner: {
+    provider: 'chatgpt',
+    supports: { delete: true, archive: true },
+    matchesConversationUrl: vi.fn((url: string) => url.startsWith('https://chatgpt.com/c/')),
+    deleteConversation: vi.fn(async (_url: string) => ({ ok: true, note: 'confirmed' })),
+    archiveConversation: vi.fn(async (_url: string) => ({ ok: true, note: 'confirmed' })),
+    confirmGone: vi.fn(async (_url: string) => true),
+    confirmArchived: vi.fn(async (_url: string) => true),
+  },
+}));
+
+vi.mock('../host', () => ({ host: { provider: mocks.provider } }));
+vi.mock('../workflow/chatLed/env', () => ({
+  createRealChatLedEnv: mocks.createRealChatLedEnv,
+  prepareProviderPage: mocks.prepareProviderPage,
+}));
+vi.mock('../workflow/chatLed/drivers/chatgpt', () => ({
+  createChatGptCleaner: () => mocks.cleaner,
+}));
+
+const FIRST_URL = 'https://chatgpt.com/c/123e4567-e89b-42d3-a456-426614174000';
+const SECOND_URL = 'https://chatgpt.com/c/123e4567-e89b-42d3-a456-426614174001';
+const roots: { root: Root; container: HTMLElement }[] = [];
+
+function makeRun(): ChatLedRun {
+  return {
+    id: 'run-1',
+    goal: 'cleanup persistence regression',
+    coordinator: 'chatgpt',
+    available: ['claude'],
+    roundLimit: 8,
+    round: 1,
+    phase: 'finished',
+    forwards: [],
+    conversations: [
+      { provider: 'chatgpt', url: FIRST_URL, title: 'First', createdByAiOne: true, registrationStatus: 'confirmed', registeredAt: 1 },
+      { provider: 'chatgpt', url: SECOND_URL, title: 'Second', createdByAiOne: true, registrationStatus: 'confirmed', registeredAt: 2 },
+    ],
+    sessionInitializations: [],
+    coordinatorReplies: [],
+    createdAt: 1,
+    updatedAt: 2,
+    exportedAt: 3,
+  };
+}
+
+function makeEnv(): ChatLedEnv {
+  return {
+    now: () => Date.now(),
+    sendableProviders: vi.fn(async (): Promise<AIProvider[]> => ['chatgpt', 'claude']),
+    prepare: vi.fn(async () => undefined),
+    newSession: vi.fn(async (provider: AIProvider) => ({ url: 'https://example.test/' + provider + '/c/new' })),
+    send: vi.fn(async (): Promise<string> => 'unused'),
+    stop: vi.fn(async () => undefined),
+    readConversationUrl: vi.fn(async (provider: AIProvider): Promise<string> => 'https://example.test/' + provider + '/c/existing'),
+  };
+}
+
+async function renderPage(): Promise<HTMLElement> {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  roots.push({ root, container });
+  await act(async () => {
+    root.render(<ChatLedPage locale="en" />);
+  });
+  return container;
+}
+
+async function clickButton(container: ParentNode, label: string): Promise<void> {
+  const button = Array.from(container.querySelectorAll('button')).find(
+    (candidate) => candidate.textContent?.trim() === label,
+  );
+  if (!button) throw new Error('Could not find button: ' + label);
+  await act(async () => {
+    button.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+async function clickCleanupAndWait(container: ParentNode): Promise<void> {
+  const button = Array.from(container.querySelectorAll('button')).find(
+    (candidate) => candidate.textContent?.trim() === 'Clean up',
+  );
+  if (!button) throw new Error('Could not find cleanup button');
+  await act(async () => {
+    button.click();
+    await new Promise((resolve) => setTimeout(resolve, 2_800));
+  });
+}
+
+async function enterGoal(container: HTMLElement, value: string): Promise<void> {
+  const textarea = container.querySelector('#chatled-goal') as HTMLTextAreaElement | null;
+  if (!textarea) throw new Error('Could not find goal input');
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+  setter?.call(textarea, value);
+  await act(async () => {
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  window.localStorage.clear();
+  vi.clearAllMocks();
+  mocks.prepareProviderPage.mockResolvedValue(undefined);
+  mocks.provider.park.mockResolvedValue(undefined);
+  mocks.cleaner.deleteConversation.mockResolvedValue({ ok: true, note: 'confirmed' });
+  mocks.cleaner.confirmGone.mockResolvedValue(true);
+  mocks.cleaner.archiveConversation.mockResolvedValue({ ok: true, note: 'confirmed' });
+  mocks.cleaner.confirmArchived.mockResolvedValue(true);
+  mocks.createRealChatLedEnv.mockReturnValue(makeEnv());
+});
+
+afterEach(async () => {
+  for (const { root } of roots.splice(0)) {
+    await act(async () => root.unmount());
+  }
+  vi.restoreAllMocks();
+  window.localStorage.clear();
+  document.body.innerHTML = '';
+});
+
+describe('ChatLedPage persistence safety', () => {
+  it('does not start any provider I/O when the initial run save fails', async () => {
+    const env = makeEnv();
+    mocks.createRealChatLedEnv.mockReturnValue(env);
+    const original = window.localStorage.setItem.bind(window.localStorage);
+    vi.spyOn(window.localStorage, 'setItem').mockImplementation((key, value) => {
+      if (key === CHAT_LED_STORAGE_KEY) throw new Error('simulated storage quota');
+      original(key, value);
+    });
+
+    const container = await renderPage();
+    await enterGoal(container, 'test initial persistence guard');
+    await clickButton(container, 'Start');
+
+    expect(env.prepare).not.toHaveBeenCalled();
+    expect(env.sendableProviders).not.toHaveBeenCalled();
+    expect(env.newSession).not.toHaveBeenCalled();
+    expect(env.send).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('The run record could not be saved');
+  });
+
+  it('aborts before cleaner actions when provider-page preparation fails', async () => {
+    window.localStorage.setItem(CHAT_LED_STORAGE_KEY, JSON.stringify([makeRun()]));
+    mocks.prepareProviderPage.mockRejectedValueOnce(new Error('provider preparation failed'));
+    const container = await renderPage();
+    await clickButton(container, 'Open');
+    await clickButton(container, 'Clean up');
+    await vi.waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem(CHAT_LED_STORAGE_KEY) || '[]') as ChatLedRun[];
+      expect(stored[0]?.cleanupResults).toHaveLength(2);
+    });
+
+    const stored = JSON.parse(window.localStorage.getItem(CHAT_LED_STORAGE_KEY) || '[]') as ChatLedRun[];
+    expect(mocks.cleaner.deleteConversation).not.toHaveBeenCalled();
+    expect(stored[0].cleanupResults?.map((item) => item.outcome)).toEqual(['manual', 'manual']);
+  });
+
+  it('aborts before cleaner actions when viewport parking fails', async () => {
+    window.localStorage.setItem(CHAT_LED_STORAGE_KEY, JSON.stringify([makeRun()]));
+    mocks.provider.park.mockRejectedValueOnce(new Error('viewport parking failed'));
+    const container = await renderPage();
+    await clickButton(container, 'Open');
+    await clickButton(container, 'Clean up');
+    await vi.waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem(CHAT_LED_STORAGE_KEY) || '[]') as ChatLedRun[];
+      expect(stored[0]?.cleanupResults).toHaveLength(2);
+    });
+
+    const stored = JSON.parse(window.localStorage.getItem(CHAT_LED_STORAGE_KEY) || '[]') as ChatLedRun[];
+    expect(mocks.cleaner.deleteConversation).not.toHaveBeenCalled();
+    expect(stored[0].cleanupResults?.map((item) => item.outcome)).toEqual(['manual', 'manual']);
+  });
+
+  it('preserves manual outcomes after one item checkpoint fails and the next storage write succeeds', async () => {
+    window.localStorage.setItem(CHAT_LED_STORAGE_KEY, JSON.stringify([makeRun()]));
+    const original = window.localStorage.setItem.bind(window.localStorage);
+    let keyWrites = 0;
+    vi.spyOn(window.localStorage, 'setItem').mockImplementation((key, value) => {
+      if (key === CHAT_LED_STORAGE_KEY && ++keyWrites === 2) throw new Error('one transient quota error');
+      original(key, value);
+    });
+
+    const container = await renderPage();
+    await clickButton(container, 'Open');
+    await clickCleanupAndWait(container);
+
+    const stored = JSON.parse(window.localStorage.getItem(CHAT_LED_STORAGE_KEY) || '[]') as ChatLedRun[];
+    expect(mocks.cleaner.deleteConversation).toHaveBeenCalledTimes(1);
+    expect(mocks.cleaner.deleteConversation).toHaveBeenCalledWith(FIRST_URL);
+    expect(stored[0].cleanupRunning).toBe(false);
+    expect(stored[0].cleanupResults?.map((item) => item.outcome)).toEqual(['deleted', 'manual']);
+    expect(stored[0].cleanupResults?.[1].url).toBe(SECOND_URL);
+  });
+});

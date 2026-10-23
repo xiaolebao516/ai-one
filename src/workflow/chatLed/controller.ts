@@ -30,7 +30,7 @@ export const CHAT_LED_URL_READ_TIMEOUT_MS = 3_000;
 export const CHAT_LED_INIT_SETTLE_TIMEOUT_MS = 5_000;
 export const CHAT_LED_STOP_WAIT_TIMEOUT_MS = 5_000;
 
-type Listener = (run: ChatLedRun) => void;
+type Listener = (run: ChatLedRun) => boolean | void;
 type InitStage = 'before-url' | 'creating' | 'after-url';
 
 interface SessionInitAttempt {
@@ -41,6 +41,7 @@ interface SessionInitAttempt {
   promise: Promise<void>;
   blankUrl?: string;
   documentId?: string;
+  confirmedUrl?: string;
 }
 
 function waitWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
@@ -125,6 +126,8 @@ export class ChatLedController {
   private resumeWaiters: (() => void)[] = [];
   private stopWaiters: (() => void)[] = [];
   private driving = false;
+  /** Sticky: once a checkpoint fails, this controller never performs further provider I/O. */
+  private persistenceFailed = false;
   private initSequence = 0;
   private readonly preparingProviders = new Set<AIProvider>();
   /** Each item covers a possible new-session side effect through address registration. */
@@ -166,7 +169,13 @@ export class ChatLedController {
   private set(next: ChatLedRun): void {
     if (next === this.run) return;
     this.run = next;
-    for (const listener of [...this.listeners]) listener(next);
+    this.notify();
+  }
+
+  private assertPersisted(): void {
+    if (this.persistenceFailed) {
+      throw new Error('Run state could not be saved; stopping provider I/O to protect session ownership.');
+    }
   }
 
   private get stopped(): boolean {
@@ -182,6 +191,15 @@ export class ChatLedController {
     if (this.run.phase !== 'idle') return;
     const generation = this.generation;
     this.set(setInitializationPending(startRun(this.run, this.env.now()), true, this.env.now()));
+    try {
+      this.assertPersisted();
+    } catch (error) {
+      if (this.isLive(generation)) {
+        this.set(failProvider(this.run, this.run.coordinator, errorMessage(error), this.env.now()));
+      }
+      this.set(setInitializationPending(this.run, false, this.env.now()));
+      return;
+    }
 
     const startup = this.prepareProviders(generation);
     this.startupOperation = startup;
@@ -214,7 +232,9 @@ export class ChatLedController {
     const prepared = new Set<AIProvider>();
 
     try {
+      this.assertPersisted();
       await this.env.initialize?.();
+      this.assertPersisted();
       if (!(await this.waitWhilePaused()) || !live()) return false;
 
       const providers = [...new Set([coordinator, ...this.candidates.filter((provider) => provider !== coordinator)])];
@@ -222,7 +242,9 @@ export class ChatLedController {
         if (!(await this.waitWhilePaused()) || !live()) return false;
         this.preparingProviders.add(provider);
         try {
+          this.assertPersisted();
           await this.env.prepare(provider);
+          this.assertPersisted();
           if (!live()) return false;
           prepared.add(provider);
         } catch (error) {
@@ -238,7 +260,9 @@ export class ChatLedController {
       }
 
       if (!(await this.waitWhilePaused()) || !live()) return false;
+      this.assertPersisted();
       const sendable = new Set(await this.env.sendableProviders());
+      this.assertPersisted();
       if (!live()) return false;
       if (!prepared.has(coordinator) || !sendable.has(coordinator)) {
         this.set(failProvider(
@@ -265,6 +289,7 @@ export class ChatLedController {
       }
 
       this.set(setAvailableProviders(this.run, available, this.env.now()));
+      this.assertPersisted();
       return true;
     } catch (error) {
       if (live()) this.set(failProvider(this.run, coordinator, errorMessage(error), this.env.now()));
@@ -433,7 +458,9 @@ export class ChatLedController {
     try {
       if (!(await this.waitWhilePaused()) || !live()) return;
       patch({ status: 'sending', startedAt: this.env.now() });
+      this.assertPersisted();
       const sendable = await this.env.sendableProviders();
+      this.assertPersisted();
       if (!sendable.includes(forward.to)) throw new Error('Target AI is not logged in or its page is not ready.');
       patch({ status: 'waiting' });
       const reply = await this.sendOwned(forward.to, forward.message, live);
@@ -457,22 +484,23 @@ export class ChatLedController {
 
     const work = (async (): Promise<string> => {
       await proceed();
+      this.assertPersisted();
       await this.env.prepare(provider);
+      this.assertPersisted();
       await proceed();
 
-      let firstSend: SessionInitAttempt | undefined;
       const owned = this.run.conversations.find(
         (conversation) =>
           conversation.provider === provider &&
           conversation.registrationStatus !== 'manual' &&
           hasConversationPath(conversation.url),
       );
+      let firstSend: SessionInitAttempt | undefined;
+      let expectedUrl: string | undefined;
+      let expectedDocumentId: string | undefined;
+
       if (owned) {
-        const current = await readUrlWithin(this.env, provider);
-        await proceed();
-        if (!current || !sameConversation(current, owned.url)) {
-          throw new Error('The page is no longer on the conversation ai-one created; not sending.');
-        }
+        expectedUrl = owned.url;
       } else {
         const attempt = this.beginSessionAttempt(provider);
         const init = this.initializeSession(attempt, live, proceed);
@@ -483,31 +511,62 @@ export class ChatLedController {
         attempt.promise = initDone;
         initDone.catch(() => undefined);
         await initDone;
+        this.assertPersisted();
         await proceed();
-        if (attempt.blankUrl) firstSend = attempt;
-      }
-
-      if (firstSend) {
-        const current = await readUrlWithin(this.env, provider);
-        const documentId = await readUrlWithin(this.env, provider, true);
-        await proceed();
-        if (firstSend.finalized || !current || !sameConversation(current, firstSend.blankUrl!) || documentId !== firstSend.documentId) {
-          this.finishSessionAttempt(firstSend, 'manual', undefined, 'The fresh blank page changed before its first send.');
-          throw new Error('The new blank conversation is no longer current; not sending.');
+        if (attempt.blankUrl) {
+          firstSend = attempt;
+          expectedUrl = attempt.blankUrl;
+          expectedDocumentId = attempt.documentId;
+        } else {
+          expectedUrl = attempt.confirmedUrl;
         }
       }
+
+      if (!expectedUrl) {
+        throw new Error('The conversation address is not confirmed; not sending.');
+      }
+
+      // The last pause wait must happen BEFORE the final identity read. If another pause begins
+      // while either read is pending, discard that snapshot and repeat after resume.
+      for (;;) {
+        await proceed();
+        this.assertPersisted();
+        const current = await readUrlWithin(this.env, provider);
+        const documentId = expectedDocumentId !== undefined
+          ? await readUrlWithin(this.env, provider, true)
+          : undefined;
+        if (!live()) throw new Error('Run stopped by user');
+        if (this.run.phase === 'paused') continue;
+        if (
+          !current ||
+          !sameConversation(current, expectedUrl) ||
+          (expectedDocumentId !== undefined && documentId !== expectedDocumentId)
+        ) {
+          if (firstSend && !firstSend.finalized) {
+            this.finishSessionAttempt(firstSend, 'manual', undefined, 'The fresh page changed before its first send; check manually.');
+          }
+          throw new Error('The page is no longer on the conversation ai-one created; not sending.');
+        }
+        break;
+      }
+
+      this.assertPersisted();
+      const sending = this.env.send(provider, text);
+      if (firstSend) firstSend.promise = sending.then(() => undefined, () => undefined);
+
+      let response: string;
       try {
-        const sending = this.env.send(provider, text);
-        if (firstSend) firstSend.promise = sending.then(() => undefined, () => undefined);
-        const response = await sending;
-        if (firstSend) await this.registerFirstSend(firstSend, live);
-        const providerError = providerResponseError(provider, response);
-        if (providerError) throw providerError;
-        return response;
+        response = await sending;
       } catch (error) {
         if (firstSend && !firstSend.finalized) await this.registerFirstSend(firstSend, live);
         throw error;
       }
+
+      if (firstSend) await this.registerFirstSend(firstSend, live);
+      this.assertPersisted();
+      const providerError = providerResponseError(provider, response);
+      if (providerError) throw providerError;
+      return response;
     })();
     work.catch(() => undefined);
 
@@ -520,6 +579,7 @@ export class ChatLedController {
   }
 
   private beginSessionAttempt(provider: AIProvider): SessionInitAttempt {
+    this.assertPersisted();
     const id = this.run.id + ':' + provider + ':' + String(++this.initSequence);
     const attempt: SessionInitAttempt = {
       id,
@@ -530,6 +590,12 @@ export class ChatLedController {
     };
     this.pendingInit.add(attempt);
     this.set(beginSessionInitialization(this.run, id, provider, this.env.now()));
+    try {
+      this.assertPersisted();
+    } catch (error) {
+      this.finishSessionAttempt(attempt, 'not-created', undefined, 'Creation was not attempted because its intent could not be saved.');
+      throw error;
+    }
     return attempt;
   }
 
@@ -541,6 +607,7 @@ export class ChatLedController {
     let beforeUrl: string | undefined;
     try {
       await proceed();
+      this.assertPersisted();
       attempt.stage = 'before-url';
       beforeUrl = await readUrlWithin(this.env, attempt.provider);
       if (attempt.finalized) return;
@@ -549,6 +616,7 @@ export class ChatLedController {
         throw new Error('Run stopped by user');
       }
 
+      this.assertPersisted();
       attempt.stage = 'creating';
       let creationFailed = false;
       let creationError: unknown;
@@ -571,6 +639,7 @@ export class ChatLedController {
       if (attempt.finalized) return;
 
       attempt.stage = 'after-url';
+      this.assertPersisted();
       if (creationFailed) {
         this.finishSessionAttempt(
           attempt,
@@ -613,13 +682,16 @@ export class ChatLedController {
       // must leave a manual record rather than releasing an unverified session to cleanup.
       this.preparingProviders.add(attempt.provider);
       try {
+        this.assertPersisted();
         await this.env.prepare(attempt.provider);
+        this.assertPersisted();
       } finally {
         this.preparingProviders.delete(attempt.provider);
       }
       if (attempt.finalized) return;
       if (!live()) throw new Error('Run stopped by user');
 
+      this.assertPersisted();
       const readyUrl = await readUrlWithin(this.env, attempt.provider);
       if (attempt.finalized) return;
       if (!live()) throw new Error('Run stopped by user');
@@ -641,6 +713,7 @@ export class ChatLedController {
       } else {
         this.finishSessionAttempt(attempt, 'registered', candidateUrl, 'New conversation address was confirmed after readiness.');
       }
+      this.assertPersisted();
       await proceed();
     } catch (error) {
       if (!attempt.finalized) {
@@ -660,7 +733,9 @@ export class ChatLedController {
 
   private async registerFirstSend(attempt: SessionInitAttempt, live: () => boolean): Promise<void> {
     if (attempt.finalized) return;
+    this.assertPersisted();
     const url = await readUrlWithin(this.env, attempt.provider);
+    this.assertPersisted();
     const documentId = await readUrlWithin(this.env, attempt.provider, true);
     if (attempt.finalized) return;
     if (live() && url && isConversationAddress(attempt.provider, url) && documentId === attempt.documentId) {
@@ -668,6 +743,7 @@ export class ChatLedController {
     } else {
       this.finishSessionAttempt(attempt, 'manual', undefined, 'The first prompt may have created a conversation, but its address or document could not be confirmed.');
     }
+    this.assertPersisted();
   }
 
   private finishSessionAttempt(
@@ -678,6 +754,7 @@ export class ChatLedController {
   ): void {
     if (attempt.finalized) return;
     attempt.finalized = true;
+    if (status === 'registered' && url) attempt.confirmedUrl = url;
     this.pendingInit.delete(attempt);
     let next = this.run;
     if (status === 'registered' && url) {
@@ -705,7 +782,15 @@ export class ChatLedController {
   }
 
   private notify(): void {
-    for (const listener of [...this.listeners]) listener(this.run);
+    for (const listener of [...this.listeners]) {
+      try {
+        if (listener(this.run) === false) this.persistenceFailed = true;
+      } catch {
+        // Persistence listeners are a checkpoint contract, not control flow. Avoid recursive
+        // listener failures; the next provider-I/O boundary will fail closed.
+        this.persistenceFailed = true;
+      }
+    }
   }
 }
 

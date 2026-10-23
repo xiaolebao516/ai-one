@@ -233,6 +233,13 @@ async function executeDelete(
   return executeArchive(item, cleaner, '删除失败/未确认，');
 }
 
+export class CleanupCheckpointError extends Error {
+  constructor() {
+    super('Cleanup progress checkpoint failed; the batch stopped to avoid repeating an irreversible action.');
+    this.name = 'CleanupCheckpointError';
+  }
+}
+
 export async function executeCleanup(
   plan: CleanupPlanItem[],
   cleaners: readonly ConversationCleaner[],
@@ -264,14 +271,9 @@ export async function executeCleanup(
     try {
       hooks?.onProgress?.(i, result);
     } catch {
-      // The checkpoint could not be saved. Going on would risk repeating an irreversible step
-      // after a reload, so stop here: everything not yet touched is left for manual cleanup.
-      for (let rest = i + 1; rest < plan.length; rest += 1) {
-        results.push(
-          resultFor(plan[rest], 'manual', 'Cleanup stopped because its progress could not be saved; check this conversation by hand.'),
-        );
-      }
-      break;
+      // The caller must persist an interrupted/manual state. Returning normally would let it
+      // incorrectly mark this batch complete after a failed per-item checkpoint.
+      throw new CleanupCheckpointError();
     }
   }
 

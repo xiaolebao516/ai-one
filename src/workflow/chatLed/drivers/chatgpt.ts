@@ -121,6 +121,34 @@ function guardedScript(path: string, body: string): string {
     '    const buttons = Array.from(window.document.querySelectorAll("button")).filter((node) => !inSidebar(node));',
     '    return buttons.find((node) => /conversation-options-menu|conversation-menu-trigger/i.test(node.getAttribute("data-testid") || "") || /conversation options|chat options|对话选项|聊天选项/i.test(accessibleName(node))) || null;',
     '  };',
+    '  const cleanTitle = (value) => typeof value === "string" ? value.replace(/\\s+/g, " ").trim() : "";',
+    '  const targetTitle = () => {',
+    '    const anchor = Array.from(window.document.querySelectorAll("a[href]")).find((node) => inSidebar(node) && hrefPath(node) === expectedPath);',
+    '    const rowTitle = cleanTitle(anchor && (anchor.getAttribute("title") || anchor.innerText || anchor.textContent || anchor.getAttribute("aria-label")));',
+    '    if (rowTitle && !/^(chatgpt|new chat|new conversation|新聊天|新对话)$/i.test(rowTitle)) return rowTitle;',
+    '    const nodes = Array.from(window.document.querySelectorAll("[data-testid=\\"conversation-title\\"], [data-testid*=\\"conversation-title\\"], main h1, header h1, h1"));',
+    '    const titles = Array.from(new Set(nodes.map((node) => cleanTitle(node.getAttribute("title") || node.innerText || node.textContent || node.getAttribute("aria-label"))).filter((value) => value && !/^(chatgpt|new chat|new conversation|新聊天|新对话)$/i.test(value))));',
+    '    return titles.length === 1 ? titles[0] : null;',
+    '  };',
+    '  const armDialogWatch = (action) => {',
+    '    if (window.document.querySelectorAll("[role=\\"dialog\\"][aria-modal=\\"true\\"], [role=\\"alertdialog\\"]").length !== 0) return null;',
+    '    const title = targetTitle();',
+    '    if (!title) return null;',
+    '    const watch = { path: expectedPath, action, at: Date.now(), targetTitle: title, dialog: null, invalid: false, observer: null };',
+    '    const observer = new MutationObserver(() => {',
+    '      const dialogs = Array.from(window.document.querySelectorAll("[role=\\"dialog\\"][aria-modal=\\"true\\"], [role=\\"alertdialog\\"]"));',
+    '      if (dialogs.length > 1) { watch.invalid = true; return; }',
+    '      if (dialogs.length === 1) {',
+    '        if (watch.dialog && watch.dialog !== dialogs[0]) watch.invalid = true;',
+    '        else watch.dialog = dialogs[0];',
+    '      }',
+    '    });',
+    '    watch.observer = observer;',
+    '    observer.observe(window.document.documentElement, { childList: true, subtree: true });',
+    '    window.__aiOneDialogWatch = watch;',
+    '    window.__aiOneArmed = JSON.stringify({ path: expectedPath, action, at: watch.at, targetTitle: title });',
+    '    return watch;',
+    '  };',
     '  // Fail closed: a menu counts only when the target trigger itself says it controls/labels it.',
     '  const ownedMenu = (trigger) => {',
     '    if (!trigger || trigger.getAttribute("aria-expanded") !== "true") return null;',
@@ -153,8 +181,12 @@ export function buildOpenMenuScript(path: string): string {
   return guardedScript(path, [
     '  const element = findTrigger();',
     '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Options menu of the registered conversation not found or disabled" });',
-    '  element.click();',
-    '  return JSON.stringify({ ok: true, note: "Options menu opened" });',
+    '  const PointerEventConstructor = window.PointerEvent || window.MouseEvent;',
+    '  const event = new PointerEventConstructor("pointerdown", { bubbles: true, cancelable: true, button: 0, ctrlKey: false, pointerType: "mouse" });',
+    '  if (!("pointerType" in event)) Object.defineProperty(event, "pointerType", { value: "mouse" });',
+    '  element.dispatchEvent(event);',
+    '  if (!ownedMenu(element)) return JSON.stringify({ ok: false, note: "Pointerdown did not open the target conversation menu" });',
+    '  return JSON.stringify({ ok: true, note: "Target conversation menu opened by pointerdown" });',
   ].join('\n'));
 }
 
@@ -164,11 +196,9 @@ export function buildDeleteScript(path: string): string {
     '  if (!menu) return JSON.stringify({ ok: false, note: "No open options menu that belongs to the registered conversation" });',
     '  const element = findCandidate(SELECTORS.actionCandidates, /delete|remove|删除/i, /delete/i, menu);',
     '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Delete action not found or disabled" });',
-    '  // A dialog that already exists cannot be the one this click produces, so it could never be trusted later.',
-    '  if (window.document.querySelectorAll("[role=\\"dialog\\"], [role=\\"alertdialog\\"]").length > 0) return JSON.stringify({ ok: false, note: "A dialog is already open; refusing to continue" });',
-    '  window.__aiOneArmed = JSON.stringify({ path: expectedPath, action: "delete", at: Date.now() });',
+    '  if (!armDialogWatch("delete")) return JSON.stringify({ ok: false, note: "Cannot prove the target title or safely associate a new confirmation dialog" });',
     '  element.click();',
-    '  return JSON.stringify({ ok: true, note: "Delete action selected" });',
+    '  return JSON.stringify({ ok: true, note: "Delete action selected for the identified conversation" });',
   ].join('\n'));
 }
 
@@ -178,11 +208,9 @@ export function buildArchiveScript(path: string): string {
     '  if (!menu) return JSON.stringify({ ok: false, note: "No open options menu that belongs to the registered conversation" });',
     '  const element = findCandidate(SELECTORS.actionCandidates, /archive|归档/i, /archive/i, menu);',
     '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Archive action not found or disabled" });',
-    '  // A dialog that already exists cannot be the one this click produces, so it could never be trusted later.',
-    '  if (window.document.querySelectorAll("[role=\\"dialog\\"], [role=\\"alertdialog\\"]").length > 0) return JSON.stringify({ ok: false, note: "A dialog is already open; refusing to continue" });',
-    '  window.__aiOneArmed = JSON.stringify({ path: expectedPath, action: "archive", at: Date.now() });',
+    '  if (!armDialogWatch("archive")) return JSON.stringify({ ok: false, note: "Cannot prove the target title or safely associate a new confirmation dialog" });',
     '  element.click();',
-    '  return JSON.stringify({ ok: true, note: "Archive action selected" });',
+    '  return JSON.stringify({ ok: true, note: "Archive action selected for the identified conversation" });',
   ].join('\n'));
 }
 
@@ -194,22 +222,34 @@ export function buildConfirmScript(path: string, action: 'delete' | 'archive'): 
 
   return guardedScript(path, [
     '  const action = ' + JSON.stringify(action) + ';',
-    '  // Only a dialog produced by OUR click on this conversation may be confirmed: the click armed a marker.',
     '  let armed = null;',
     '  try { armed = JSON.parse(window.__aiOneArmed || "null"); } catch (error) { armed = null; }',
-    '  delete window.__aiOneArmed;',
-    '  if (!armed || armed.path !== expectedPath || armed.action !== action || typeof armed.at !== "number" || Date.now() - armed.at > 15000) return JSON.stringify({ ok: false, note: "No fresh confirmation armed by this cleanup; refusing to confirm" });',
-    '  // The target menu was consumed by our click: no menu may be open, and the target trigger is collapsed.',
-    '  if (window.document.querySelectorAll("[role=\\"menu\\"]").length > 0) return JSON.stringify({ ok: false, note: "A menu is still open; refusing to confirm" });',
+    '  const watch = window.__aiOneDialogWatch || null;',
+    '  const cleanupWatch = () => { if (watch && watch.observer && typeof watch.observer.disconnect === "function") watch.observer.disconnect(); delete window.__aiOneDialogWatch; delete window.__aiOneArmed; };',
+    '  const reject = (note) => { cleanupWatch(); return JSON.stringify({ ok: false, note }); };',
+    '  if (!armed || armed.path !== expectedPath || armed.action !== action || typeof armed.at !== "number" || Date.now() - armed.at > 15000) return reject("No fresh confirmation armed by this cleanup; refusing to confirm");',
+    '  if (!watch || watch.path !== expectedPath || watch.action !== action || watch.at !== armed.at || watch.targetTitle !== armed.targetTitle || !watch.targetTitle || watch.invalid) return reject("The confirmation is not associated with this exact target action");',
+    '  if (window.document.querySelectorAll("[role=\\"menu\\"]").length > 0) return reject("A menu is still open; refusing to confirm");',
     '  const trigger = findTrigger();',
-    '  if (trigger && trigger.getAttribute("aria-expanded") === "true") return JSON.stringify({ ok: false, note: "Options trigger still expanded; refusing to confirm" });',
-    '  const dialogs = window.document.querySelectorAll("[role=\\"dialog\\"], [role=\\"alertdialog\\"]");',
-    '  if (dialogs.length === 0 && action === "archive") return JSON.stringify({ ok: true, note: "No archive confirmation dialog required" });',
-    '  if (dialogs.length !== 1) return JSON.stringify({ ok: false, note: "Expected exactly one confirmation dialog" });',
-    '  const element = findCandidate(["button"], ' + labelPattern + ', ' + testIdPattern + ', dialogs[0]);',
-    '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Confirmation button not found or disabled" });',
+    '  if (trigger && trigger.getAttribute("aria-expanded") === "true") return reject("Options trigger still expanded; refusing to confirm");',
+    '  const dialogs = window.document.querySelectorAll("[role=\\"dialog\\"][aria-modal=\\"true\\"], [role=\\"alertdialog\\"]");',
+    '  if (dialogs.length === 0 && action === "archive") {',
+    '    if (watch.dialog || watch.invalid) return reject("An observed dialog disappeared or changed; refusing to confirm");',
+    '    cleanupWatch();',
+    '    return JSON.stringify({ ok: true, note: "No archive confirmation dialog required" });',
+    '  }',
+    '  if (dialogs.length !== 1 || watch.dialog !== dialogs[0] || watch.invalid) return reject("Expected the single dialog observed after this exact target action");',
+    '  const normalize = (value) => typeof value === "string" ? value.replace(/\\s+/g, " ").trim() : "";',
+    '  const targetTitle = normalize(armed.targetTitle);',
+    '  const dialogText = normalize(dialogs[0].innerText || dialogs[0].textContent || "");',
+    '  if (!targetTitle || !dialogText.toLowerCase().includes(targetTitle.toLowerCase())) return reject("The confirmation dialog does not identify the target conversation title");',
+    '  const candidates = Array.from(dialogs[0].querySelectorAll("button, [role=\\"button\\"]")).filter((node) => { const label = accessibleName(node); const testId = node.getAttribute("data-testid") || ""; return ' + labelPattern + '.test(label) || ' + testIdPattern + '.test(testId); });',
+    '  if (candidates.length !== 1) return reject("Expected exactly one matching confirmation action inside the associated dialog");',
+    '  const element = candidates[0];',
+    '  if (!element || element.disabled === true) return reject("Confirmation button not found or disabled");',
+    '  cleanupWatch();',
     '  element.click();',
-    '  return JSON.stringify({ ok: true, note: "Confirmation clicked" });',
+    '  return JSON.stringify({ ok: true, note: "Target-specific confirmation clicked" });',
   ].join('\n'));
 }
 
@@ -222,14 +262,17 @@ export function buildSnapshotScript(id: string): string {
   return [
     '(() => {',
     '  const SELECTORS = ' + JSON.stringify(SELECTORS) + ';',
-    '  // Most specific selector first; the first one that matches wins, and only if it matches exactly one element (several = ambiguous = fail closed) (a broad "aside" also contains the history nav).',
     '  const pickSidebar = () => { for (const selector of SELECTORS.sidebarRoots) { const found = window.document.querySelectorAll(selector); if (found.length > 1) return null; if (found.length === 1) return found[0]; } return null; };',
     '  const sidebar = pickSidebar();',
     '  if (!sidebar) return JSON.stringify({ ok: false, note: "History sidebar not found or ambiguous" });',
     '  if (sidebar.querySelector("[aria-busy=\\"true\\"], [data-testid*=\\"skeleton\\"], [class*=\\"skeleton\\"]")) return JSON.stringify({ ok: false, note: "History list is still loading" });',
     '  const targetPath = "/c/" + ' + JSON.stringify(id.toLowerCase()) + ';',
-    '  const paths = Array.from(sidebar.querySelectorAll(SELECTORS.sidebarLinks.join(","))).map((link) => { try { return new URL(link.getAttribute("href") || "", window.location.origin).pathname.toLowerCase(); } catch (error) { return ""; } }).filter((path) => /^\\/c\\/[0-9a-f-]{36}$/.test(path) && path !== targetPath);',
-    '  return JSON.stringify({ ok: true, note: "Snapshot taken", others: Array.from(new Set(paths)) });',
+    '  const links = Array.from(sidebar.querySelectorAll(SELECTORS.sidebarLinks.join(",")));',
+    '  const paths = links.map((link) => { try { return new URL(link.getAttribute("href") || "", window.location.origin).pathname.toLowerCase(); } catch (error) { return ""; } });',
+    '  const targetCount = paths.filter((path) => path === targetPath).length;',
+    '  if (targetCount !== 1) return JSON.stringify({ ok: false, note: targetCount === 0 ? "Target conversation was not positively present in the pre-action sidebar" : "Target conversation is ambiguous in the pre-action sidebar" });',
+    '  const others = paths.filter((path) => /^\\/c\\/[0-9a-f-]{36}$/.test(path) && path !== targetPath);',
+    '  return JSON.stringify({ ok: true, targetPresent: true, note: "Target-specific pre-action snapshot taken", others: Array.from(new Set(others)) });',
     '})()',
   ].join('\n');
 }
@@ -238,39 +281,37 @@ function buildSidebarCheckScript(id: string, requireGonePage: boolean, others: r
   const pageCondition = requireGonePage
     ? [
         '  const currentPath = window.location.pathname;',
-        '  const messageNodes = window.document.querySelectorAll(SELECTORS.notFoundMessages.join(","));',
-        '  const pageText = Array.from(messageNodes).map((node) => node.textContent || "").join(" ");',
-        '  const notFound = /conversation not found|chat not found|could not find|unable to find|找不到对话|找不到此对话|对话不存在|404/i.test(pageText);',
+        '  const messageNodes = window.document.querySelectorAll("main h1, [role=\\"heading\\"][aria-level=\\"1\\"]");',
+        '  const pageText = Array.from(messageNodes).map((node) => node.textContent || "").join(" ").replace(/\\s+/g, " ").trim();',
+        '  const targetSpecificNotFound = currentPath === targetPath && /^(?:conversation not found|chat not found|unable to find (?:this )?conversation|找不到对话|找不到此对话|对话不存在)[.!。！]?$/i.test(pageText);',
         '  const atHome = currentPath === "/";',
       ]
     : [];
 
-  // Completeness evidence: every other conversation that was listed BEFORE the action must still be
-  // listed now, so a partially loaded list can never make the target look gone. Without a non-empty
-  // snapshot the only acceptable evidence is an explicit "not found" page (delete); archive then
-  // cannot be confirmed and is left for manual cleanup.
+  // Only peers from a pre-action snapshot that positively contained the target can prove removal.
+  // A generic alert or generic 404 is never enough evidence on its own.
   const confirmedExpression = requireGonePage
-    ? '(notFound || (atHome && expected.length > 0 && othersPresent)) && !stillListed'
+    ? '(targetSpecificNotFound || (atHome && expected.length > 0 && othersPresent)) && !stillListed'
     : 'expected.length > 0 && othersPresent && !stillListed';
 
   return [
     '(() => {',
     '  const SELECTORS = ' + JSON.stringify(SELECTORS) + ';',
     '  const targetId = ' + JSON.stringify(id.toLowerCase()) + ';',
+    '  const targetPath = "/c/" + targetId;',
     '  const expected = ' + JSON.stringify(others) + ';',
-    '  // Most specific selector first; the first one that matches wins, and only if it matches exactly one element (several = ambiguous = fail closed) (a broad "aside" also contains the history nav).',
     '  const pickSidebar = () => { for (const selector of SELECTORS.sidebarRoots) { const found = window.document.querySelectorAll(selector); if (found.length > 1) return null; if (found.length === 1) return found[0]; } return null; };',
     '  const sidebar = pickSidebar();',
     '  if (!sidebar) return JSON.stringify({ ok: false, note: "History sidebar not found or ambiguous; cannot confirm" });',
     '  if (sidebar.querySelector("[aria-busy=\\"true\\"], [data-testid*=\\"skeleton\\"], [class*=\\"skeleton\\"]")) return JSON.stringify({ ok: false, note: "History list is still loading; cannot confirm" });',
-    '  const links = sidebar.querySelectorAll(SELECTORS.sidebarLinks.join(","));',
-    '  const targetPath = "/c/" + targetId;',
-    '  const listed = new Set(Array.from(links).map((link) => { try { return new URL(link.getAttribute("href") || "", window.location.origin).pathname.toLowerCase(); } catch (error) { return ""; } }));',
+    '  const links = Array.from(sidebar.querySelectorAll(SELECTORS.sidebarLinks.join(",")));',
+    '  const paths = links.map((link) => { try { return new URL(link.getAttribute("href") || "", window.location.origin).pathname.toLowerCase(); } catch (error) { return ""; } });',
+    '  const listed = new Set(paths);',
     '  const othersPresent = expected.every((path) => listed.has(path));',
-    '  const stillListed = Array.from(links).some((link) => (link.getAttribute("href") || "").toLowerCase().includes(targetPath));',
+    '  const stillListed = listed.has(targetPath);',
     ...pageCondition,
     '  const confirmed = ' + confirmedExpression + ';',
-    '  return JSON.stringify({ ok: confirmed, note: confirmed ? "Conversation is absent after reload or navigation" : "Conversation absence was not confirmed" });',
+    '  return JSON.stringify({ ok: confirmed, note: confirmed ? "Target absence was confirmed by target-specific evidence or stable peers" : "Conversation absence was not confirmed" });',
     '})()',
   ].join('\n');
 }
@@ -289,13 +330,13 @@ function parsePageResult(raw: string): unknown {
   return typeof value === 'string' ? JSON.parse(value) : value;
 }
 
-function parseSnapshot(raw: string): string[] | undefined {
+function parseSnapshot(raw: string): { others: string[] } | undefined {
   try {
     const parsed = parsePageResult(raw);
     if (typeof parsed !== 'object' || parsed === null) return undefined;
-    const record = parsed as { ok?: unknown; others?: unknown };
-    if (record.ok !== true || !Array.isArray(record.others)) return undefined;
-    return record.others.filter((item): item is string => typeof item === 'string');
+    const record = parsed as { ok?: unknown; targetPresent?: unknown; others?: unknown };
+    if (record.ok !== true || record.targetPresent !== true || !Array.isArray(record.others)) return undefined;
+    return { others: record.others.filter((item): item is string => typeof item === 'string') };
   } catch {
     return undefined;
   }
@@ -330,9 +371,9 @@ export function createChatGptCleaner(dependencies: ChatGptCleanerDependencies): 
   // Per conversation id: the other conversations listed before the action (readback evidence).
   const snapshots = new Map<string, string[]>();
   const takeSnapshot = async (id: string): Promise<boolean> => {
-    const others = parseSnapshot(await dependencies.evalInPage(buildSnapshotScript(id)));
-    if (!others) return false;
-    snapshots.set(id, others);
+    const snapshot = parseSnapshot(await dependencies.evalInPage(buildSnapshotScript(id)));
+    if (!snapshot) return false;
+    snapshots.set(id, snapshot.others);
     return true;
   };
 
