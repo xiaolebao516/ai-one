@@ -20,12 +20,13 @@
     "slots:verify": "node --test scripts/prodex-slots/tests/*.test.mjs",
     "archive:verify": "node --test scripts/prodex-archive/tests/*.test.mjs",
     "claim:verify": "node --test scripts/issue-claim/tests/*.test.mjs",
+    "entry:verify": "node --test scripts/agent-entry/tests/*.test.mjs",
     "pack:portable": "node scripts/pack-portable.mjs",
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "verify": "pnpm build:injected && pnpm typecheck && pnpm lint && pnpm test && pnpm agent:verify && pnpm slots:verify && pnpm archive:verify && pnpm claim:verify && node scripts/check-adapters.mjs"
+    "verify": "pnpm build:injected && pnpm typecheck && pnpm lint && pnpm test && pnpm agent:verify && pnpm slots:verify && pnpm archive:verify && pnpm claim:verify && pnpm entry:verify && node scripts/check-adapters.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
