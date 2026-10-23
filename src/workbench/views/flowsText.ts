@@ -1,4 +1,4 @@
-import type { Locale } from '../i18n/resolve';
+import type { Locale } from '../../i18n/resolve';
 
 const EN = {
   collabSolo: 'Solo',
