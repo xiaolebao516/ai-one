@@ -406,7 +406,7 @@ describe('chat-led enhanced timeline', () => {
         }],
       }),
     });
-    expect(container.textContent).toContain('自动催促');
+    expect(container.textContent).toContain('Auto reminder');
     expect(container.textContent).toContain('please resend');
     expect(container.textContent).toContain('Timed out');
   });

@@ -225,9 +225,12 @@ export function ChatLedView({
                       <details key={reply.at} className="min-w-0">
                         <summary className="cursor-pointer text-v2-meta font-semibold text-v2-ink">
                           {text.t("chatLedCoordinatorReply")}
+                          {reply.autoReminder !== undefined ? (
+                            <span className="ml-v2-xs font-normal text-v2-ink-2">· {text.t("chatLedAutoReminder")}</span>
+                          ) : null}
                         </summary>
                         {reply.autoReminder !== undefined ? (
-                          <p className="mt-v2-xs text-v2-meta text-v2-ink-2">自动催促 · {reply.autoReminder}</p>
+                          <p className="mt-v2-xs text-v2-meta text-v2-ink-2">{text.t("chatLedAutoReminder")} · {reply.autoReminder}</p>
                         ) : null}
                         <pre className="mt-v2-xs max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-v2-sm bg-v2-sunken p-v2-sm font-v2-mono text-v2-micro text-v2-ink-2">
                           {reply.text}

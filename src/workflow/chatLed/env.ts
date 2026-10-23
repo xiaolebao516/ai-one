@@ -77,7 +77,7 @@ let bridgeStart: Promise<void> | undefined;
  * Does not touch shared workflow state, so cleanup can use it while nothing else is running.
  */
 export async function prepareProviderPage(provider: AIProvider): Promise<void> {
-  let state = await stateOf(provider);
+  const state = await stateOf(provider);
   const previousStatusAt = state?.lastStatusAt ?? 0;
   if (!state || state.webview !== 'loaded') {
     resetProviderBootState(provider);
@@ -85,32 +85,39 @@ export async function prepareProviderPage(provider: AIProvider): Promise<void> {
   }
   // Workbench hides loaded views. They must be shown offscreen again to obtain live DOM status.
   await host.provider.park(provider, parkedBounds());
+  await waitUntilFreshSendable(provider, previousStatusAt);
+  // Busy gate (#15): never write into a page that is still generating something else.
+  const idleDeadline = Date.now() + IDLE_TIMEOUT_MS;
+  while ((await stateOf(provider))?.thinking) {
+    if (Date.now() > idleDeadline) throw new Error(`${provider} stayed busy; not sending into a generating page.`);
+    await sleep(POLL_MS);
+  }
+}
+
+/**
+ * Polls CHECK_STATUS until the page has reported a status newer than `previousStatusAt` and is
+ * sendable. A page that was just opened, reloaded or given a new document refuses script evaluation
+ * until its DOM is ready ("script evaluation is not ready"). That is a transient state, not a
+ * failure: ask again on the next poll until the readiness deadline.
+ */
+async function waitUntilFreshSendable(provider: AIProvider, previousStatusAt: number): Promise<void> {
   const checkStatusScript = `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({ v: 1, action: "CHECK_STATUS", provider })})`;
   const readyDeadline = Date.now() + PAGE_READY_TIMEOUT_MS;
   for (;;) {
-    // A page that was just opened or reloaded refuses script evaluation until its DOM is ready
-    // ("script evaluation is not ready"). That is a transient state, not a failure: ask again on the
-    // next poll until the readiness deadline.
     try {
       await host.provider.eval(provider, checkStatusScript);
     } catch {
       // not ready yet
     }
-    state = await stateOf(provider);
+    const state = await stateOf(provider);
     const fresh = Boolean(state && state.lastStatusAt > previousStatusAt);
-    if (state && fresh && isSendable(state)) break;
+    if (state && fresh && isSendable(state)) return;
     if (Date.now() > readyDeadline) {
       if (state?.login === 'logged_out' || state?.login === 'blocked') {
         throw new Error(`${provider} is not logged in (state: ${state.login}). Log in from the classic UI or Resources page first.`);
       }
       throw new Error(`${provider} page did not become ready in time.`);
     }
-    await sleep(POLL_MS);
-  }
-  // Busy gate (#15): never write into a page that is still generating something else.
-  const idleDeadline = Date.now() + IDLE_TIMEOUT_MS;
-  while ((await stateOf(provider))?.thinking) {
-    if (Date.now() > idleDeadline) throw new Error(`${provider} stayed busy; not sending into a generating page.`);
     await sleep(POLL_MS);
   }
 }
@@ -140,7 +147,11 @@ export function createRealChatLedEnv(): ChatLedEnv {
     },
     prepare: prepareProviderPage,
     async newSession(provider) {
+      const previousStatusAt = (await stateOf(provider))?.lastStatusAt ?? 0;
       await host.provider.newSession(provider);
+      // A site that loads a whole new document (Gemini) reports status again only once its page has
+      // booted; evaluating or sending before that fails with "script evaluation is not ready".
+      await waitUntilFreshSendable(provider, previousStatusAt);
       // Capture the native new-document acknowledgement, including its still-blank URL.
       const raw = await host.provider.evalWithCallback(provider, 'JSON.stringify({url: location.href, documentId: window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.bootId})');
       let snapshot: unknown = JSON.parse(raw);

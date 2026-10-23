@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderState } from '../../shared/types';
-const mocks = vi.hoisted(() => ({ get: vi.fn(), open: vi.fn(), park: vi.fn(), eval: vi.fn() }));
-vi.mock('../host', () => ({ host: { connections: { get: mocks.get }, provider: { open: mocks.open, park: mocks.park, eval: mocks.eval } } }));
+const mocks = vi.hoisted(() => ({ get: vi.fn(), open: vi.fn(), park: vi.fn(), eval: vi.fn(), newSession: vi.fn(), evalWithCallback: vi.fn() }));
+vi.mock('../host', () => ({ host: { connections: { get: mocks.get }, provider: { open: mocks.open, park: mocks.park, eval: mocks.eval, newSession: mocks.newSession, evalWithCallback: mocks.evalWithCallback } } }));
 vi.mock('../bridge/pull', () => ({ resetProviderBootState: vi.fn(), startBridgePull: vi.fn() }));
 vi.mock('../workflow/runtime', () => ({ prepareWorkflowRun: vi.fn() }));
 vi.mock('../workflow/sendAndWait', () => ({ sendAndWait: vi.fn() }));
 vi.mock('../workflow/cancel', () => ({ stopProvider: vi.fn() }));
-import { prepareProviderPage } from '../workflow/chatLed/env';
+import { createRealChatLedEnv, prepareProviderPage } from '../workflow/chatLed/env';
 
 describe('chat-led real provider preparation', () => {
   beforeEach(() => vi.resetAllMocks());
@@ -52,5 +52,27 @@ describe('chat-led real provider preparation', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+  it('waits for a site that loads a new document to boot before reading its new-session identity', async () => {
+    vi.useFakeTimers();
+    try {
+      let polls = 0;
+      let state: ProviderState = { provider: 'gemini', webview: 'loaded', dom: 'ready', login: 'logged_in', thinking: false, lastStatusAt: 10 };
+      mocks.get.mockImplementation(async () => [state]);
+      // The new document resets the page state; it reports again only after a few polls.
+      mocks.newSession.mockImplementation(async () => { state = { ...state, dom: 'unknown', login: 'unknown' }; });
+      mocks.eval.mockImplementation(async () => {
+        polls += 1;
+        if (polls < 3) throw new Error('script evaluation is not ready for provider: gemini');
+        state = { ...state, dom: 'ready', login: 'logged_in', lastStatusAt: 20 };
+      });
+      mocks.evalWithCallback.mockResolvedValue(JSON.stringify({ url: 'https://gemini.google.com/app', documentId: 'boot-2' }));
+      const created = createRealChatLedEnv().newSession('gemini');
+      await vi.advanceTimersByTimeAsync(6000);
+      await expect(created).resolves.toMatchObject({ url: 'https://gemini.google.com/app', documentId: 'boot-2', freshDocument: true });
+      expect(polls).toBeGreaterThanOrEqual(3);
+      // The identity read happens only after the page reported ready again.
+      expect(mocks.evalWithCallback.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.eval.mock.invocationCallOrder[2]);
+    } finally { vi.useRealTimers(); }
   });
 });
