@@ -94,6 +94,7 @@ interface SendOptions {
 interface ProviderRequest {
   text: string;
   presetId: ChatSendPresetId;
+  sessionId: string;
   forwardedFrom?: AIProvider;
 }
 
@@ -342,19 +343,6 @@ export function useChatRuntime({
         successfulByRunRef.current.set(runId, successful);
       }
       activeResponsesRef.current.delete(provider);
-      if (runIdByProviderRef.current.get(provider) === runId) {
-        busyProvidersRef.current.delete(provider);
-        busyStartedAtRef.current.delete(provider);
-        runIdByProviderRef.current.delete(provider);
-        runSessionByProviderRef.current.delete(provider);
-        forwardedFromByProviderRef.current.delete(provider);
-        setBusyStartedAt((current) => {
-          if (current[provider] === undefined) return current;
-          const next = { ...current };
-          delete next[provider];
-          return next;
-        });
-      }
     };
 
     void startPull().then((cleanup) => {
@@ -474,7 +462,7 @@ export function useChatRuntime({
       busyStartedAtRef.current.set(provider, startedAt);
       runSessionByProviderRef.current.set(provider, sessionId);
       runIdByProviderRef.current.set(provider, runId);
-      requestByProviderRef.current.set(provider, { text, presetId, ...(options.forwardedFrom ? { forwardedFrom: options.forwardedFrom } : {}) });
+      requestByProviderRef.current.set(provider, { text, presetId, sessionId, ...(options.forwardedFrom ? { forwardedFrom: options.forwardedFrom } : {}) });
       if (options.forwardedFrom) forwardedFromByProviderRef.current.set(provider, options.forwardedFrom);
       else forwardedFromByProviderRef.current.delete(provider);
     }
@@ -659,7 +647,7 @@ export function useChatRuntime({
 
   const retryProvider = useCallback((provider: AIProvider) => {
     const request = requestByProviderRef.current.get(provider);
-    if (!request) return runSend(lastUserQuestion(activeSession.messages) ?? '', [provider], 'free');
+    if (!request || request.sessionId !== activeSessionId) return runSend(lastUserQuestion(activeSession.messages) ?? '', [provider], 'free');
     if (request.forwardedFrom) return runSend(request.text, [provider], 'free', { forwardedFrom: request.forwardedFrom, preserveComparison: true });
     return runSend(request.text, request.presetId === 'free' ? [provider] : CHAT_PROVIDERS.filter((candidate) => comparisonTargets.includes(candidate)), request.presetId);
   }, [activeSession.messages, comparisonTargets, runSend]);
@@ -676,6 +664,7 @@ export function useChatRuntime({
   const newConversation = useCallback(() => {
     const session = createConversationSession();
     setSessions((current) => upsertConversationSession(current, session));
+    activeSessionIdRef.current = session.id;
     setActiveSessionId(session.id);
     setReplyStates({});
     setComparisonTargets([]);
@@ -683,6 +672,7 @@ export function useChatRuntime({
   }, []);
 
   const selectSession = useCallback((session: ConversationSession) => {
+    activeSessionIdRef.current = session.id;
     setActiveSessionId(session.id);
     const hydrated = repliesFromSession(session.messages);
     for (const provider of busyProvidersRef.current) {
@@ -717,6 +707,7 @@ export function useChatRuntime({
     }
     const replacement = createConversationSession();
     setSessions([replacement]);
+    activeSessionIdRef.current = replacement.id;
     setActiveSessionId(replacement.id);
     setReplyStates({});
     setComparisonTargets([]);
