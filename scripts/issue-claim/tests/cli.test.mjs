@@ -107,3 +107,68 @@ test('bad arguments are a usage error, not a claim', () => {
   assert.equal(run(clones[0], ['claim', '99999999999999999999', '--agent', 'x']).code, EXIT.error);
   assert.equal(run(clones[0], ['show']).out.includes('#82'), false);
 });
+
+test('heartbeat keeps the claim alive; only the holder can beat', () => {
+  const [a, b] = clones;
+  assert.equal(run(a, ['claim', '90', '--agent', 'holder']).code, EXIT.ok);
+  assert.match(run(a, ['inspect', '90']).out, /^ACTIVE #90 claimed by holder/);
+  assert.equal(run(a, ['heartbeat', '90', '--agent', 'holder']).code, EXIT.ok);
+  const other = run(b, ['heartbeat', '90', '--agent', 'intruder']);
+  assert.equal(other.code, EXIT.held);
+  assert.match(other.err, /not the holder/);
+  assert.equal(run(b, ['heartbeat', '91', '--agent', 'holder']).code, EXIT.held);
+  assert.match(run(b, ['show', '90']).out, /claimed by holder/);
+  assert.equal(run(a, ['release', '90', '--agent', 'holder']).code, EXIT.ok);
+});
+
+test('a silent claim becomes SUSPECT_STALE but is never taken without conditions', () => {
+  const [a, b] = clones;
+  assert.equal(run(a, ['claim', '92', '--agent', 'quota-dead']).code, EXIT.ok);
+  // Fresh claim: takeover refused (HANDOFF_BLOCKED), claim unchanged.
+  const early = run(b, ['takeover', '92', '--agent', 'rescuer', '--stopped-evidence', 'killed pid 1']);
+  assert.equal(early.code, EXIT.held);
+  assert.match(early.err, /HANDOFF_BLOCKED/);
+  // Window shrunk so the claim reads as silent.
+  assert.match(run(b, ['inspect', '92', '--suspect-after-min', '0.0001']).out, /SUSPECT_STALE .*not safe to take automatically/);
+  // Evidence is mandatory even when stale.
+  assert.equal(run(b, ['takeover', '92', '--agent', 'rescuer', '--suspect-after-min', '0.0001']).code, EXIT.error);
+  assert.match(run(b, ['show', '92']).out, /claimed by quota-dead/);
+});
+
+test('takeover of a stale claim bumps the generation and fences the old holder', async () => {
+  const [a, b] = clones;
+  assert.equal(run(a, ['claim', '93', '--agent', 'old']).code, EXIT.ok);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const taken = run(b, ['takeover', '93', '--agent', 'new', '--stopped-evidence', 'process killed, confirmed by user', '--suspect-after-min', '0.0001']);
+  assert.equal(taken.code, EXIT.ok, taken.err);
+  assert.match(taken.out, /generation 2/);
+  assert.match(run(b, ['inspect', '93']).out, /^ACTIVE #93 claimed by new .* gen 2/);
+  // The old process wakes up: its heartbeat and release are refused, the new claim survives.
+  assert.equal(run(a, ['heartbeat', '93', '--agent', 'old']).code, EXIT.held);
+  assert.equal(run(a, ['release', '93', '--agent', 'old']).code, EXIT.held);
+  assert.equal(run(b, ['heartbeat', '93', '--agent', 'new']).code, EXIT.ok);
+  assert.equal(run(b, ['release', '93', '--agent', 'new']).code, EXIT.ok);
+});
+
+test('two rescuers racing for a stale claim: exactly one wins', async () => {
+  const [a, b, c] = clones;
+  assert.equal(run(a, ['claim', '94', '--agent', 'old']).code, EXIT.ok);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const codes = await Promise.all(
+    [b, c].map(
+      (dir, index) =>
+        new Promise((resolve) => {
+          const child = spawn(
+            process.execPath,
+            [CLI, 'takeover', '94', '--agent', `rescuer-${index}`, '--stopped-evidence', 'confirmed', '--suspect-after-min', '0.0001'],
+            { cwd: dir, stdio: 'ignore' },
+          );
+          child.on('exit', resolve);
+        }),
+    ),
+  );
+  assert.equal(codes.filter((code) => code === EXIT.ok).length, 1);
+  assert.equal(codes.filter((code) => code === EXIT.held).length, 1);
+  assert.match(run(a, ['show', '94']).out, /claimed by rescuer-/);
+  assert.match(run(a, ['show', '94']).out, /^#94 claimed by rescuer-\d/);
+});
