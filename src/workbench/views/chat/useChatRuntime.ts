@@ -49,6 +49,7 @@ export interface ChatRuntimeHost {
 export interface ChatRuntimeOptions {
   enabled: boolean;
   locale: Locale;
+  isDesktop?: boolean;
   host?: ChatRuntimeHost;
   runWorkflow?: (params: RunWorkflowParams) => Promise<RunWorkflowResult>;
   startBridgePull?: () => Promise<() => void>;
@@ -179,6 +180,7 @@ function preflightNotice(result: Extract<RunWorkflowResult, { ok: false }>, loca
 export function useChatRuntime({
   enabled,
   locale,
+  isDesktop: isDesktopOverride,
   host: hostOverride,
   runWorkflow: runWorkflowOverride,
   startBridgePull: startBridgePullOverride,
@@ -245,7 +247,7 @@ export function useChatRuntime({
     let cleanupBridge: (() => void) | undefined;
     let desktop = false;
     try {
-      desktop = runtimeHost.app.isDesktop();
+      desktop = isDesktopOverride ?? runtimeHost.app.isDesktop();
     } catch {
       desktop = false;
     }
@@ -389,7 +391,7 @@ export function useChatRuntime({
       cleanupUpdates?.();
       cleanupBridge?.();
     };
-  }, [enabled, runtimeHost, startPull]);
+  }, [enabled, isDesktopOverride, runtimeHost, startPull]);
 
   const appendMessage = useCallback((sessionId: string, message: ConversationSessionMessage) => {
     setSessions((current) => {
