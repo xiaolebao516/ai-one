@@ -462,7 +462,9 @@ export function claimSlot(home, id, { pid = process.pid, alive = processAlive, n
         const age = claimAgeMs(file);
         if (age === null) return { retry: true };
         const holder = readClaim(home, id);
-        const dead = holder ? !alive(holder.pid) || age >= staleMs : age >= staleMs;
+        // Same rule as the sweep: a live process keeps a claim that names a thread past the heartbeat window.
+        const keepThread = holder && alive(holder.pid) && claimOwnership(holder).threadUrl && age < THREAD_CLAIM_STALE_MS;
+        const dead = holder ? !alive(holder.pid) || (age >= staleMs && !keepThread) : age >= staleMs;
         if (!dead) return { holder };
         removeClaimFile(file);
         return { retry: true };

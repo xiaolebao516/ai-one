@@ -1252,3 +1252,15 @@ test('self-heal keeps a live thread claim past the heartbeat window but still re
   assert.ok(readClaim(h.home, 1), 'the live thread claim survives the sweep that a normal command runs');
   assert.equal(readClaim(h.home, 2), null, 'a stale claim without a thread is still reaped');
 });
+
+test('a new run cannot take over a slot whose live thread claim has a stale heartbeat', async () => {
+  const h = harness();
+  const thread = claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+  const file = path.join(h.home, 'slot-claims', 'slot-1.json');
+  const old = new Date(Date.now() - 10 * 60 * 1000);
+  fs.utimesSync(file, old, old);
+  const attempt = claimSlot(h.home, 1, { pid: 222, alive: () => true, meta: { task: '72' } });
+  assert.equal(attempt.ok, false, 'the slot stays with the live thread claim');
+  assert.equal(readClaim(h.home, 1).threadUrl, THREAD);
+  thread.release();
+});
