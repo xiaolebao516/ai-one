@@ -107,8 +107,10 @@ describe('v2 design tokens', () => {
         expect(narrow, id).toBeLessThan(mid);
         expect(mid, id).toBeLessThan(wide);
       }
-      const paper = v2CssVariables('paper', 'light');
-      expect([paper['--v2-space-page-narrow'], paper['--v2-space-page-mid'], paper['--v2-space-page']]).toEqual(['20px', '28px', '40px']);
+      for (const id of V2_SKIN_IDS) {
+        const v = v2CssVariables(id, 'light');
+        expect([v['--v2-space-page-narrow'], v['--v2-space-page-mid'], v['--v2-space-page']], id).toEqual(['20px', '28px', '40px']);
+      }
       for (const view of ['HomeView', 'TasksView', 'TaskView', 'ResourcesView', 'PlannedView']) {
         const src = readFileSync(new URL(`../workbench/views/${view}.tsx`, import.meta.url), 'utf8');
         expect(src, view).toContain('p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:p-v2-page');

@@ -196,7 +196,7 @@ const MIST: V2Skin = {
     radius: { sm: '8px', md: '10px', lg: '14px', xl: '20px', pill: '999px' },
     font: { sans: FONT_SANS, mono: FONT_MONO, serif: FONT_SERIF },
     text: { ...TEXT_SCALE, body: '14.5px', meta: '12.5px' },
-    space: { xs: '4px', sm: '8px', md: '14px', lg: '22px', xl: '34px', card: '24px', page: '44px', pageMid: '32px', pageNarrow: '22px', section: '44px' },
+    space: { xs: '4px', sm: '8px', md: '14px', lg: '22px', xl: '34px', card: '24px', page: '40px', pageMid: '28px', pageNarrow: '20px', section: '44px' },
     control: { sm: '28px', md: '32px', lg: '38px' },
   },
   light: {
