@@ -85,6 +85,7 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
     () => [
       createChatGptCleaner({
         evalInPage: (js) => host.provider.evalWithCallback('chatgpt', js),
+        reload: () => host.provider.reload('chatgpt'),
         navigate: async (url) => {
           await host.provider.eval('chatgpt', `location.href = ${JSON.stringify(url)}`);
           await sleep(4_000);

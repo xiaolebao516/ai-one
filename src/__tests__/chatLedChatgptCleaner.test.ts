@@ -110,7 +110,7 @@ describe('ChatGPT page scripts', () => {
     expect(click).not.toHaveBeenCalled();
   });
 
-  it('fails closed when pointerdown does not actually open the target menu', () => {
+  it('does not treat menu activation as permission to delete when no owned menu opens', () => {
     window.history.replaceState({}, '', CONVERSATION_PATH);
     document.body.innerHTML = '<h1>Mine</h1><button data-testid="conversation-options-menu" id="trigger" aria-expanded="false">Options</button>';
     const pointerDown = vi.fn();
@@ -118,8 +118,9 @@ describe('ChatGPT page scripts', () => {
 
     const result = JSON.parse(runPageScript(buildOpenMenuScript(CONVERSATION_PATH))) as { ok: boolean; note: string };
 
-    expect(result.ok).toBe(false);
-    expect(result.note).toContain('did not open');
+    expect(result.ok).toBe(true);
+    expect(result.note).toContain('requested');
+    expect(JSON.parse(runPageScript(buildDeleteScript(CONVERSATION_PATH))).ok).toBe(false);
     expect(pointerDown).toHaveBeenCalledTimes(1);
   });
 
@@ -385,10 +386,10 @@ describe('ChatGPT page scripts: ownership and readback fail closed', () => {
 
   it('needs the readback evidence to hold twice', async () => {
     const answers = [JSON.stringify({ ok: true }), JSON.stringify({ ok: false, note: 'flaky' })];
-    const evalInPage = vi.fn(async (_script: string) => answers.shift() ?? JSON.stringify({ ok: false }));
+    const evalInPage = vi.fn(async (script: string) => script.includes('Reload requested') ? JSON.stringify({ ok: true }) : answers.shift() ?? JSON.stringify({ ok: false }));
     const cleaner = createChatGptCleaner({ evalInPage, navigate: vi.fn(async () => undefined), sleep: vi.fn(async () => undefined) });
     expect(await cleaner.confirmGone(CONVERSATION_URL)).toBe(false);
-    expect(evalInPage).toHaveBeenCalledTimes(2);
+    expect(evalInPage).toHaveBeenCalledTimes(11);
   });
 });
 
@@ -483,6 +484,41 @@ describe('ChatGPT page scripts: the confirmation must come from our own click', 
 });
 
 describe('ChatGPT cleaner orchestration', () => {
+  it('uses the host reload for stale readback instead of trusting a page-script reload', async () => {
+    const answers = [{ ok: false }, { ok: true }, { ok: true }];
+    const evalInPage = vi.fn(async (_script: string) => JSON.stringify(answers.shift() ?? { ok: false }));
+    const reload = vi.fn(async () => undefined);
+    const cleaner = createChatGptCleaner({ evalInPage, reload, navigate: vi.fn(async () => undefined), sleep: vi.fn(async () => undefined) });
+    expect(await cleaner.confirmGone(CONVERSATION_URL)).toBe(true);
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(evalInPage).toHaveBeenCalledTimes(3);
+    expect(evalInPage.mock.calls.every(([script]) => !script.includes('Reload requested'))).toBe(true);
+  });
+
+  it('waits out a stale post-navigation list and requires two consecutive positive readbacks', async () => {
+    const answers = [{ ok: false }, { ok: true }, { ok: true }];
+    const evalInPage = vi.fn(async (script: string) => JSON.stringify(script.includes('Reload requested') ? { ok: true } : answers.shift() ?? { ok: false }));
+    const cleaner = createChatGptCleaner({ evalInPage, navigate: vi.fn(async () => undefined), sleep: vi.fn(async () => undefined) });
+    expect(await cleaner.confirmGone(CONVERSATION_URL)).toBe(true);
+    expect(evalInPage).toHaveBeenCalledTimes(4);
+  });
+
+  it('waits for the target-positive history snapshot before opening any menu', async () => {
+    const responses = [
+      { ok: false, note: 'History list is still loading' },
+      { ok: false, note: 'Target not listed yet' },
+      { ok: true, targetPresent: true, others: [OTHER_ID_PATH] },
+      { ok: true }, { ok: true }, { ok: true },
+    ];
+    const evalInPage = vi.fn(async (script: string) => JSON.stringify(script.includes('Reload requested') ? { ok: true } : responses.shift() ?? { ok: false }));
+    const sleep = vi.fn(async () => undefined);
+    const cleaner = createChatGptCleaner({ evalInPage, navigate: vi.fn(async () => undefined), sleep });
+    expect((await cleaner.deleteConversation(CONVERSATION_URL)).ok).toBe(true);
+    expect(evalInPage).toHaveBeenCalledTimes(7);
+    expect(evalInPage.mock.calls.slice(0, 4).filter(([script]) => !script.includes('Reload requested')).every(([script]) => script.includes('Target conversation was not positively present'))).toBe(true);
+    expect(responses).toHaveLength(0);
+  });
+
   it('requires the target to be positively present before attempting cleanup', async () => {
     const evalInPage = vi.fn(async () => JSON.stringify(JSON.stringify({
       ok: true, targetPresent: false, others: [OTHER_ID_PATH],
@@ -494,7 +530,7 @@ describe('ChatGPT cleaner orchestration', () => {
 
     expect(result.ok).toBe(false);
     expect(result.note).toContain('without a way to confirm');
-    expect(evalInPage).toHaveBeenCalledTimes(1);
+    expect(evalInPage).toHaveBeenCalledTimes(11);
   });
 
   it('does not accept a generic alert containing 404 as target-specific deletion evidence', () => {
@@ -557,11 +593,11 @@ describe('ChatGPT cleaner orchestration', () => {
   });
 
   it('does not act at all when the sidebar snapshot cannot be taken', async () => {
-    const evalInPage = vi.fn(async (_script: string) => JSON.stringify({ ok: false, note: 'History list is still loading' }));
+    const evalInPage = vi.fn(async (script: string) => JSON.stringify(script.includes('Reload requested') ? { ok: true } : { ok: false, note: 'History list is still loading' }));
     const cleaner = createChatGptCleaner({ evalInPage, navigate: vi.fn(async () => undefined), sleep: vi.fn(async () => undefined) });
     const result = await cleaner.deleteConversation(CONVERSATION_URL);
     expect(result.ok).toBe(false);
-    expect(evalInPage).toHaveBeenCalledTimes(1);
+    expect(evalInPage).toHaveBeenCalledTimes(11);
   });
 
   it('never confirms archive readback without a snapshot from before the action', () => {

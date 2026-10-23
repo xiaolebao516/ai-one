@@ -5,6 +5,8 @@ import type { CleanerStep, ConversationCleaner } from '../cleanup';
 export interface ChatGptCleanerDependencies {
   evalInPage(js: string): Promise<string>;
   navigate(url: string): Promise<void>;
+  /** Native reload also refreshes host navigation state; page-script reloads may be intercepted. */
+  reload?(): Promise<void>;
   sleep(ms: number): Promise<void>;
 }
 
@@ -185,8 +187,7 @@ export function buildOpenMenuScript(path: string): string {
     '  const event = new PointerEventConstructor("pointerdown", { bubbles: true, cancelable: true, button: 0, ctrlKey: false, pointerType: "mouse" });',
     '  if (!("pointerType" in event)) Object.defineProperty(event, "pointerType", { value: "mouse" });',
     '  element.dispatchEvent(event);',
-    '  if (!ownedMenu(element)) return JSON.stringify({ ok: false, note: "Pointerdown did not open the target conversation menu" });',
-    '  return JSON.stringify({ ok: true, note: "Target conversation menu opened by pointerdown" });',
+    '  return JSON.stringify({ ok: true, note: "Target conversation menu activation requested by pointerdown" });',
   ].join('\n'));
 }
 
@@ -361,6 +362,14 @@ export function createChatGptCleaner(dependencies: ChatGptCleanerDependencies): 
     return parseCleanerStep(await dependencies.evalInPage(script));
   };
 
+  const reloadPage = async (): Promise<void> => {
+    if (dependencies.reload) await dependencies.reload();
+    else {
+      const result = await evaluateStep(buildReloadScript());
+      if (!result.ok) throw new Error('Conversation reload failed.');
+    }
+  };
+
   const openMenu = async (path: string): Promise<CleanerStep> => {
     const step = await evaluateStep(buildOpenMenuScript(path));
     if (!step.ok) return step;
@@ -368,13 +377,40 @@ export function createChatGptCleaner(dependencies: ChatGptCleanerDependencies): 
     return step;
   };
 
+  const confirmStable = async (script: string): Promise<boolean> => {
+    let consecutive = 0;
+    let refreshed = false;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        consecutive = (await evaluateStep(script)).ok ? consecutive + 1 : 0;
+      } catch { consecutive = 0; }
+      if (consecutive === 2) return true;
+      if (!consecutive && !refreshed) {
+        refreshed = true;
+        try { await reloadPage(); } catch { return false; }
+      }
+      if (attempt < 9) await dependencies.sleep(consecutive ? 1_500 : 1_000);
+    }
+    return false;
+  };
+
   // Per conversation id: the other conversations listed before the action (readback evidence).
   const snapshots = new Map<string, string[]>();
   const takeSnapshot = async (id: string): Promise<boolean> => {
-    const snapshot = parseSnapshot(await dependencies.evalInPage(buildSnapshotScript(id)));
-    if (!snapshot) return false;
-    snapshots.set(id, snapshot.others);
-    return true;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      // History hydrates after the conversation itself; only read while waiting, never act.
+      try {
+        const snapshot = parseSnapshot(await dependencies.evalInPage(buildSnapshotScript(id)));
+        if (snapshot) {
+          snapshots.set(id, snapshot.others);
+          return true;
+        }
+      } catch { /* A freshly navigated document can briefly refuse evaluation. */ }
+      // A same-URL client navigation can retain an old history cache; refresh once, then only read.
+      if (attempt === 0) { try { await reloadPage(); } catch { return false; } }
+      if (attempt < 9) await dependencies.sleep(1_000);
+    }
+    return false;
   };
 
   return {
@@ -427,12 +463,7 @@ export function createChatGptCleaner(dependencies: ChatGptCleanerDependencies): 
       await dependencies.navigate(normalized.href);
       await dependencies.sleep(400);
       const others = snapshots.get(normalized.id) ?? [];
-      const first = await evaluateStep(buildConfirmGoneScript(normalized.id, others));
-      if (!first.ok) return false;
-      // The evidence must hold twice, a moment apart, so a half-loaded page cannot pass.
-      await dependencies.sleep(1_500);
-      const second = await evaluateStep(buildConfirmGoneScript(normalized.id, others));
-      return second.ok;
+      return confirmStable(buildConfirmGoneScript(normalized.id, others));
     },
 
     confirmArchived: async (url: string): Promise<boolean> => {
@@ -441,16 +472,11 @@ export function createChatGptCleaner(dependencies: ChatGptCleanerDependencies): 
 
       await dependencies.navigate(normalized.href);
       await dependencies.sleep(250);
-      const reload = await evaluateStep(buildReloadScript());
-      if (!reload.ok) return false;
+      await reloadPage();
 
       await dependencies.sleep(500);
       const others = snapshots.get(normalized.id) ?? [];
-      const first = await evaluateStep(buildConfirmArchivedScript(normalized.id, others));
-      if (!first.ok) return false;
-      await dependencies.sleep(1_500);
-      const second = await evaluateStep(buildConfirmArchivedScript(normalized.id, others));
-      return second.ok;
+      return confirmStable(buildConfirmArchivedScript(normalized.id, others));
     },
   };
 }
