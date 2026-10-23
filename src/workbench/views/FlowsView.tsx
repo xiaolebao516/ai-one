@@ -24,8 +24,10 @@ export function FlowsView({ locale, fs }: FlowsViewProps) {
           <Badge>{text.t('localFile')}</Badge>
           {editor.hasUnsaved ? <Badge tone="unknown">{text.t('dirty')}</Badge> : null}
         </div>
-        <p className="max-w-3xl text-v2-body text-v2-ink-2">{text.t('intro')}</p>
-        <Notice tone="neutral" title={text.t('howRunLabel')}>{text.t('howRuns')}</Notice>
+        <div className="grid items-start gap-v2-md min-[1100px]:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
+          <p className="max-w-3xl text-v2-body text-v2-ink-2">{text.t('intro')}</p>
+          <Notice tone="neutral" title={text.t('howRunLabel')}>{text.t('howRuns')}</Notice>
+        </div>
       </header>
 
       {editor.loading ? <LoadingState label={text.t('loadingFlows')} /> : null}
