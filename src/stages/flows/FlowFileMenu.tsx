@@ -209,7 +209,7 @@ export function FlowFileMenu({ file, flowId, text, fs, disabled = false, onImpor
                 ) : null}
                 {conflictCount > 0 ? (
                   <label className="flex items-start gap-v2-sm text-v2-meta text-v2-ink-2">
-                    <input type="radio" name="flows-import-resolution" value="overwrite" checked={pending.choice === 'overwrite'} onChange={() => setPending({ ...pending, choice: 'overwrite' })} />
+                    <input type="radio" className="accent-v2-primary" name="flows-import-resolution" value="overwrite" checked={pending.choice === 'overwrite'} onChange={() => setPending({ ...pending, choice: 'overwrite' })} />
                     {text.t('importOverwrite')}
                   </label>
                 ) : null}
