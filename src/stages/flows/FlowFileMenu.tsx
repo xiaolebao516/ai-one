@@ -143,24 +143,17 @@ export function FlowFileMenu({ file, flowId, text, fs, disabled = false, onImpor
       }
 
       const plan = planImport(file, parsed.file);
-      const conflicts = plan.stages.conflicts.length + plan.flows.conflicts.length;
-      if (conflicts === 0) {
-        onImport(parsed.file, 'keep-both');
-        setFeedback(text.t('importDone'));
-        setFeedbackTone('neutral');
-        setPending(null);
-      } else {
-        setPending({ incoming: parsed.file, plan, choice: '' });
-        setFeedback(undefined);
-      }
+      setPending({ incoming: parsed.file, plan, choice: '' });
+      setFeedback(undefined);
+      setFeedbackTone('neutral');
       setOpen(true);
     };
     reader.readAsText(selected);
   };
 
   const applyChoice = () => {
-    if (!pending || !pending.choice) return;
-    onImport(pending.incoming, pending.choice);
+    if (!pending || (conflictCount > 0 && !pending.choice)) return;
+    onImport(pending.incoming, pending.choice || 'keep-both');
     setPending(null);
     setFeedback(text.t('importDone'));
     setFeedbackTone('neutral');
@@ -200,17 +193,21 @@ export function FlowFileMenu({ file, flowId, text, fs, disabled = false, onImpor
                     <li key={'flow-' + conflict.item.id}>· {text.t('flowName')}: {conflict.item.name} — {conflict.existing.map((item) => item.name).join(', ')}</li>
                   ))}
                 </ul>
-                <p className="text-v2-meta text-v2-ink-3">{text.t('chooseConflict')}</p>
-                <label className="flex items-start gap-v2-sm text-v2-meta text-v2-ink-2">
-                  <input type="radio" name="flows-import-resolution" value="keep-both" checked={pending.choice === 'keep-both'} onChange={() => setPending({ ...pending, choice: 'keep-both' })} />
-                  {text.t('importKeepBoth')}
-                </label>
-                <label className="flex items-start gap-v2-sm text-v2-meta text-v2-ink-2">
-                  <input type="radio" name="flows-import-resolution" value="overwrite" checked={pending.choice === 'overwrite'} onChange={() => setPending({ ...pending, choice: 'overwrite' })} />
-                  {text.t('importOverwrite')}
-                </label>
+                {conflictCount === 0 ? <p className="text-v2-meta text-v2-ink-3">{text.t('importNoConflicts')}</p> : <p className="text-v2-meta text-v2-ink-3">{text.t('chooseConflict')}</p>}
+                {conflictCount > 0 ? (
+                  <label className="flex items-start gap-v2-sm text-v2-meta text-v2-ink-2">
+                    <input type="radio" name="flows-import-resolution" value="keep-both" checked={pending.choice === 'keep-both'} onChange={() => setPending({ ...pending, choice: 'keep-both' })} />
+                    {text.t('importKeepBoth')}
+                  </label>
+                ) : null}
+                {conflictCount > 0 ? (
+                  <label className="flex items-start gap-v2-sm text-v2-meta text-v2-ink-2">
+                    <input type="radio" name="flows-import-resolution" value="overwrite" checked={pending.choice === 'overwrite'} onChange={() => setPending({ ...pending, choice: 'overwrite' })} />
+                    {text.t('importOverwrite')}
+                  </label>
+                ) : null}
                 <div className="flex flex-wrap gap-v2-sm">
-                  <Button size="sm" disabled={!pending.choice || disabled} onClick={applyChoice}>{text.t('importApply')}</Button>
+                  <Button size="sm" disabled={(conflictCount > 0 && !pending.choice) || disabled} onClick={applyChoice}>{text.t('importApply')}</Button>
                   <Button size="sm" variant="ghost" onClick={() => { setPending(null); setFeedback(text.t('importCancelled')); setFeedbackTone('neutral'); }}>{text.t('importCancel')}</Button>
                 </div>
               </section>
