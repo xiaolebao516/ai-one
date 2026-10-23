@@ -102,19 +102,23 @@ const providerApi = {
   eval: (provider: ProviderInstance, js: string): Promise<void> => invoke('provider_eval', { provider, js }),
   evalWithCallback: (provider: ProviderInstance, js: string): Promise<string> =>
     invoke('provider_eval_with_callback', { provider, js }),
-  send: (provider: ProviderInstance, text: string): Promise<void> => {
+  // drainOutbox: a collector that reads the page outbox by polling (extra instances) must not see replies
+  // left behind by an earlier cancelled or timed-out send. The page drops everything already queued in
+  // the SAME script that dispatches the message, so no reply can fall in between.
+  send: (provider: ProviderInstance, text: string, options?: { drainOutbox?: boolean }): Promise<void> => {
     if (providersWithUnconfirmedStop.has(provider)) {
       return Promise.reject(new Error(`${provider} send rejected: stop failed; reload provider page before retrying`));
     }
-    return invoke('provider_eval', {
-      provider,
-      js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
-        v: 1,
-        action: 'SEND_MESSAGE',
-        provider: providerInstanceBase(provider),
-        payload: { text },
-      })});`,
+    const message = JSON.stringify({
+      v: 1,
+      action: 'SEND_MESSAGE',
+      provider: providerInstanceBase(provider),
+      payload: { text },
     });
+    const js = options?.drainOutbox
+      ? `(() => { const b = window.__MAC_BRIDGE__; if (!b) return; try { let max = 0; for (const item of (b.peekOutbox() || [])) { if (item && typeof item.mid === 'number' && item.mid > max) max = item.mid; } if (max > 0) b.ackBulk(max); } catch (e) { /* drain is best effort; the collector also checks the boot id */ } b.dispatch(${message}); })();`
+      : `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${message});`;
+    return invoke('provider_eval', { provider, js });
   },
   fill: (provider: ProviderInstance, text: string): Promise<void> =>
     invoke('provider_eval', {

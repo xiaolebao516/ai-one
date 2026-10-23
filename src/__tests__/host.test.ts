@@ -330,3 +330,25 @@ describe('host bridge title messages with provider instances (#143)', () => {
     expect(all).toHaveBeenCalledWith(message('chatgpt#2'));
   });
 });
+
+describe('host send with outbox draining (#143)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    listenMock.mockReset();
+  });
+
+  it('drains stale outbox items inside the same script, before dispatching, only when asked', async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await host.provider.send('chatgpt#2', 'task B', { drainOutbox: true });
+    const drained = String((invokeMock.mock.calls.at(-1)?.[1] as { js: string }).js);
+    expect(drained.indexOf('peekOutbox')).toBeGreaterThan(-1);
+    expect(drained.indexOf('ackBulk')).toBeGreaterThan(drained.indexOf('peekOutbox'));
+    expect(drained.indexOf('dispatch')).toBeGreaterThan(drained.indexOf('ackBulk'));
+    expect(drained).toContain('"provider":"chatgpt"');
+
+    await host.provider.send('chatgpt#2', 'task C');
+    const plain = String((invokeMock.mock.calls.at(-1)?.[1] as { js: string }).js);
+    expect(plain).not.toContain('peekOutbox');
+    expect(plain).toContain('dispatch');
+  });
+});

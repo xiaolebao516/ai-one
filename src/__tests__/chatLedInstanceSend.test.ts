@@ -28,8 +28,9 @@ describe('extra ChatGPT instance response isolation', () => {
       sendAndWaitInstance('chatgpt#3', 'same task'),
     ]);
     expect([two, three]).toEqual(['worker two', 'worker three']);
-    expect(mocks.send).toHaveBeenCalledWith('chatgpt#2', 'same task');
-    expect(mocks.send).toHaveBeenCalledWith('chatgpt#3', 'same task');
+    // Stale replies from an earlier cancelled send are dropped atomically with the dispatch.
+    expect(mocks.send).toHaveBeenCalledWith('chatgpt#2', 'same task', { drainOutbox: true });
+    expect(mocks.send).toHaveBeenCalledWith('chatgpt#3', 'same task', { drainOutbox: true });
     expect(mocks.eval.mock.calls.map((args) => args[0])).toEqual(
       expect.arrayContaining(['chatgpt#2', 'chatgpt#3']),
     );

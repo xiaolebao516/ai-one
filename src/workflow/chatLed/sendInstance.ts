@@ -35,9 +35,10 @@ export function sendAndWaitInstance(instance: ProviderInstance, text: string): P
     cancel(reason) { state.cancelled = true; rejectStop(reason); },
   };
   pending.set(instance, state);
-  // No await before send; forwardLive/proceed is the final authorization gate.
+  // No await before send; forwardLive/proceed is the final authorization gate. drainOutbox drops replies
+  // a cancelled/timed-out earlier send left in the page, in the same script that dispatches this message.
   let sent: Promise<void>;
-  try { sent = host.provider.send(instance, text); }
+  try { sent = host.provider.send(instance, text, { drainOutbox: true }); }
   catch (error) { pending.delete(instance); return Promise.reject(error); }
   const work = (async () => {
     await sent;
