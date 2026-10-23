@@ -71,7 +71,7 @@ export function buildProviderCleanerScript(
     '  const action = ' + JSON.stringify(action) + ';',
     '  const peers = ' + JSON.stringify(peers) + ';',
     '  const S = ' + JSON.stringify(config.selectors) + ';',
-    '  const pathPattern = new RegExp(' + JSON.stringify(config.conversationPath.source) + ');',
+    '  const pathPattern = new RegExp(' + JSON.stringify(config.conversationPath.source) + ', ' + JSON.stringify(config.conversationPath.flags) + ');',
     '  const fail = (note) => JSON.stringify({ ok: false, note });',
     '  if (location.origin !== origin || location.pathname !== path || !pathPattern.test(path)) return fail("Conversation origin or path mismatch");',
     '  const one = (root, css) => { if (!root || !css) return null; const matches = root.querySelectorAll(css); return matches.length === 1 ? matches[0] : null; };',
