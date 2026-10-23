@@ -161,6 +161,8 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
   const readyFiles = readyAttachmentFiles(attachments);
   const attachmentsReading = hasReadingAttachment(attachments);
   const activeTargets = presetId === 'free' ? runtime.selectedTargets : [];
+  const busySelectedTargets = activeTargets.filter((provider) => runtime.busyProviders.includes(provider));
+  const sendTargets = activeTargets.filter((provider) => !runtime.busyProviders.includes(provider) && deriveLoginState(runtime.providerStates[provider]) !== 'loggedOut');
 
   const choosePreset = (value: string) => {
     if (!(CHAT_PRESET_IDS as readonly string[]).includes(value)) return;
@@ -169,7 +171,8 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
   };
 
   const toggleTarget = (provider: AIProvider) => {
-    if (runtime.busyProviders.includes(provider) || deriveLoginState(runtime.providerStates[provider]) === 'loggedOut') return;
+    const selected = runtime.selectedTargets.includes(provider);
+    if (deriveLoginState(runtime.providerStates[provider]) === 'loggedOut' || (runtime.busyProviders.includes(provider) && !selected)) return;
     runtime.setSelectedTargets(
       runtime.selectedTargets.includes(provider)
         ? runtime.selectedTargets.filter((target) => target !== provider)
@@ -187,7 +190,13 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
       setAttachments([]);
       return;
     }
-    const sent = await runtime.sendMessage(message, runtime.selectedTargets, presetId);
+    if (presetId === 'free' && sendTargets.length === 0) {
+      setActionNotice(busySelectedTargets.length > 0
+        ? text.t('chatBusyNotice', { providers: busySelectedTargets.map((provider) => AI_PROVIDERS[provider].name).join(', ') })
+        : text.t('chatNoTarget'));
+      return;
+    }
+    const sent = await runtime.sendMessage(message, presetId === 'free' ? sendTargets : runtime.selectedTargets, presetId);
     if (sent) {
       setDraft('');
       setAttachments([]);
@@ -237,7 +246,21 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
     const reply = runtime.replyStates[forwardSource];
     const content = reply?.content ?? '';
     if (!content) return;
-    const sent = await runtime.forwardMessage(forwardSource, content, forwardTargets, forwardNote);
+    const sendableForwardTargets = forwardTargets.filter((target) =>
+      !runtime.busyProviders.includes(target) && deriveLoginState(runtime.providerStates[target]) !== 'loggedOut',
+    );
+    if (sendableForwardTargets.length === 0) {
+      const blocked = forwardTargets.filter((target) => runtime.busyProviders.includes(target));
+      setActionNotice(blocked.length > 0
+        ? text.t('chatBusyNotice', { providers: blocked.map((target) => AI_PROVIDERS[target].name).join(', ') })
+        : text.t('chatSelectForwardTarget'));
+      return;
+    }
+    if (sendableForwardTargets.length < forwardTargets.length) {
+      const blocked = forwardTargets.filter((target) => !sendableForwardTargets.includes(target));
+      setActionNotice(text.t('chatBusyExcluded', { providers: blocked.map((target) => AI_PROVIDERS[target].name).join(', ') }));
+    }
+    const sent = await runtime.forwardMessage(forwardSource, content, sendableForwardTargets, forwardNote);
     if (sent) {
       setForwardSource(undefined);
       setForwardTargets([]);
@@ -436,7 +459,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
                 const chip = chipState(runtime.providerStates[provider], 'chip', (key) => translateKey(key, locale));
                 const selected = runtime.selectedTargets.includes(provider);
                 const serial = presetId !== 'free';
-                const disabled = busy || login === 'loggedOut' || serial;
+                const disabled = (busy && !selected) || login === 'loggedOut' || serial;
                 const reason = busy
                   ? text.t('chatBusy', { provider: AI_PROVIDERS[provider].name })
                   : login === 'loggedOut'
@@ -462,6 +485,9 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
               })}
             </div>
 
+            {busySelectedTargets.length > 0 && sendTargets.length > 0 ? (
+              <Notice tone="unknown">{text.t('chatBusyExcluded', { providers: busySelectedTargets.map((provider) => AI_PROVIDERS[provider].name).join(', ') })}</Notice>
+            ) : null}
             {presetId === 'deliberation' ? (
               <Notice tone="unknown">{text.t('chatDeliberationNotice')}</Notice>
             ) : presetId !== 'free' ? (
@@ -520,9 +546,13 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
               <Button
                 type="submit"
                 variant="primary"
-                disabled={attachmentsReading || attachmentBusy || (!draft.trim() && readyFiles.length === 0) || (presetId === 'free' && activeTargets.length === 0)}
-                disabledReason={presetId === 'free' && activeTargets.length === 0 ? text.t('chatNoTarget') : undefined}
-                loading={hasBusy && runtime.busyProviders.some((provider) => presetId === 'free' ? activeTargets.includes(provider) : true)}
+                disabled={attachmentsReading || attachmentBusy || (!draft.trim() && readyFiles.length === 0) || (presetId === 'free' && sendTargets.length === 0)}
+                disabledReason={presetId === 'free' && sendTargets.length === 0
+                  ? busySelectedTargets.length > 0
+                    ? text.t('chatBusyNotice', { providers: busySelectedTargets.map((provider) => AI_PROVIDERS[provider].name).join(', ') })
+                    : text.t('chatNoTarget')
+                  : undefined}
+                loading={presetId === 'free' && sendTargets.length === 0 && busySelectedTargets.length > 0}
               >
                 {presetId === 'deliberation' ? text.t('chatStartDiscussion') : text.t('chatSend')}
               </Button>
@@ -637,7 +667,7 @@ function ReplyCard({
                   key={target}
                   size="sm"
                   variant={forwardTargets.includes(target) ? 'primary' : 'secondary'}
-                  disabled={targetBusy}
+                  disabled={targetBusy && !forwardTargets.includes(target)}
                   disabledReason={targetBusy ? text.t('chatBusy', { provider: AI_PROVIDERS[target].name }) : undefined}
                   aria-pressed={forwardTargets.includes(target)}
                   onClick={() => onToggleForwardTarget(target)}
