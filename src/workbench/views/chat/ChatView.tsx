@@ -472,7 +472,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
                     variant={selected ? 'primary' : 'secondary'}
                     disabled={disabled}
                     disabledReason={reason}
-                    title={chip.label}
+                    title={busy ? text.t('chatBusy', { provider: AI_PROVIDERS[provider].name }) : chip.label}
                     className={login === 'loggedOut' ? 'border-dashed' : undefined}
                     aria-pressed={selected}
                     onClick={() => toggleTarget(provider)}
