@@ -2,7 +2,7 @@ import type { LocalStoreFs } from '../../host/localStore';
 import type { FlowDef, FlowsFile, StageDef, ValidationIssue } from '../flowModel';
 import type { StageSelection } from '../flowEditor';
 import type { Locale } from '../../i18n/resolve';
-import { Badge, Button, Card, EmptyState, Notice, Select, cx } from '../../ui/v2';
+import { Badge, Button, Card, EmptyState, Notice, Select } from '../../ui/v2';
 import type { FlowsText } from '../../workbench/views/flowsText';
 import { FlowFileMenu } from './FlowFileMenu';
 import { FlowStageCard } from './FlowStageCard';
@@ -158,8 +158,9 @@ export function FlowStageList({
               </li>
             );
           }
-          const resolved = file.stages.find((item) => item.id === ref.stageId);
-          const effective = resolved && ref.overrides ? { ...resolved, ...ref.overrides, participants: ref.overrides.participants ?? resolved.participants } : resolved;
+          const effective = ref.overrides
+            ? { ...stage, ...ref.overrides, participants: ref.overrides.participants ?? stage.participants }
+            : stage;
           const invalid = stageIssue(effective, flow, issues);
           return (
             <li key={ref.stageId + '-' + index} className="grid min-w-0 gap-v2-xs">
