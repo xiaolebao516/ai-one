@@ -1,4 +1,4 @@
-import type { BridgeMessage, ProviderInstance, ProviderState } from '../../shared/types';
+import type { AIProvider, BridgeMessage, ProviderInstance, ProviderState } from '../../shared/types';
 import { providerInstanceBase } from '../../shared/providerInstances';
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
@@ -72,6 +72,78 @@ function safeSnapshotId(snapshotId: string): string {
   return snapshotId;
 }
 
+// Existing callers and test mocks are typed with AIProvider. TypeScript infers Parameters<> (and so
+// vi.mocked() implementations) from the LAST overload, so listing AIProvider last keeps them compiling
+// unchanged while new code can pass an instance key such as 'chatgpt#2'.
+type InstanceMethod<Args extends unknown[], Result> = {
+  (provider: ProviderInstance, ...args: Args): Result;
+  (provider: AIProvider, ...args: Args): Result;
+};
+type InstanceAware<T> = {
+  [K in keyof T]: K extends 'open'
+    ? T[K]
+    : T[K] extends (provider: ProviderInstance, ...args: infer Args) => infer Result
+      ? InstanceMethod<Args, Result>
+      : T[K];
+};
+
+const providerApi = {
+  open: <Instance extends ProviderInstance>(provider: Instance, bounds: DOMRectReadOnly): Promise<ProviderState<Instance>> =>
+    invoke('provider_open', { provider, bounds: toBounds(bounds) }),
+  close: (provider: ProviderInstance): Promise<void> => invoke('provider_close', { provider }),
+  show: (provider: ProviderInstance, focus = false): Promise<void> => invoke('provider_show', { provider, focus }),
+  hide: (provider: ProviderInstance): Promise<void> => invoke('provider_hide', { provider }),
+  park: async (provider: ProviderInstance, bounds: DOMRectReadOnly): Promise<void> => {
+    await invoke('provider_set_bounds', { provider, bounds: toBounds(bounds) });
+    await invoke('provider_show', { provider, focus: false });
+  },
+  eval: (provider: ProviderInstance, js: string): Promise<void> => invoke('provider_eval', { provider, js }),
+  evalWithCallback: (provider: ProviderInstance, js: string): Promise<string> =>
+    invoke('provider_eval_with_callback', { provider, js }),
+  send: (provider: ProviderInstance, text: string): Promise<void> => {
+    if (providersWithUnconfirmedStop.has(provider)) {
+      return Promise.reject(new Error(`${provider} send rejected: stop failed; reload provider page before retrying`));
+    }
+    return invoke('provider_eval', {
+      provider,
+      js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
+        v: 1,
+        action: 'SEND_MESSAGE',
+        provider: providerInstanceBase(provider),
+        payload: { text },
+      })});`,
+    });
+  },
+  fill: (provider: ProviderInstance, text: string): Promise<void> =>
+    invoke('provider_eval', {
+      provider,
+      js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
+        v: 1,
+        action: 'FILL_DRAFT',
+        provider: providerInstanceBase(provider),
+        payload: { text },
+      })});`,
+    }),
+  stop: async (provider: ProviderInstance): Promise<ProviderStopResult> => {
+    // Mark unconfirmed before the async call; a timeout is not proof that stop succeeded.
+    providersWithUnconfirmedStop.add(provider);
+    const result = parseProviderStopResult(await invoke<string>('provider_eval_with_callback', { provider, js: STOP_ENGINE_JS }));
+    if (result.outcome === 'clicked') providersWithUnconfirmedStop.delete(provider);
+    return result;
+  },
+  openLogin: (provider: ProviderInstance): Promise<void> => invoke('provider_open_login', { provider }),
+  openLoginExternal: (provider: ProviderInstance): Promise<void> => invoke('provider_open_login_external', { provider }),
+  reload: async (provider: ProviderInstance): Promise<void> => {
+    await invoke('provider_reload', { provider });
+    providersWithUnconfirmedStop.delete(provider);
+  },
+  reconnect: async (provider: ProviderInstance): Promise<void> => {
+    await invoke('provider_reload', { provider, reconnect: true });
+    providersWithUnconfirmedStop.delete(provider);
+  },
+  newSession: (provider: ProviderInstance): Promise<void> => invoke('provider_new_session', { provider }),
+};
+
 export const host = {
   app: {
     isDesktop: (): boolean => isTauri(),
@@ -82,62 +154,7 @@ export const host = {
     const unlisten = await listen<NavBlockedPayload>('nav://blocked', (event) => handler(event.payload));
     return unlisten;
   },
-  provider: {
-    open: <Instance extends ProviderInstance>(provider: Instance, bounds: DOMRectReadOnly): Promise<ProviderState<Instance>> =>
-      invoke('provider_open', { provider, bounds: toBounds(bounds) }),
-    close: (provider: ProviderInstance): Promise<void> => invoke('provider_close', { provider }),
-    show: (provider: ProviderInstance, focus = false): Promise<void> => invoke('provider_show', { provider, focus }),
-    hide: (provider: ProviderInstance): Promise<void> => invoke('provider_hide', { provider }),
-    park: async (provider: ProviderInstance, bounds: DOMRectReadOnly): Promise<void> => {
-      await invoke('provider_set_bounds', { provider, bounds: toBounds(bounds) });
-      await invoke('provider_show', { provider, focus: false });
-    },
-    eval: (provider: ProviderInstance, js: string): Promise<void> => invoke('provider_eval', { provider, js }),
-    evalWithCallback: (provider: ProviderInstance, js: string): Promise<string> =>
-      invoke('provider_eval_with_callback', { provider, js }),
-    send: (provider: ProviderInstance, text: string): Promise<void> => {
-      if (providersWithUnconfirmedStop.has(provider)) {
-        return Promise.reject(new Error(`${provider} send rejected: stop failed; reload provider page before retrying`));
-      }
-      return invoke('provider_eval', {
-        provider,
-        js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
-          v: 1,
-          action: 'SEND_MESSAGE',
-          provider: providerInstanceBase(provider),
-          payload: { text },
-        })});`,
-      });
-    },
-    fill: (provider: ProviderInstance, text: string): Promise<void> =>
-      invoke('provider_eval', {
-        provider,
-        js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
-          v: 1,
-          action: 'FILL_DRAFT',
-          provider: providerInstanceBase(provider),
-          payload: { text },
-        })});`,
-      }),
-    stop: async (provider: ProviderInstance): Promise<ProviderStopResult> => {
-      // Mark unconfirmed before the async call; a timeout is not proof that stop succeeded.
-      providersWithUnconfirmedStop.add(provider);
-      const result = parseProviderStopResult(await invoke<string>('provider_eval_with_callback', { provider, js: STOP_ENGINE_JS }));
-      if (result.outcome === 'clicked') providersWithUnconfirmedStop.delete(provider);
-      return result;
-    },
-    openLogin: (provider: ProviderInstance): Promise<void> => invoke('provider_open_login', { provider }),
-    openLoginExternal: (provider: ProviderInstance): Promise<void> => invoke('provider_open_login_external', { provider }),
-    reload: async (provider: ProviderInstance): Promise<void> => {
-      await invoke('provider_reload', { provider });
-      providersWithUnconfirmedStop.delete(provider);
-    },
-    reconnect: async (provider: ProviderInstance): Promise<void> => {
-      await invoke('provider_reload', { provider, reconnect: true });
-      providersWithUnconfirmedStop.delete(provider);
-    },
-    newSession: (provider: ProviderInstance): Promise<void> => invoke('provider_new_session', { provider }),
-  },
+  provider: providerApi as InstanceAware<typeof providerApi>,
   adapter: {
     push: (provider: ProviderInstance, _cfg: unknown): Promise<void> => invoke('adapter_push', { provider }),
     reportBroken: (provider: ProviderInstance): Promise<string> => invoke('report_broken', { provider }),
