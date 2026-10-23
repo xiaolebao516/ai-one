@@ -34,6 +34,7 @@ import {
   buildForwardMessage,
   classifyResponseContent,
   deriveLoginState,
+  lastUserQuestion,
   settlePendingTargets,
   type ChatSendPresetId,
   type ProviderReplyState,
@@ -658,7 +659,7 @@ export function useChatRuntime({
 
   const retryProvider = useCallback((provider: AIProvider) => {
     const request = requestByProviderRef.current.get(provider);
-    if (!request) return runSend(activeSession.messages.findLast?.((message) => message.role === 'user' && !message.forwardedFrom)?.content ?? '', [provider], 'free');
+    if (!request) return runSend(lastUserQuestion(activeSession.messages) ?? '', [provider], 'free');
     if (request.forwardedFrom) return runSend(request.text, [provider], 'free', { forwardedFrom: request.forwardedFrom, preserveComparison: true });
     return runSend(request.text, request.presetId === 'free' ? [provider] : CHAT_PROVIDERS.filter((candidate) => comparisonTargets.includes(candidate)), request.presetId);
   }, [activeSession.messages, comparisonTargets, runSend]);
