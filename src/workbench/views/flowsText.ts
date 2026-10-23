@@ -1,4 +1,5 @@
 import type { Locale } from '../../i18n/resolve';
+import { hudLocale } from '../../ui/taskHudModel';
 
 const EN = {
   collabSolo: 'Solo',
