@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { ALL_AI_PROVIDERS } from '../../shared/constants';
 import { host } from '../host';
 import type { Locale } from '../i18n/resolve';
