@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { digest, statusFor, validateFinish, withLock } from '../prodex-archive/archive.mjs';
-import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeNote, normalizeOwnership, parseCheck, processAlive, readClaim, readClosure, releaseClaim, slotEnv, slotsHome, sweepSlots, writeClosure } from './slots.mjs';
+import { claimFilePresent, EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeNote, normalizeOwnership, parseCheck, processAlive, readClaim, readClosure, releaseClaim, slotEnv, slotsHome, sweepSlots, writeClosure } from './slots.mjs';
 
 // Argument mistakes (bad flags, missing values, unknown commands) are usage errors: the reason
 // plus the full usage block. Anything that fails at runtime carries its own next step and is
@@ -66,6 +66,11 @@ export function parseArgs(args) {
   if (command === 'run') {
     // The thread a claim names must be the thread the ask really targets, otherwise every
     // protection keyed on the claim would watch the wrong chat.
+    if (passthrough.some((arg) => arg === '--continue' || arg === '--continue-task' || arg.startsWith('--continue=') || arg.startsWith('--continue-task='))) {
+      // These make prodex pick an old thread from its own records, so the claim could not name (or
+      // lock) the thread that is really used. Use --target-url with --thread-url instead.
+      throw new Error('run does not accept --continue / --continue-task; continue a thread with the same URL in --thread-url and --target-url');
+    }
     const targets = passthrough.reduce((all, arg, i) => (arg === '--target-url' ? [...all, passthrough[i + 1]] : all), []);
     if (targets.length > 1) throw new Error('run takes at most one --target-url');
     if ((targets.length === 1) !== (options.threadUrl !== undefined)) {
@@ -332,7 +337,7 @@ async function runCommand(options, passthrough, deps, err, sweepReport = []) {
           blockedReason = 'pending';
         }
         if (blockedReason) {
-          claim.release();
+          if (claim.release() !== true) err(`prodex-slots: slot ${slot.id}: the claim could not be released; treat the slot as occupied until \`list\` shows it free.`);
           err(`prodex-slots: slot ${slot.id}: this thread is ${blockedReason === 'archived' ? 'already archived' : 'being archived right now'}; not starting a new ask on it`);
           return EXIT.ERROR;
         }
@@ -444,6 +449,11 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
       // Ownership and note were validated in parseArgs, so nothing below can reject after the
       // claim is already gone.
       const had = readClaim(deps.home, options.slot);
+      // A claim file that exists but cannot be read is a live, unknown occupant: never record the
+      // slot as free over it.
+      if (!had && claimFilePresent(deps.home, options.slot)) {
+        throw new Error('The slot has a claim file that cannot be read; nothing was released or archived. Inspect it with `list` and fix or remove it');
+      }
       const archiving = options.requestId !== undefined;
       if (archiving) {
         // Fail closed before anything changes: the slot must be registered, and a live claim must

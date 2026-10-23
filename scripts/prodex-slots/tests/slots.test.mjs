@@ -1194,3 +1194,21 @@ test('a run backs off when the per-thread archive lock is held or the thread is 
   assert.match(h.log.err.join(' '), /already archived/);
   assert.equal(h.log.asks.length, 0);
 });
+
+test('run rejects --continue and --continue-task because their thread cannot be locked', async () => {
+  for (const flag of [['--continue'], ['--continue-task', 'task_1'], ['--continue=1']]) {
+    const h = harness();
+    assert.equal(await h.run(['run', '--', ...flag, '--effort', 'high']), EXIT.ERROR, flag.join(' '));
+    assert.equal(h.log.asks.length, 0);
+  }
+});
+
+test('release over an unreadable claim file refuses and writes no closure', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  fs.mkdirSync(path.join(h.home, 'slot-claims'), { recursive: true });
+  fs.writeFileSync(path.join(h.home, 'slot-claims', 'slot-1.json'), '{not json');
+  assert.equal(await h.run(['release', '--slot', '1', '--task', '71']), EXIT.ERROR);
+  assert.ok(!fs.existsSync(path.join(h.home, 'slot-claims', 'slot-1.closed.json')));
+  assert.match(h.log.err.join(' '), /cannot be read/);
+});
