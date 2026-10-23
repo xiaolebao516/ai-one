@@ -172,7 +172,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
 
   const toggleTarget = (provider: AIProvider) => {
     const selected = runtime.selectedTargets.includes(provider);
-    if (deriveLoginState(runtime.providerStates[provider]) === 'loggedOut' || (runtime.busyProviders.includes(provider) && !selected)) return;
+    if ((deriveLoginState(runtime.providerStates[provider]) === 'loggedOut' || runtime.busyProviders.includes(provider)) && !selected) return;
     setActionNotice(undefined);
     runtime.setSelectedTargets(
       runtime.selectedTargets.includes(provider)
@@ -461,7 +461,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
                 const chip = chipState(runtime.providerStates[provider], 'chip', (key) => translateKey(key, locale));
                 const selected = runtime.selectedTargets.includes(provider);
                 const serial = presetId !== 'free';
-                const disabled = (busy && !selected) || login === 'loggedOut' || serial;
+                const disabled = ((busy || login === 'loggedOut') && !selected) || serial;
                 const reason = busy
                   ? text.t('chatBusy', { provider: AI_PROVIDERS[provider].name })
                   : login === 'loggedOut'
