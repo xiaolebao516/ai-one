@@ -179,6 +179,7 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
   const saveCurrent = async (scope?: StageDraftScope): Promise<boolean> => {
     if (!context.file || context.mutationsDisabled) return false;
     let candidate = context.file;
+    let selectionAfterSave = context.selection;
     if (context.draftDirty && context.draft && context.selection) {
       const base = candidate.stages.find((stage) => stage.id === context.draft?.id);
       const selectedRefIndex = context.selectedFlow?.stages.findIndex((ref) => ref.stageId === context.draft?.id) ?? -1;
@@ -199,6 +200,7 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
         return false;
       }
       const targetSelection = chosenScope === 'flow' && flowScopeSelection ? flowScopeSelection : context.selection;
+      if (chosenScope === 'flow' && targetSelection.kind === 'flow') selectionAfterSave = targetSelection;
       const updated = applyStageDraft(candidate, targetSelection, context.draft, chosenScope);
       if (!updated) {
         context.setEditError(context.text.t('overrideUnsupported'));
@@ -212,7 +214,8 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
       context.setScopePrompt(false);
       context.setEditError(undefined);
       context.setFeedback({ tone: 'neutral', message: context.text.t('saved') });
-      context.setDraft(stageForSelection(candidate, context.selection));
+      context.setSelection(selectionAfterSave);
+      context.setDraft(stageForSelection(candidate, selectionAfterSave));
       if (context.pendingAction) {
         const action = context.pendingAction;
         context.setPendingAction(null);
