@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { claimSlot, claimOwnership, loadConfig, normalizeOwnership, readClaim, slotsHome, slotDefinition, writeClosure } from '../prodex-slots/slots.mjs';
+import { claimFilePresent, processAlive, claimSlot, claimOwnership, loadConfig, normalizeOwnership, readClaim, slotsHome, slotDefinition, writeClosure } from '../prodex-slots/slots.mjs';
 import { archiveConversation } from './browser-ui.mjs';
 
 export const digest = (url) => crypto.createHash('sha256').update(url).digest('hex');
@@ -63,7 +63,11 @@ export function verifyHandoff({ task, threadUrl, requestId, handoffUrl }, runner
   });
   if (res.error || res.status !== 0) throw new Error('Could not verify GitHub Handoff; check gh login/network');
   let body;
-  try { body = JSON.parse(res.stdout).body; } catch { throw new Error('Invalid GitHub Handoff API response'); }
+  let issueUrl;
+  try { ({ body, issue_url: issueUrl } = JSON.parse(res.stdout)); } catch { throw new Error('Invalid GitHub Handoff API response'); }
+  // The comment must really belong to the task issue, not just carry its number in the text.
+  if (typeof issueUrl !== 'string' || !new RegExp('/repos/xiaolebao516/ai-one/issues/' + String(task) + '$').test(issueUrl))
+    throw new Error('Handoff comment does not belong to the task issue; refuse to archive');
   if (typeof body !== 'string') throw new Error('Handoff comment has no body');
   const expected = ['Archive-ready: true', 'Task: #' + task,
     'Thread-SHA256: ' + digest(threadUrl), 'Request-ID: ' + requestId,
@@ -165,10 +169,24 @@ function otherClaims(home, ownSlot, url) {
   for (const slot of loadConfig(home).slots) {
     if (slot.id === ownSlot) continue;
     const claim = readClaim(home, slot.id);
+    // A claim file that exists but cannot be read is an unknown occupant, not an empty slot.
+    if (!claim && claimFilePresent(home, slot.id)) throw new Error('Other slot has an unreadable claim; refuse archive (retry when it is cleared)');
     if (!claim) continue;
-    const thread = claimOwnership(claim).threadUrl;
-    if (!thread || thread === url)
-      throw new Error('Other slot has active or unknown thread ownership; refuse archive');
+    // A claim whose process has exited is not an active user of the thread (it is only a leftover);
+    // a live process counts even if its heartbeat is stale, e.g. after the machine slept.
+    if (!processAlive(claim.pid)) {
+      // The wrapper exited, but a prodex child it started could still be sending: a leftover claim that
+      // names THIS thread keeps blocking until a normal command's self-heal (`list`) has cleared it.
+      if (claimOwnership(claim).threadUrl === url)
+        throw new Error('Other slot has a leftover claim on this thread whose process exited; run `prodex-slots list` to clear it, confirm nothing is still sending, then retry');
+      continue;
+    }
+    // `prodex-slots run` only accepts a claim without a thread URL for a NEW chat (continuing a thread
+    // needs --target-url + the same --thread-url, and --continue is refused), so such a claim cannot be
+    // using this thread. A claim that names this thread blocks; an unreadable claim file (handled
+    // above) is an unknown occupant and also blocks.
+    if (claimOwnership(claim).threadUrl === url)
+      throw new Error('Other slot has an active claim on this thread; refuse archive (retry when that slot is idle)');
   }
 }
 export function validateFinish({ task, slot, threadUrl, requestId, handoffUrl }) {
@@ -192,8 +210,10 @@ export async function finish(args, { home = slotsHome(), verify = verifyHandoff,
   if (previous?.status === 'skipped' && !args.retry) throw new Error('Thread was skipped; retry explicitly to override');
   verify(input);
   return withLock(path.join(storageDir(home), 'thread-' + digest(threadUrl) + '.lock'), async () => {
-    if (statusFor(home, threadUrl)?.status === 'archived')
-      return { status: 'archived', alreadyArchived: true };
+    const inside = statusFor(home, threadUrl)?.status;
+    if (inside === 'archived') return { status: 'archived', alreadyArchived: true };
+    // skip() takes this same lock, so a skip that won the race is honoured here.
+    if (inside === 'skipped' && !args.retry) throw new Error('Thread was skipped; retry explicitly to override');
     await setStatus(home, threadUrl, { status: 'pending', task, slot });
     const claim = claimSlot(home, slot, { meta: { task, threadUrl } });
     if (!claim.ok) {
@@ -251,5 +271,12 @@ export async function finish(args, { home = slotsHome(), verify = verifyHandoff,
 
 export async function skip({ task, threadUrl }, { home = slotsHome() } = {}) {
   if (!/^[1-9]\d*$/.test(String(task))) throw new Error('Invalid task');
-  return setStatus(home, canonicalThread(threadUrl), { status: 'skipped', task, slot: null });
+  const url = canonicalThread(threadUrl);
+  try {
+    return await withLock(path.join(storageDir(home), 'thread-' + digest(url) + '.lock'),
+      () => setStatus(home, url, { status: 'skipped', task, slot: null }));
+  } catch (error) {
+    if (/lock is busy/.test(error?.message ?? '')) throw new Error('An archive of this thread is in progress; it could not be kept. Check Archived chats and unarchive if needed', { cause: error });
+    throw error;
+  }
 }

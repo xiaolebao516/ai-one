@@ -77,6 +77,12 @@ stderr ends up in logs.
 
 ## Self-healing
 
+Heartbeat rule (#114): a claim whose owner pid exited is always removed. A claim with a stale heartbeat
+(over 2 minutes) but a live pid is removed too, **except** when it names a thread (`--thread-url`): that
+claim survives up to 24 hours, because the archiver relies on it to see an active user of the thread
+(the machine may simply have slept). `claimSlot`'s takeover uses the same rule. An archiving `release`
+runs no sweep at all.
+
 `list`, `run`, `ensure` and `release` sweep the claim directory first. A claim whose owner pid
 has exited, or that has had no heartbeat for 2 minutes, is removed and reported; `.tmp`
 leftovers go the same way (a same-inode hard link of the claim, or any temp older than the
@@ -281,7 +287,9 @@ the 10 s send spacing is shared by all slots; slot windows are visible windows.
 
 ## Archive finished ChatGPT conversations
 
-Archive is distinct from release: release only frees the slot. For a task that is truly
+Archive is distinct from a plain release, which only frees the slot. The standard close-out is
+`release ... --task N --thread-url URL --request-id ID --handoff-url URL`, which frees the slot and
+then runs `auto-finish` (#114; failure to archive never undoes the release). For a task that is truly
 finished and has a verified Handoff, the dispatcher calls `auto-finish` as its task-finalization
 hook using the fail-closed workflow in [scripts/prodex-archive/README.md](../prodex-archive/README.md)
 (Issue #94). The default policy is `auto`; set `policy --mode manual` to disable automatic

@@ -10,6 +10,10 @@ export const MAX_SLOTS = 8;
 // CLAIM_STALE_MS is dead even if its pid was recycled by an unrelated process.
 export const CLAIM_BEAT_MS = 20_000;
 export const CLAIM_STALE_MS = 120_000;
+// A claim that names a thread (a run continuing it) is what the archiver relies on to see an active
+// user of that thread, so a live process keeps it past the usual heartbeat window (the machine may
+// have slept); only after this long is it treated as a recycled pid.
+export const THREAD_CLAIM_STALE_MS = 24 * 60 * 60_000;
 
 // Ownership is what makes a slot readable to other sessions: which task it serves, which
 // session holds it and which thread it is talking to. It is deliberately narrow - three short
@@ -210,7 +214,7 @@ export function sweepSlots(home, ids, { alive = processAlive, staleMs = CLAIM_ST
             // The pid comes from a file anyone can edit; only a real integer is ever echoed.
             const reason = Number.isInteger(claim.pid) ? `owner pid ${claim.pid} has exited` : 'owner pid is invalid';
             items.push({ slot: id, removed: 'claim', reason });
-          } else if (age !== null && age >= staleMs) {
+          } else if (age !== null && age >= staleMs && !(claimOwnership(claim).threadUrl && age < THREAD_CLAIM_STALE_MS)) {
             removeClaimFile(file);
             items.push({ slot: id, removed: 'claim', reason: `no heartbeat for ${Math.round(age / 1000)}s` });
           }
@@ -383,6 +387,7 @@ export function readClosure(home, id) {
   return record;
 }
 
+export function claimFilePresent(home, id) { return fs.existsSync(claimFile(home, id)); }
 function claimFile(home, id) {
   return path.join(home, 'slot-claims', `slot-${id}.json`);
 }
@@ -457,7 +462,9 @@ export function claimSlot(home, id, { pid = process.pid, alive = processAlive, n
         const age = claimAgeMs(file);
         if (age === null) return { retry: true };
         const holder = readClaim(home, id);
-        const dead = holder ? !alive(holder.pid) || age >= staleMs : age >= staleMs;
+        // Same rule as the sweep: a live process keeps a claim that names a thread past the heartbeat window.
+        const keepThread = holder && alive(holder.pid) && claimOwnership(holder).threadUrl && age < THREAD_CLAIM_STALE_MS;
+        const dead = holder ? !alive(holder.pid) || (age >= staleMs && !keepThread) : age >= staleMs;
         if (!dead) return { holder };
         removeClaimFile(file);
         return { retry: true };

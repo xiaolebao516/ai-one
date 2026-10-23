@@ -3,7 +3,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeNote, normalizeOwnership, parseCheck, processAlive, readClaim, readClosure, releaseClaim, slotEnv, slotsHome, sweepSlots, writeClosure } from './slots.mjs';
+import { digest, statusFor, validateFinish, withLock } from '../prodex-archive/archive.mjs';
+import { claimFilePresent, EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeNote, normalizeOwnership, parseCheck, processAlive, readClaim, readClosure, releaseClaim, slotEnv, slotsHome, sweepSlots, writeClosure } from './slots.mjs';
 
 // Argument mistakes (bad flags, missing values, unknown commands) are usage errors: the reason
 // plus the full usage block. Anything that fails at runtime carries its own next step and is
@@ -19,6 +20,8 @@ export const usage = [
   '                                        -- <args of `prodex pro browser ask`>',
   '  release --slot N [--task N] [--session KEY] [--thread-url URL] [--note "…"]',
   '                                        write the "thread closed, slot reusable" record',
+  '  release ... --request-id ID --handoff-url GITHUB_COMMENT_URL',
+  '                                        also archive the finished chat (needs --task and --thread-url; see scripts/prodex-archive/README.md)',
   'Ownership (run and release): --task 71, --session s1, --thread-url https://chatgpt.com/c/<id>.',
   'They are shown by `list` so another session can see who a slot serves; never reply text.',
   'Use the ask\'s own --session-key after `--`: that one is prodex\'s, this one is ownership.',
@@ -26,7 +29,7 @@ export const usage = [
   '`run` passes the ask output (the reply) through to stdout: redirect it to a file, do not log it.',
 ].join('\n');
 
-const VALUE_OPTIONS = { '--slot': 'slot', '--count': 'count', '--wait-ms': 'waitMs', '--task': 'task', '--session': 'sessionKey', '--thread-url': 'threadUrl', '--note': 'note' };
+const VALUE_OPTIONS = { '--slot': 'slot', '--count': 'count', '--wait-ms': 'waitMs', '--task': 'task', '--session': 'sessionKey', '--thread-url': 'threadUrl', '--note': 'note', '--request-id': 'requestId', '--handoff-url': 'handoffUrl' };
 const OWNERSHIP_FLAGS = { task: '--task', sessionKey: '--session', threadUrl: '--thread-url' };
 const NUMERIC_OPTIONS = new Set(['--slot', '--count', '--wait-ms']);
 // States that are not a problem for the user: the slot works or will work by itself.
@@ -51,7 +54,7 @@ export function parseArgs(args) {
       if (name in VALUE_OPTIONS || name === '--json') {
         throw new Error(`Unknown option: ${name}. Options take their value as the next argument (${name} <value>); the "=" form is not accepted here`);
       }
-      throw new Error('Unknown option. Expected one of: --json, --slot, --count, --wait-ms, --task, --session, --thread-url, each with its value as the next argument; the "=" form is not accepted');
+      throw new Error('Unknown option. Expected one of: --json, --slot, --count, --wait-ms, --task, --session, --thread-url, --note, --request-id, --handoff-url, each with its value as the next argument; the "=" form is not accepted');
     }
     const value = rest[++index];
     if (value === undefined || value.startsWith('--')) throw new Error(`Missing value: ${arg}`);
@@ -61,6 +64,21 @@ export function parseArgs(args) {
     options[VALUE_OPTIONS[arg]] = Number(value);
   }
   if (command === 'run') {
+    // The thread a claim names must be the thread the ask really targets, otherwise every
+    // protection keyed on the claim would watch the wrong chat.
+    if (passthrough.some((arg) => arg === '--continue' || arg === '--continue-task' || arg.startsWith('--continue=') || arg.startsWith('--continue-task='))) {
+      // These make prodex pick an old thread from its own records, so the claim could not name (or
+      // lock) the thread that is really used. Use --target-url with --thread-url instead.
+      throw new Error('run does not accept --continue / --continue-task; continue a thread with the same URL in --thread-url and --target-url');
+    }
+    const targets = passthrough.reduce((all, arg, i) => (arg === '--target-url' ? [...all, passthrough[i + 1]] : all), []);
+    if (targets.length > 1) throw new Error('run takes at most one --target-url');
+    if ((targets.length === 1) !== (options.threadUrl !== undefined)) {
+      throw new Error('Continuing a thread needs the same URL in --thread-url (ownership) and in --target-url after `--`; give both or neither');
+    }
+    if (targets.length === 1 && normalizeOwnership({ threadUrl: targets[0] }).threadUrl !== normalizeOwnership({ threadUrl: options.threadUrl }).threadUrl) {
+      throw new Error('--thread-url and --target-url must name the same thread');
+    }
     if (!passthrough.length) throw new Error('run needs the ask arguments after `--`');
     if (passthrough.includes('--port') || passthrough.some((a) => a.startsWith('--port='))) {
       throw new Error('Do not pass --port: the slot decides the browser');
@@ -89,6 +107,24 @@ export function parseArgs(args) {
   }
   if (options.note !== undefined && command !== 'release') {
     throw new UsageError('--note only applies to release');
+  }
+  const archiveFlags = ['requestId', 'handoffUrl'].filter((key) => options[key] !== undefined);
+  if (archiveFlags.length) {
+    // Archive evidence only makes sense on release, and only as a complete set; rejected before
+    // any state changes. The values are never echoed (they may be pasted tokens).
+    if (command !== 'release') throw new UsageError('--request-id / --handoff-url only apply to release');
+    if (archiveFlags.length !== 2) throw new UsageError('Archiving on release needs both --request-id and --handoff-url');
+    if (options.task === undefined || options.threadUrl === undefined) {
+      throw new UsageError('Archiving on release also needs --task and --thread-url');
+    }
+    // Format and Handoff-URL checks happen here, before release touches any state. The archive
+    // tool's messages are generic and never repeat the rejected value.
+    try {
+      validateFinish({ task: String(options.task).replace('#', ''), slot: options.slot, threadUrl: options.threadUrl,
+        requestId: options.requestId, handoffUrl: options.handoffUrl });
+    } catch (error) {
+      throw new UsageError(`Invalid archive evidence: ${error.message}`);
+    }
   }
   // Validate the note here, before release touches any state: a rejected note must not take the
   // claim down with it.
@@ -287,6 +323,25 @@ async function runCommand(options, passthrough, deps, err, sweepReport = []) {
         continue;
       }
       if (claim.warning) err(`prodex-slots: slot ${slot.id}: ${claim.warning} (the claim itself is fine; the sweep collects the leftover)`);
+      // Run and archive serialize on the same per-thread lock: the archive holds it from "pending"
+      // to its result, and this check takes it after the claim is visible. Either the archive sees
+      // this claim, or this run sees "pending"/"archived" (or the busy lock) and backs off.
+      if (options.ownership.threadUrl) {
+        let blockedReason = null;
+        try {
+          await withLock(path.join(deps.home, 'archive', `thread-${digest(options.ownership.threadUrl)}.lock`), async () => {
+            const status = statusFor(deps.home, options.ownership.threadUrl)?.status;
+            if (status === 'pending' || status === 'archived') blockedReason = status;
+          });
+        } catch {
+          blockedReason = 'pending';
+        }
+        if (blockedReason) {
+          if (claim.release() !== true) err(`prodex-slots: slot ${slot.id}: the claim could not be released; treat the slot as occupied until \`list\` shows it free.`);
+          err(`prodex-slots: slot ${slot.id}: this thread is ${blockedReason === 'archived' ? 'already archived' : 'being archived right now'}; not starting a new ask on it`);
+          return EXIT.ERROR;
+        }
+      }
       try {
         const { state } = await checkWithRestore(slot, deps);
         if (state === 'busy') { anyReadyButBusy = true; continue; }
@@ -330,6 +385,32 @@ async function runCommand(options, passthrough, deps, err, sweepReport = []) {
   }
 }
 
+// Closing a thread is the one moment the chat is known to be finished, so this is where the
+// archive is started. It never changes the release result: the slot is already free, and an
+// archive that is skipped or fails is reported loudly instead of failing the release.
+async function archiveOnRelease(options, deps, err) {
+  if (options.requestId === undefined) {
+    if (options.ownership.threadUrl) {
+      err('prodex-slots: archive NOT attempted: the chat stays open in ChatGPT. After the Archive-ready Handoff is posted, close it with `release ... --request-id ID --handoff-url URL` (or run scripts/prodex-archive/cli.mjs skip to keep it).');
+    }
+    return;
+  }
+  const autoFinish = deps.autoFinish ?? (async (argv, io) => (await import('../prodex-archive/cli.mjs')).main(argv, { home: deps.home, ...io }));
+  const lines = [];
+  let code;
+  try {
+    code = await autoFinish(['auto-finish', '--slot', String(options.slot), '--task', String(options.ownership.task).replace('#', ''),
+      '--thread-url', options.ownership.threadUrl, '--request-id', options.requestId, '--handoff-url', options.handoffUrl],
+    { out: (line) => lines.push(line), err: (line) => lines.push(line) });
+  } catch (error) {
+    code = 1;
+    lines.push(`archive tool failed: ${error?.message ?? 'unknown error'}`);
+  }
+  const detail = lines.join(' ').replace(/https?:\/\/\S+/g, '[url]');
+  if (code === 0) err(`prodex-slots: archive: ${detail}`);
+  else err(`prodex-slots: archive NOT done (the slot is released anyway): ${detail}. Inspect it, then retry with scripts/prodex-archive/cli.mjs retry.`);
+}
+
 export async function main(args, { deps = realDeps(), out = (s) => process.stdout.write(`${s}\n`), err = (s) => process.stderr.write(`${s}\n`) } = {}) {
   try {
     if (!args.length || args[0] === '--help') { out(usage); return EXIT.OK; }
@@ -343,7 +424,20 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
     const show = (rows) => out(options.json ? JSON.stringify(rows, null, 2) : renderSlots(rows));
     // list/run/ensure/release all read or take claim state, so they sweep first; `add` only
     // registers, and a sweep there would report slots that are about to be created.
-    const sweepReport = ['list', 'run', 'ensure', 'release'].includes(command)
+    if (command === 'release' && options.requestId !== undefined) {
+      // Checked before the self-heal sweep: a claim whose heartbeat is stale (for example after the
+      // machine slept) but whose process is alive is still an active run, and the sweep would
+      // otherwise delete it and hide that.
+      const live = readClaim(deps.home, options.slot);
+      if (live && (deps.alive ?? processAlive)(live.pid)) {
+        throw new Error('The run holding this slot claim is still active; wait for it to finish before archiving. Nothing was released or archived');
+      }
+    }
+    // An archiving release must not run the sweep: it deletes claims with a stale heartbeat even when their
+    // process is alive, which would hide another slot's active run from the archive's conflict check.
+    // The archive ignores claims whose process is dead by itself.
+    const archivingRelease = command === 'release' && options.requestId !== undefined;
+    const sweepReport = ['list', 'run', 'ensure', 'release'].includes(command) && !archivingRelease
       ? sweepAndReport(loadConfig(deps.home), deps, err)
       : [];
     if (command === 'list') {
@@ -368,9 +462,41 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
       // Ownership and note were validated in parseArgs, so nothing below can reject after the
       // claim is already gone.
       const had = readClaim(deps.home, options.slot);
-      releaseClaim(deps.home, options.slot);
+      // A claim file that exists but cannot be read is a live, unknown occupant: never record the
+      // slot as free over it.
+      if (!had && claimFilePresent(deps.home, options.slot)) {
+        throw new Error('The slot has a claim file that cannot be read; nothing was released or archived. Inspect it with `list` and fix or remove it');
+      }
+      const archiving = options.requestId !== undefined;
+      if (archiving) {
+        // Fail closed before anything changes: the slot must be registered, and a live claim must
+        // name exactly this task and thread (unknown or partial ownership is not a match).
+        if (!loadConfig(deps.home).slots.some((slot) => slot.id === options.slot)) {
+          throw new Error(`Slot ${options.slot} is not registered; nothing was released or archived`);
+        }
+        if (had) {
+          // A run that still holds the claim has not finished its ask; archiving under it could
+          // archive the chat before that ask is sent.
+          if ((deps.alive ?? processAlive)(had.pid)) {
+            throw new Error('The run holding this slot claim is still active; wait for it to finish before archiving. Nothing was released or archived');
+          }
+          const owner = claimOwnership(had);
+          if (owner.task !== options.ownership.task || owner.threadUrl !== options.ownership.threadUrl) {
+            throw new Error('The slot claim does not name exactly this task and thread; nothing was released or archived');
+          }
+        }
+      }
+      // Release only the claim that was checked above; a claim that appeared in between stays.
+      // With no claim read there is nothing to delete: an unconditional release could remove a claim
+      // another agent took a moment ago. A claim without an owner id cannot be released safely.
+      if (had) {
+        if (typeof had.owner !== 'string' || !had.owner || releaseClaim(deps.home, options.slot, had.owner) !== true) {
+          throw new Error('The slot claim changed or has no owner id; nothing was archived. Run `list` and retry');
+        }
+      }
       const record = writeClosure(deps.home, options.slot, { ownership: options.ownership, note: options.note });
       err(`prodex-slots: released slot ${options.slot}${had ? ' (claim removed)' : ' (no claim was present)'}; closed record written (${record.task ?? 'no task'}${record.note ? `, "${record.note}"` : ''}). The slot is reusable.`);
+      await archiveOnRelease(options, deps, err);
       return EXIT.OK;
     }
     if (command === 'run') return await runCommand(options, passthrough, deps, err, sweepReport);

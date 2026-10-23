@@ -75,7 +75,7 @@
 - **每轮在 Issue 留上下文**：把该轮提问要点、结论、阻塞写成短评论，作为可恢复的 Handoff；回复正文不进 Issue。
 - **中断即停**：出现 `request_mismatch`、页签被切走或结果不确定时停止发送，先按 request-id、线程 URL 和 Issue Handoff 恢复核对，禁止盲目重发。
 - **用完显式释放**：确认线程不再续用后释放槽位并核对实际状态，在 Task Issue 写明「本轮线程已闭合，槽位可复用」；未释放成功就记阻塞，不得宣称可复用。本阶段不自动删除聊天记录，线程状态与槽位占用分开管理。
-- **已完成线程可归档（#94）**：确认最后一次 Prodex 请求已恢复/核验、产物与 Handoff 已保存、线程不会再续聊后，依 scripts/prodex-archive/README.md 在该线程当前所属槽位执行 auto-finish（先验证 GitHub Archive-ready 评论，再由浏览器 UI 归档）；该命令遵循本机 archive policy，默认 auto，可设为 manual。单条 ask 完成不触发归档；未满足条件则保留线程。归档失败必须记录 failed/pending，先人工核查，不自动重试点击，更不能误归档个人聊天。
+- **已完成线程必须在闭合时归档（#94、#114）**：线程不再续聊（回复已用 request-id 核验、产物已保存、结论已写进 Issue Handoff）时，先在 Issue 发 Archive-ready 评论（格式见 scripts/prodex-archive/README.md），再用一条命令同时闭合槽位并归档：`node scripts/prodex-slots/cli.mjs release --slot N --task <Issue号> --thread-url "$THREAD" --request-id <ID> --handoff-url <评论地址>`。这是线程用完后的标准收尾，不要只 `release` 不归档，也不要把归档留给用户手点。需要保留的线程用 `scripts/prodex-archive/cli.mjs skip`。`release` 带 `--thread-url` 却没给证据时会提示“archive NOT attempted”；归档失败不影响槽位释放，但输出会写“archive NOT done”，必须看一眼并记录。本机策略默认 auto，可设为 manual。单条 ask 完成不触发归档；归档失败先人工核查，不盲目重复点击，更不能误归档个人聊天。注意 ChatGPT 页面状态可能延迟：点完归档后若侧栏或 Archived chats 暂时对不上，隔几分钟再看，别当场判失败。
 
 ## 账号与安全
 
