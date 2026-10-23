@@ -105,12 +105,19 @@ function guardedScript(path: string, body: string): string {
     '  const hrefPath = (anchor) => { try { return new URL(anchor.getAttribute("href") || "", window.location.origin).pathname; } catch (error) { return ""; } };',
     '  const targetRow = () => {',
     '    const anchor = Array.from(window.document.querySelectorAll("a[href]")).find((node) => inSidebar(node) && hrefPath(node) === expectedPath);',
-    '    return anchor ? (anchor.closest("li") || anchor.parentElement) : null;',
+    '    let row = anchor ? (anchor.closest("li") || anchor.parentElement) : null;',
+    '    while (row && inSidebar(row)) {',
+    '      const paths = Array.from(row.querySelectorAll("a[href]")).map(hrefPath).filter((path) => /^\\/c\\//.test(path));',
+    '      if (paths.some((path) => path !== expectedPath)) return null;',
+    '      if (row.querySelector("button")) return row;',
+    '      row = row.parentElement;',
+    '    }',
+    '    return null;',
     '  };',
     '  // The options trigger of the REGISTERED conversation: its sidebar row, or a header button outside the sidebar.',
     '  const findTrigger = () => {',
     '    const row = targetRow();',
-    '    if (row) return findCandidate(["button"], /more|option|menu|对话选项|聊天选项|更多|选项/i, /options|menu/i, row);',
+    '    if (row) return findCandidate(["button"], /more|option|menu|chat actions|对话选项|聊天选项|聊天操作|更多|选项/i, /options|menu/i, row);',
     '    const buttons = Array.from(window.document.querySelectorAll("button")).filter((node) => !inSidebar(node));',
     '    return buttons.find((node) => /conversation-options-menu|conversation-menu-trigger/i.test(node.getAttribute("data-testid") || "") || /conversation options|chat options|对话选项|聊天选项/i.test(accessibleName(node))) || null;',
     '  };',
@@ -276,9 +283,15 @@ export function buildConfirmArchivedScript(id: string, others: readonly string[]
   return buildSidebarCheckScript(id, false, others);
 }
 
+// WebView2 JSON-encodes the return value; scripts here already return JSON strings.
+function parsePageResult(raw: string): unknown {
+  const value: unknown = JSON.parse(raw);
+  return typeof value === 'string' ? JSON.parse(value) : value;
+}
+
 function parseSnapshot(raw: string): string[] | undefined {
   try {
-    const parsed: unknown = JSON.parse(raw);
+    const parsed = parsePageResult(raw);
     if (typeof parsed !== 'object' || parsed === null) return undefined;
     const record = parsed as { ok?: unknown; others?: unknown };
     if (record.ok !== true || !Array.isArray(record.others)) return undefined;
@@ -290,7 +303,7 @@ function parseSnapshot(raw: string): string[] | undefined {
 
 function parseCleanerStep(raw: string): CleanerStep {
   try {
-    const parsed: unknown = JSON.parse(raw);
+    const parsed = parsePageResult(raw);
     if (typeof parsed !== 'object' || parsed === null || !('ok' in parsed) || typeof parsed.ok !== 'boolean') {
       return { ok: false, note: 'Page script returned an invalid result' };
     }

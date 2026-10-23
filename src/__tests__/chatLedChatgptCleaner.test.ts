@@ -162,6 +162,20 @@ describe('ChatGPT page scripts', () => {
 });
 
 describe('ChatGPT page scripts: only the registered conversation is touched', () => {
+  it('finds the nested current ChatGPT row but never climbs into a multi-conversation container', () => {
+    window.history.replaceState({}, '', CONVERSATION_PATH);
+    document.body.innerHTML = '<nav aria-label="聊天记录"><div><div><div><a href="' + CONVERSATION_PATH + '">Mine</a></div></div><button aria-haspopup="menu" aria-label="聊天操作" id="mine">...</button></div><div><a href="' + OTHER_ID_PATH + '">Other</a><button aria-label="More options" id="other">...</button></div></nav>';
+    const mine = vi.fn(); const other = vi.fn();
+    document.getElementById('mine')?.addEventListener('click', mine);
+    document.getElementById('other')?.addEventListener('click', other);
+    expect(JSON.parse(runPageScript(buildOpenMenuScript(CONVERSATION_PATH))).ok).toBe(true);
+    expect(mine).toHaveBeenCalledTimes(1);
+    expect(other).not.toHaveBeenCalled();
+    document.getElementById('mine')?.remove();
+    expect(JSON.parse(runPageScript(buildOpenMenuScript(CONVERSATION_PATH))).ok).toBe(false);
+    expect(other).not.toHaveBeenCalled();
+  });
+
   const OTHER_PATH = '/c/123e4567-e89b-42d3-a456-426614174777';
 
   it('opens the options menu of the registered sidebar row, never another conversation row', () => {
@@ -367,6 +381,24 @@ describe('ChatGPT page scripts: the confirmation must come from our own click', 
 });
 
 describe('ChatGPT cleaner orchestration', () => {
+  it('decodes the JSON-string result envelope returned by real WebView2 callbacks', async () => {
+    const responses = [
+      { ok: true, others: [OTHER_ID_PATH] },
+      { ok: true }, { ok: true }, { ok: true },
+      { ok: true }, { ok: true },
+      { ok: true, others: [OTHER_ID_PATH] },
+      { ok: true }, { ok: true }, { ok: true },
+      { ok: true }, { ok: true }, { ok: true },
+    ];
+    const evalInPage = vi.fn(async (_script: string) => JSON.stringify(JSON.stringify(responses.shift() ?? { ok: false })));
+    const cleaner = createChatGptCleaner({ evalInPage, navigate: vi.fn(async () => undefined), sleep: vi.fn(async () => undefined) });
+    expect((await cleaner.deleteConversation(CONVERSATION_URL)).ok).toBe(true);
+    expect(await cleaner.confirmGone(CONVERSATION_URL)).toBe(true);
+    expect((await cleaner.archiveConversation(CONVERSATION_URL)).ok).toBe(true);
+    expect(await cleaner.confirmArchived(CONVERSATION_URL)).toBe(true);
+    expect(responses).toHaveLength(0);
+  });
+
   it('navigates to the normalized URL and runs guarded deletion stages', async () => {
     const responses = [
       JSON.stringify({ ok: true, note: 'Snapshot taken', others: [OTHER_ID_PATH] }),
