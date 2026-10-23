@@ -745,6 +745,7 @@ export function useChatRuntime({
     } finally {
       const owned = runTargets.filter((provider) => runIdByProviderRef.current.get(provider) === runId);
       if (owned.length > 0) {
+        setNow(Date.now());
         setReplyStates((current) => activeSessionIdRef.current === sessionId
           ? settlePendingTargets(owned, current, providerStatesRef.current)
           : current);
