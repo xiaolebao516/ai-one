@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { statusFor, validateFinish } from '../prodex-archive/archive.mjs';
+import { digest, statusFor, validateFinish, withLock } from '../prodex-archive/archive.mjs';
 import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeNote, normalizeOwnership, parseCheck, processAlive, readClaim, readClosure, releaseClaim, slotEnv, slotsHome, sweepSlots, writeClosure } from './slots.mjs';
 
 // Argument mistakes (bad flags, missing values, unknown commands) are usage errors: the reason
@@ -64,6 +64,16 @@ export function parseArgs(args) {
     options[VALUE_OPTIONS[arg]] = Number(value);
   }
   if (command === 'run') {
+    // The thread a claim names must be the thread the ask really targets, otherwise every
+    // protection keyed on the claim would watch the wrong chat.
+    const targets = passthrough.reduce((all, arg, i) => (arg === '--target-url' ? [...all, passthrough[i + 1]] : all), []);
+    if (targets.length > 1) throw new Error('run takes at most one --target-url');
+    if ((targets.length === 1) !== (options.threadUrl !== undefined)) {
+      throw new Error('Continuing a thread needs the same URL in --thread-url (ownership) and in --target-url after `--`; give both or neither');
+    }
+    if (targets.length === 1 && normalizeOwnership({ threadUrl: targets[0] }).threadUrl !== normalizeOwnership({ threadUrl: options.threadUrl }).threadUrl) {
+      throw new Error('--thread-url and --target-url must name the same thread');
+    }
     if (!passthrough.length) throw new Error('run needs the ask arguments after `--`');
     if (passthrough.includes('--port') || passthrough.some((a) => a.startsWith('--port='))) {
       throw new Error('Do not pass --port: the slot decides the browser');
@@ -308,13 +318,24 @@ async function runCommand(options, passthrough, deps, err, sweepReport = []) {
         continue;
       }
       if (claim.warning) err(`prodex-slots: slot ${slot.id}: ${claim.warning} (the claim itself is fine; the sweep collects the leftover)`);
-      // Archive and run each write their marker (journal "pending" / this claim) and then read the
-      // other's, so one of them always sees the other: a run never starts on a thread that is being
-      // archived right now.
-      if (options.ownership.threadUrl && statusFor(deps.home, options.ownership.threadUrl)?.status === 'pending') {
-        claim.release();
-        err(`prodex-slots: slot ${slot.id}: this thread is being archived right now; not starting a new ask on it`);
-        return EXIT.ERROR;
+      // Run and archive serialize on the same per-thread lock: the archive holds it from "pending"
+      // to its result, and this check takes it after the claim is visible. Either the archive sees
+      // this claim, or this run sees "pending"/"archived" (or the busy lock) and backs off.
+      if (options.ownership.threadUrl) {
+        let blockedReason = null;
+        try {
+          await withLock(path.join(deps.home, 'archive', `thread-${digest(options.ownership.threadUrl)}.lock`), async () => {
+            const status = statusFor(deps.home, options.ownership.threadUrl)?.status;
+            if (status === 'pending' || status === 'archived') blockedReason = status;
+          });
+        } catch {
+          blockedReason = 'pending';
+        }
+        if (blockedReason) {
+          claim.release();
+          err(`prodex-slots: slot ${slot.id}: this thread is ${blockedReason === 'archived' ? 'already archived' : 'being archived right now'}; not starting a new ask on it`);
+          return EXIT.ERROR;
+        }
       }
       try {
         const { state } = await checkWithRestore(slot, deps);

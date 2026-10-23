@@ -465,13 +465,13 @@ test('two slots can be told apart by the task and the thread they serve', async 
 
 test('run records the ownership it was given and forwards nothing extra to ask', async () => {
   const h = harness();
-  const args = ['run', '--task', '71', '--session', 's1', '--thread-url', THREAD_A, '--', '--new-chat', '--effort', 'high'];
+  const args = ['run', '--task', '71', '--session', 's1', '--thread-url', THREAD_A, '--', '--target-url', THREAD_A, '--effort', 'high'];
   assert.equal(await h.run(args), EXIT.OK);
   const ask = h.log.asks[0];
   assert.equal(ask.claimed.task, '#71');
   assert.equal(ask.claimed.sessionKey, 's1');
   assert.equal(ask.claimed.threadUrl, THREAD_A);
-  assert.deepEqual(ask.args, ['--new-chat', '--effort', 'high'], 'ownership flags are consumed, not forwarded to ask');
+  assert.deepEqual(ask.args, ['--target-url', THREAD_A, '--effort', 'high'], 'ownership flags are consumed, not forwarded to ask');
   assert.match(h.log.err.join('\n'), /using slot 1 \(port 9333\) for #71 s1/);
 });
 
@@ -1162,4 +1162,35 @@ test('a plain release with no claim read leaves a claim that appears afterwards 
   const taken = claimSlot(h.home, 1, { pid: 222, alive: () => true, meta: { task: '72' } });
   assert.ok(readClaim(h.home, 1));
   taken.release();
+});
+
+test('run needs --thread-url and --target-url to be the same thread, or neither', async () => {
+  const other = 'https://chatgpt.com/c/7bd8e501-1234-83e9-9ad7-429cd3782b79';
+  for (const args of [
+    ['run', '--task', '71', '--thread-url', THREAD, '--', '--new-chat'],
+    ['run', '--task', '71', '--', '--target-url', THREAD],
+    ['run', '--task', '71', '--thread-url', THREAD, '--', '--target-url', other],
+    ['run', '--task', '71', '--thread-url', THREAD, '--', '--target-url', THREAD, '--target-url', THREAD],
+  ]) {
+    const h = harness();
+    assert.equal(await h.run(args), EXIT.ERROR, args.join(' '));
+    assert.equal(h.log.asks.length, 0);
+    assert.equal(readClaim(h.home, 1), null);
+  }
+});
+
+test('a run backs off when the per-thread archive lock is held or the thread is archived', async () => {
+  const { withLock, digest, setStatus } = await import('../../prodex-archive/archive.mjs');
+  const askArgs = ['run', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--', '--target-url', THREAD];
+  const h = harness();
+  const lock = path.join(h.home, 'archive', `thread-${digest(THREAD)}.lock`);
+  let code;
+  await withLock(lock, async () => { code = await h.run(askArgs); });
+  assert.equal(code, EXIT.ERROR);
+  assert.equal(h.log.asks.length, 0);
+  assert.equal(readClaim(h.home, 1), null);
+  await setStatus(h.home, THREAD, { status: 'archived', task: '71', slot: 1 });
+  assert.equal(await h.run(askArgs), EXIT.ERROR);
+  assert.match(h.log.err.join(' '), /already archived/);
+  assert.equal(h.log.asks.length, 0);
 });
