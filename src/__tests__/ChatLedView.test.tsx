@@ -394,3 +394,20 @@ describe("ChatLedView timeline and cleanup", () => {
     }
   });
 });
+
+describe('chat-led enhanced timeline', () => {
+  it('marks each automatically reminded reply and each target timeout', async () => {
+    const container = await renderView({
+      run: makeRun({
+        coordinatorReplies: [{ round: 1, text: 'bad format', at: 2, autoReminder: 'please resend' }],
+        forwards: [{
+          id: 'r1-claude', round: 1, from: 'chatgpt', to: 'claude',
+          message: 'work', messageChars: 4, status: 'timed-out', error: 'timeout',
+        }],
+      }),
+    });
+    expect(container.textContent).toContain('Auto reminder');
+    expect(container.textContent).toContain('please resend');
+    expect(container.textContent).toContain('Timed out');
+  });
+});

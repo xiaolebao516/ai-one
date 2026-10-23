@@ -173,7 +173,7 @@ describe('chat-led protocol', () => {
       1,
       7,
     );
-    expect(prompt).toContain('[ai-one] 向 Claude 转发失败：provider unavailable');
+    expect(prompt).toContain('[ai-one] 来自 Claude 的转发失败：provider unavailable');
 
     const codes = [
       'no-directive',
@@ -189,5 +189,46 @@ describe('chat-led protocol', () => {
     for (const code of codes) {
       expect(buildViolationReminder(code).length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('chat-led template modes', () => {
+  const input = {
+    goal: 'Build a project',
+    coordinator: 'chatgpt' as const,
+    available: [{ provider: 'claude' as const, label: 'Claude' }],
+    roundLimit: 8,
+  };
+  it('keeps the general prompt byte-for-byte identical to the original', () => {
+    const expected = [
+      '你是本次任务的协调者，provider 标识为 chatgpt。请根据用户目标组织其他 AI 协作，并在收到完整回复后继续判断。',
+      '可转发的 AI 列表：claude（Claude）。to 字段必须使用列表中的 provider 标识，不要使用显示名称。',
+      '需要转发时，输出且只输出一个如下格式的围栏块；围栏内部必须是严格 JSON：',
+      fence + 'ai-one-send',
+      '{"to":["claude"],"message":"请独立完成指定任务，并给出完整结果。","reply":"full"}',
+      fence,
+      '确认整个任务完成时，输出且只输出一个如下格式的围栏块：',
+      fence + 'ai-one-done',
+      '{"summary":"面向用户的最终总结"}',
+      fence,
+      '协议规则：一次回复最多只能包含一个 ai-one-send 或 ai-one-done 围栏块；message 必须自包含，写全执行所需的背景、约束和上下文，不得依赖其他 AI 能看到本次网页对话。',
+      '不要在同一回复里放两个 ai-one 围栏块。不要用 ai-one 围栏展示示例或引用内容。普通文字不会触发转发；只有上述顶层围栏块会被识别。',
+      '最多执行 8 轮转发；收到第 9 条协调者回复时会暂停并交由用户决定。完成时必须使用 ai-one-done 围栏，不要只用自然语言宣告完成。',
+      '用户任务原文如下，请保留其目标与约束：\n\nBuild a project',
+    ].join('\n\n');
+    expect(buildIntroPrompt(input)).toBe(expected);
+    expect(buildIntroPrompt({ ...input, mode: 'general' })).toBe(expected);
+  });
+  it('adds repository collaboration constraints without claiming ai-one performs writes', () => {
+    const prompt = buildIntroPrompt({ ...input, mode: 'repo' });
+    expect(prompt).toContain('每位工人使用独立分支');
+    expect(prompt).toContain('同一分支同一时间只有一个写入者');
+    expect(prompt).toContain('GitHub 连接器');
+    expect(prompt).toContain('ai-one 不检查、不代执行');
+  });
+  it('asks independent opinions and coordinator synthesis in discussion mode', () => {
+    const prompt = buildIntroPrompt({ ...input, mode: 'discuss' });
+    expect(prompt).toContain('独立给出观点');
+    expect(prompt).toContain('协调者比较分歧并汇总');
   });
 });

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
-import { EXIT, main } from '../cli.mjs';
+import { EXIT, heartbeat, main, takeover } from '../cli.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli.mjs');
 let root;
@@ -106,4 +106,85 @@ test('bad arguments are a usage error, not a claim', () => {
   assert.equal(run(clones[0], ['claim', '0', '--agent', 'x']).code, EXIT.error);
   assert.equal(run(clones[0], ['claim', '99999999999999999999', '--agent', 'x']).code, EXIT.error);
   assert.equal(run(clones[0], ['show']).out.includes('#82'), false);
+});
+
+test('heartbeat keeps the claim alive; only the holder can beat', () => {
+  const [a, b] = clones;
+  assert.equal(run(a, ['claim', '90', '--agent', 'holder']).code, EXIT.ok);
+  assert.match(run(a, ['inspect', '90']).out, /^ACTIVE #90 claimed by holder/);
+  assert.equal(run(a, ['heartbeat', '90', '--agent', 'holder']).code, EXIT.ok);
+  const other = run(b, ['heartbeat', '90', '--agent', 'intruder']);
+  assert.equal(other.code, EXIT.held);
+  assert.match(other.err, /not the holder/);
+  assert.equal(run(b, ['heartbeat', '91', '--agent', 'holder']).code, EXIT.held);
+  assert.match(run(b, ['show', '90']).out, /claimed by holder/);
+  assert.equal(run(a, ['release', '90', '--agent', 'holder']).code, EXIT.ok);
+});
+
+// Plants a claim whose last sign of life is long past, as an agent that died without releasing.
+function plantStaleClaim(dir, issue, agent) {
+  const tree = git(dir, 'mktree');
+  const old = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'x', GIT_AUTHOR_EMAIL: 'x@x.invalid', GIT_COMMITTER_NAME: 'x', GIT_COMMITTER_EMAIL: 'x@x.invalid' };
+  const made = spawnSync('git', ['commit-tree', tree, '-m', `claim #${issue}\n\nagent: ${agent}\nat: ${old}\n`], { cwd: dir, encoding: 'utf8', env });
+  assert.equal(made.status, 0, made.stderr);
+  git(dir, 'push', '--quiet', 'origin', `${made.stdout.trim()}:refs/heads/claim/${issue}`);
+}
+
+test('a live claim cannot be taken, and the window is not a takeover option', () => {
+  const [a, b] = clones;
+  assert.equal(run(a, ['claim', '92', '--agent', 'busy']).code, EXIT.ok);
+  const early = run(b, ['takeover', '92', '--agent', 'rescuer', '--stopped-evidence', 'killed pid 1']);
+  assert.equal(early.code, EXIT.held);
+  assert.match(early.err, /HANDOFF_BLOCKED/);
+  // Neither a shrunk window nor an injected future clock can make a live holder look stale.
+  const shrunk = run(b, ['takeover', '92', '--agent', 'rescuer', '--stopped-evidence', 'x', '--suspect-after-min', '0.0001']);
+  assert.equal(shrunk.code, EXIT.error);
+  // A heartbeat cannot be backdated through the exported API to make a live claim look stale.
+  assert.equal(heartbeat(92, 'busy', { cwd: a, now: new Date(Date.now() - 3 * 3600 * 1000) }).ok, true);
+  assert.equal(takeover(92, 'rescuer', 'x', { cwd: b }).ok, false);
+  const future = takeover(92, 'rescuer', 'x', { cwd: b, now: new Date(Date.now() + 3600 * 1000) });
+  assert.equal(future.ok, false);
+  assert.match(run(b, ['show', '92']).out, /claimed by busy/);
+  assert.match(run(b, ['inspect', '92', '--suspect-after-min', '0.0001']).out, /^SUSPECT_STALE .*not safe to take automatically/);
+  assert.equal(run(a, ['release', '92', '--agent', 'busy']).code, EXIT.ok);
+});
+
+test('takeover of a stale claim needs evidence, records it, bumps the generation and fences the old holder', () => {
+  const [a, b] = clones;
+  plantStaleClaim(a, 93, 'old');
+  assert.match(run(b, ['inspect', '93']).out, /^SUSPECT_STALE/);
+  assert.equal(run(b, ['takeover', '93', '--agent', 'new']).code, EXIT.error);
+  assert.equal(run(b, ['takeover', '93', '--agent', 'new', '--stopped-evidence', '   ']).code, EXIT.error);
+  assert.throws(() => takeover(93, 'new', undefined, { cwd: b }), /evidence/);
+  assert.match(run(b, ['show', '93']).out, /claimed by old/);
+  const taken = run(b, ['takeover', '93', '--agent', 'new', '--stopped-evidence', 'process killed, confirmed by user']);
+  assert.equal(taken.code, EXIT.ok, taken.err);
+  assert.match(taken.out, /generation 2/);
+  git(b, 'fetch', '--quiet', 'origin', 'refs/heads/claim/93');
+  const message = git(b, 'log', '-1', '--format=%B', 'FETCH_HEAD');
+  assert.match(message, /took-over-from: old/);
+  assert.match(message, /process killed, confirmed by user/);
+  assert.match(run(b, ['inspect', '93']).out, /^ACTIVE #93 claimed by new .* gen 2/);
+  assert.equal(run(a, ['heartbeat', '93', '--agent', 'old']).code, EXIT.held);
+  assert.equal(run(a, ['release', '93', '--agent', 'old']).code, EXIT.held);
+  assert.equal(run(b, ['heartbeat', '93', '--agent', 'new']).code, EXIT.ok);
+  assert.equal(run(b, ['release', '93', '--agent', 'new']).code, EXIT.ok);
+});
+
+test('two rescuers racing for a stale claim: exactly one wins', async () => {
+  const [a, b, c] = clones;
+  plantStaleClaim(a, 94, 'old');
+  const codes = await Promise.all(
+    [b, c].map(
+      (dir, index) =>
+        new Promise((resolve) => {
+          const child = spawn(process.execPath, [CLI, 'takeover', '94', '--agent', `rescuer-${index}`, '--stopped-evidence', 'confirmed'], { cwd: dir, stdio: 'ignore' });
+          child.on('exit', resolve);
+        }),
+    ),
+  );
+  assert.equal(codes.filter((code) => code === EXIT.ok).length, 1);
+  assert.equal(codes.filter((code) => code === EXIT.held).length, 1);
+  assert.match(run(a, ['show', '94']).out, /^#94 claimed by rescuer-\d/);
 });

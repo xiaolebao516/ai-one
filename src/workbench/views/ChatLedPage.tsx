@@ -7,11 +7,13 @@ import { Badge, Button, Card, Notice, SectionHeader } from '../../ui/v2';
 import { ChatLedController } from '../../workflow/chatLed/controller';
 import { executeCleanup, planCleanup, type CleanupPlanItem } from '../../workflow/chatLed/cleanup';
 import { createChatGptCleaner } from '../../workflow/chatLed/drivers/chatgpt';
+import { createClaudeCleaner } from '../../workflow/chatLed/drivers/claude';
+import { createGeminiCleaner } from '../../workflow/chatLed/drivers/gemini';
 import { createRealChatLedEnv, prepareProviderPage } from '../../workflow/chatLed/env';
 import { exportRunMarkdown } from '../../workflow/chatLed/exportMarkdown';
 import { appendCleanupResult, beginCleanup, closeRun, finishCleanup, interruptCleanup, isRunActive, recordExport } from '../../workflow/chatLed/machine';
 import { loadRuns, saveRunChecked } from '../../workflow/chatLed/store';
-import type { ChatLedRun } from '../../workflow/chatLed/types';
+import type { ChatLedMode, ChatLedRun } from '../../workflow/chatLed/types';
 import { workbenchText } from '../workbenchText';
 import { ChatLedView } from './ChatLedView';
 
@@ -60,6 +62,7 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
   const [runs, setRuns] = useState<ChatLedRun[]>(() => loadRuns(storage));
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [goal, setGoal] = useState('');
+  const [mode, setMode] = useState<ChatLedMode>('general');
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [takeover, setTakeover] = useState<AIProvider | undefined>();
@@ -92,6 +95,24 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
         },
         sleep,
       }),
+      createClaudeCleaner({
+        evalInPage: (js) => host.provider.evalWithCallback('claude', js),
+        reload: () => host.provider.reload('claude'),
+        navigate: async (url) => {
+          await host.provider.eval('claude', `location.href = ${JSON.stringify(url)}`);
+          await sleep(4_000);
+        },
+        sleep,
+      }),
+      createGeminiCleaner({
+        evalInPage: (js) => host.provider.evalWithCallback('gemini', js),
+        reload: () => host.provider.reload('gemini'),
+        navigate: async (url) => {
+          await host.provider.eval('gemini', `location.href = ${JSON.stringify(url)}`);
+          await sleep(4_000);
+        },
+        sleep,
+      }),
     ],
     [],
   );
@@ -119,7 +140,7 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
     setError(undefined);
     try {
       const env = createRealChatLedEnv();
-      const controller = await ChatLedController.create(env, { id: newRunId(), goal: trimmed, candidates: CANDIDATES });
+      const controller = await ChatLedController.create(env, { id: newRunId(), goal: trimmed, candidates: CANDIDATES, mode });
       controllers.current.set(controller.getRun().id, controller);
       persist(controller.getRun());
       if (!persistedRef.current) {
@@ -162,6 +183,20 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
               placeholder={text.t('chatLedGoalPlaceholder')}
               onChange={(event) => setGoal(event.target.value)}
             />
+            <label htmlFor="chatled-mode" className="text-v2-meta font-medium text-v2-ink">
+              {text.zh ? '协作模式' : 'Collaboration mode'}
+            </label>
+            <select
+              id="chatled-mode"
+              aria-label={text.zh ? '协作模式' : 'Collaboration mode'}
+              className="w-full rounded-v2-md border border-v2-line bg-v2-surface p-v2-sm text-v2-body text-v2-ink"
+              value={mode}
+              onChange={(event) => setMode(event.target.value as ChatLedMode)}
+            >
+              <option value="general">{text.zh ? '通用' : 'General'}</option>
+              <option value="repo">{text.zh ? '仓库协作（仅文案约束）' : 'Repository (instructions only)'}</option>
+              <option value="discuss">{text.zh ? '独立讨论' : 'Independent discussion'}</option>
+            </select>
             <p className="text-v2-meta text-v2-ink-2">
               {text.t('chatLedCoordinatorLine', {
                 name: AI_PROVIDERS.chatgpt.name,
@@ -262,18 +297,24 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
       setError(text.t('chatLedPersistFailed'));
       return;
     }
+    const prepared = new Set<AIProvider>();
     try {
-      // These are prerequisites, not best-effort hints: no destructive cleaner action may run if
-      // provider preparation or viewport parking fails.
-      await prepareProviderPage('chatgpt');
-      await host.provider.park('chatgpt', offscreenBounds(1280, 900));
-      await sleep(2_500);
-      await executeCleanup(plan, cleaners, {
-        onProgress: (_index, result) => {
-          apply((run) => appendCleanupResult(run, result, Date.now()));
-          if (!persistedRef.current) throw new Error('Cleanup progress checkpoint could not be saved.');
-        },
-      });
+      for (const item of plan) {
+        // Each actionable site must pass its own readiness and viewport gates before any
+        // cleaner script runs. A failure aborts the remaining batch as manual-only.
+        if (item.action !== 'manual') {
+          await prepareProviderPage(item.provider);
+          await host.provider.park(item.provider, offscreenBounds(1280, 900));
+          prepared.add(item.provider);
+          await sleep(2_500);
+        }
+        await executeCleanup([item], cleaners, {
+          onProgress: (_index, result) => {
+            apply((run) => appendCleanupResult(run, result, Date.now()));
+            if (!persistedRef.current) throw new Error('Cleanup progress checkpoint could not be saved.');
+          },
+        });
+      }
       apply((run) => finishCleanup(run, Date.now()));
       if (!persistedRef.current) throw new Error('Cleanup completion checkpoint could not be saved.');
     } catch (cause) {
@@ -286,7 +327,9 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
         message,
       ));
     } finally {
-      await host.provider.park('chatgpt', offscreenBounds()).catch(() => undefined);
+      for (const provider of prepared) {
+        await host.provider.park(provider, offscreenBounds()).catch(() => undefined);
+      }
       setCleanupBusy(false);
     }
   };
