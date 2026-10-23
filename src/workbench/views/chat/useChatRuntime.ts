@@ -198,11 +198,16 @@ export function useChatRuntime({
   const [initial] = useState(() => {
     const loaded = loadConversationSessions();
     const sessions = loaded.length > 0 ? loaded : [createConversationSession()];
+    const activeReplies = repliesFromSession(sessions[0].messages);
+    const lastSuccessfulReplies = sessions
+      .map((session) => repliesFromSession(session.messages))
+      .find((replies) => CHAT_PROVIDERS.some((provider) => replies[provider]?.status === 'completed'));
     return {
       sessions,
       activeSessionId: sessions[0].id,
-      replyStates: repliesFromSession(sessions[0].messages),
-      comparisonTargets: Object.keys(repliesFromSession(sessions[0].messages)).filter(isProvider) as AIProvider[],
+      replyStates: activeReplies,
+      comparisonTargets: Object.keys(activeReplies).filter(isProvider) as AIProvider[],
+      selectedTargets: CHAT_PROVIDERS.filter((provider) => lastSuccessfulReplies?.[provider]?.status === 'completed'),
     };
   });
   const [sessions, setSessions] = useState<ConversationSession[]>(initial.sessions);
@@ -211,7 +216,7 @@ export function useChatRuntime({
   const providerStatesRef = useRef(providerStates);
   const [replyStates, setReplyStates] = useState<Partial<Record<AIProvider, ProviderReplyState>>>(initial.replyStates);
   const [comparisonTargets, setComparisonTargets] = useState<AIProvider[]>(initial.comparisonTargets);
-  const [selectedTargets, setSelectedTargets] = useState<AIProvider[]>([]);
+  const [selectedTargets, setSelectedTargets] = useState<AIProvider[]>(initial.selectedTargets);
   const [busyStartedAt, setBusyStartedAt] = useState<Partial<Record<AIProvider, number>>>({});
   const [now, setNow] = useState(() => Date.now());
   const [notice, setNotice] = useState<ChatRuntimeNotice>();
