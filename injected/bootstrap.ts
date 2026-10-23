@@ -70,6 +70,18 @@ export function peekOutboxBatch(entries: OutboxEntry[], maxBytes = PULL_MAX_DECO
   return batch;
 }
 
+/** Only the most recent completed request may identify an immediate DONE hint. */
+export function latestDoneRequestId(entries: readonly OutboxEntry[]): string | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (entries[index].action !== 'RESPONSE_DONE') continue;
+    const payload = entries[index].payload;
+    if (!payload || typeof payload !== 'object') return undefined;
+    const id = (payload as { requestId?: unknown }).requestId;
+    return typeof id === 'string' ? id : undefined;
+  }
+  return undefined;
+}
+
 export function ackOutbox(entries: OutboxEntry[], maxMid: number): OutboxEntry[] {
   return entries.filter((entry) => entry.mid > maxMid);
 }
@@ -301,7 +313,8 @@ interface MacBridge {
     if (hintTimer !== undefined) window.clearTimeout(hintTimer);
     const payload = () => (degraded ? { bridge: 'degraded', reason: degradedReason ?? 'outbox_degraded' } : {});
     if (immediate) {
-      emitTitle('STATUS_REPORT', { ...payload(), doneReady: true }, { immediate: true });
+      const requestId = latestDoneRequestId(outbox);
+      emitTitle('STATUS_REPORT', { ...payload(), doneReady: true, ...(requestId ? { requestId } : {}) }, { immediate: true });
       return;
     }
     hintTimer = window.setTimeout(() => {

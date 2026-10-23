@@ -9,6 +9,7 @@ import {
   enforceOutboxOverflow,
   hasCloudflareChallengeSignals,
   isGoogleSorryChallenge,
+  latestDoneRequestId,
   type OutboxEntry,
   peekOutboxBatch,
   shouldDeferBridgeStart,
@@ -28,6 +29,7 @@ import {
   setProviderAwaiting,
 } from '../bridge/pull';
 import { host } from '../host';
+import { createResponseRequestId, resetWorkflowStateForTests, setResponseRequestIdFactory } from '../workflow/state';
 
 vi.mock('../host', () => ({
   host: {
@@ -60,11 +62,13 @@ describe('pull transport', () => {
     vi.clearAllMocks();
     vi.useRealTimers();
     resetBridgePullForTests();
+    resetWorkflowStateForTests();
     vi.mocked(host.provider.eval).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
     resetBridgePullForTests();
+    resetWorkflowStateForTests();
     vi.useRealTimers();
   });
 
@@ -383,6 +387,109 @@ describe('pull transport', () => {
     expect(messages.some((msg) => msg.transport === 'local' && msg.action === 'RESPONSE_DONE')).toBe(false);
   });
 
+  it('keeps polling the current request after draining an older request DONE', async () => {
+    vi.useFakeTimers();
+    setResponseRequestIdFactory(() => 'request-B');
+    createResponseRequestId(provider);
+    setProviderAwaiting(provider, true);
+    vi.mocked(host.provider.evalWithCallback)
+      .mockResolvedValueOnce(JSON.stringify([{ ...message(1, 'same-boot', 'RESPONSE_DONE'), payload: { text: 'old answer', requestId: 'request-A' } }]))
+      .mockResolvedValue(JSON.stringify([]));
+    await pullProvider(provider);
+    expect(host.provider.evalWithCallback).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(POLL_PULL_MS);
+    expect(host.provider.evalWithCallback).toHaveBeenCalledTimes(2);
+    expect(host.provider.stop).not.toHaveBeenCalled();
+  });
+
+  it('does not let a delayed old watchdog pull stop a new request', async () => {
+    vi.useFakeTimers();
+    setResponseRequestIdFactory(() => 'request-A');
+    createResponseRequestId(provider);
+    setProviderAwaiting(provider, true);
+    vi.mocked(host.provider.evalWithCallback).mockResolvedValue(JSON.stringify([]));
+    handleTitleMessage({ v: 1, action: 'STATUS_REPORT', provider, bootId: 'same-boot', transport: 'title', payload: { bulkReady: 1, doneReady: true, requestId: 'request-A' } });
+    await vi.advanceTimersByTimeAsync(4999);
+    let releasePull!: (value: string) => void;
+    vi.mocked(host.provider.evalWithCallback).mockImplementationOnce(() => new Promise((resolve) => { releasePull = resolve; }));
+    await vi.advanceTimersByTimeAsync(1);
+    setProviderAwaiting(provider, false);
+    setResponseRequestIdFactory(() => 'request-B');
+    createResponseRequestId(provider);
+    setProviderAwaiting(provider, true);
+    releasePull(JSON.stringify([]));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(host.provider.stop).not.toHaveBeenCalled();
+    const calls = vi.mocked(host.provider.evalWithCallback).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(POLL_PULL_MS);
+    expect(vi.mocked(host.provider.evalWithCallback).mock.calls.length).toBeGreaterThan(calls);
+  });
+
+  it('does not clear a new awaiting epoch when an older DONE ack resolves', async () => {
+    vi.useFakeTimers();
+    setProviderAwaiting(provider, true);
+    vi.mocked(host.provider.evalWithCallback).mockResolvedValueOnce(JSON.stringify([message(1, 'same-boot', 'RESPONSE_DONE')])).mockResolvedValue(JSON.stringify([]));
+    let releaseAck!: () => void;
+    vi.mocked(host.provider.eval).mockImplementationOnce(() => new Promise<void>((resolve) => { releaseAck = resolve; }));
+    const pulling = pullProvider(provider);
+    await vi.waitFor(() => expect(host.provider.eval).toHaveBeenCalledTimes(1));
+    setProviderAwaiting(provider, false);
+    setProviderAwaiting(provider, true);
+    releaseAck();
+    await pulling;
+    const calls = vi.mocked(host.provider.evalWithCallback).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(POLL_PULL_MS);
+    expect(vi.mocked(host.provider.evalWithCallback).mock.calls.length).toBeGreaterThan(calls);
+  });
+
+  it('does not arm a current-request watchdog from an older request title hint', async () => {
+    vi.useFakeTimers();
+    setResponseRequestIdFactory(() => 'request-B');
+    createResponseRequestId(provider);
+    setProviderAwaiting(provider, true);
+    vi.mocked(host.provider.evalWithCallback).mockResolvedValue(JSON.stringify([]));
+    handleTitleMessage({ v: 1, action: 'STATUS_REPORT', provider, bootId: 'same-boot', transport: 'title', payload: { bulkReady: 1, doneReady: true, requestId: 'request-A' } });
+    await vi.advanceTimersByTimeAsync(5100);
+    expect(host.provider.stop).not.toHaveBeenCalled();
+  });
+
+  it('keeps the current request token on a watchdog error', async () => {
+    vi.useFakeTimers();
+    const { messages, cleanup } = collectMessages();
+    setResponseRequestIdFactory(() => 'request-B');
+    createResponseRequestId(provider);
+    setProviderAwaiting(provider, true);
+    vi.mocked(host.provider.evalWithCallback).mockResolvedValue(JSON.stringify([]));
+    handleTitleMessage({ v: 1, action: 'STATUS_REPORT', provider, bootId: 'same-boot', transport: 'title', payload: { bulkReady: 1, doneReady: true, requestId: 'request-B' } });
+    await vi.advanceTimersByTimeAsync(5100);
+    cleanup();
+    expect(host.provider.stop).toHaveBeenCalledOnce();
+    expect(messages).toContainEqual(expect.objectContaining({
+      action: 'RESPONSE_DONE', transport: 'local',
+      payload: { text: '[Error: bridge degraded]', requestId: 'request-B' },
+    }));
+  });
+
+  it('does not reuse an old request forced pull as evidence for a new request', async () => {
+    setResponseRequestIdFactory(() => 'request-A');
+    createResponseRequestId(provider);
+    setProviderAwaiting(provider, true);
+    let releasePull!: (value: string) => void;
+    vi.mocked(host.provider.evalWithCallback)
+      .mockImplementationOnce(() => new Promise((resolve) => { releasePull = resolve; }))
+      .mockResolvedValueOnce(JSON.stringify([]));
+    const oldPull = pullProvider(provider, { force: true });
+    setProviderAwaiting(provider, false);
+    setResponseRequestIdFactory(() => 'request-B');
+    createResponseRequestId(provider);
+    setProviderAwaiting(provider, true);
+    const newPull = pullProvider(provider, { force: true });
+    releasePull(JSON.stringify([]));
+    await Promise.all([oldPull, newPull]);
+    expect(host.provider.evalWithCallback).toHaveBeenCalledTimes(2);
+    expect(host.provider.stop).not.toHaveBeenCalled();
+  });
+
   it('runs a distinct forced pull after an in-flight non-forced pull while still pending', async () => {
     setProviderAwaiting(provider, true);
     let resolveFirst!: (value: string) => void;
@@ -407,6 +514,14 @@ describe('pull transport', () => {
 });
 
 describe('bootstrap outbox helpers', () => {
+  it('uses only the latest DONE token for title hints, including after truncation', () => {
+    const oldDone = { ...message(1, 'b1', 'RESPONSE_DONE'), payload: { text: 'old', requestId: 'request-A' } };
+    const currentDone = capOutboxEntry({ ...message(2, 'b1', 'RESPONSE_DONE'), payload: { text: 'x'.repeat(2000), requestId: 'request-B' } }, 500);
+    expect(latestDoneRequestId([oldDone, currentDone, message(3)])).toBe('request-B');
+    expect(latestDoneRequestId([oldDone, message(2, 'b1', 'RESPONSE_DONE')])).toBeUndefined();
+    expect(latestDoneRequestId([message(1)])).toBeUndefined();
+  });
+
   it('keeps every provider passive until a Cloudflare challenge clears', () => {
     expect(hasCloudflareChallengeSignals('Just a moment...', 'Verifying you are human', false)).toBe(true);
     expect(hasCloudflareChallengeSignals('Grok', 'Please complete the security check', false)).toBe(true);

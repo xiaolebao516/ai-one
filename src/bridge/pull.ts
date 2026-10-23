@@ -12,17 +12,41 @@ const lastConsumed = new Map<string, { bootId: string; mid: number }>();
 const pending = new Set<AIProvider>();
 const degraded = new Set<AIProvider>();
 const pollTimers = new Map<AIProvider, ReturnType<typeof globalThis.setInterval>>();
-const pullInflight = new Map<AIProvider, { promise: Promise<void>; force: boolean }>();
+const pullInflight = new Map<AIProvider, { promise: Promise<void>; force: boolean; context: AwaitingContext }>();
 const activeBoot = new Map<AIProvider, string>();
 // Survives resetProviderBootState so a later check-in can tell a new document from the one the reset dropped.
 const lastSeenBoot = new Map<AIProvider, string>();
 const bootRotationListeners = new Set<(provider: AIProvider) => void>();
 const doneTimers = new Map<AIProvider, ReturnType<typeof globalThis.setTimeout>>();
 const awaitingEpoch = new Map<AIProvider, number>();
-const synthesizeInflight = new Map<AIProvider, { token: symbol; promise: Promise<void> }>();
+const synthesizeInflight = new Map<AIProvider, { token: symbol; promise: Promise<void>; context: AwaitingContext }>();
 let subscriptionPromise: Promise<() => void> | undefined;
 let cleanupSubscription: (() => void) | undefined;
 let refCount = 0;
+
+interface AwaitingContext {
+  epoch: number | undefined;
+  requestId: string | undefined;
+}
+
+function captureAwaiting(provider: AIProvider): AwaitingContext {
+  return { epoch: awaitingEpoch.get(provider), requestId: getResponseRequestId(provider) };
+}
+
+function sameAwaiting(a: AwaitingContext, b: AwaitingContext): boolean {
+  return a.epoch === b.epoch && a.requestId === b.requestId;
+}
+
+function ownsAwaiting(provider: AIProvider, context: AwaitingContext): boolean {
+  return sameAwaiting(context, captureAwaiting(provider));
+}
+
+function matchesRequest(message: BridgeMessage, context: AwaitingContext): boolean {
+  if (!context.requestId) return true;
+  const payload = message.payload;
+  return Boolean(payload && typeof payload === 'object' &&
+    (payload as { requestId?: unknown }).requestId === context.requestId);
+}
 
 export async function startBridgePull(): Promise<() => void> {
   refCount += 1;
@@ -77,10 +101,10 @@ export function handleTitleMessage(message: BridgeMessage): void {
   }
   publish(message);
   if (!message.provider) return;
-  const payload = message.payload as { bulkReady?: number; doneReady?: boolean } | undefined;
+  const payload = message.payload as { bulkReady?: number; doneReady?: boolean; requestId?: unknown } | undefined;
   if (typeof payload?.bulkReady === 'number' && payload.bulkReady > 0) {
     void pullProvider(message.provider);
-    if (payload.doneReady === true) armDoneWatchdog(message.provider);
+    if (payload.doneReady === true) armDoneWatchdog(message.provider, payload.requestId);
   }
 }
 
@@ -130,14 +154,20 @@ function ensurePoll(provider: AIProvider): void {
   pollTimers.set(provider, timer);
 }
 
-function armDoneWatchdog(provider: AIProvider): void {
+function armDoneWatchdog(provider: AIProvider, hintRequestId?: unknown): void {
   if (!pending.has(provider)) return;
+  const context = captureAwaiting(provider);
+  // An outbox may still contain another turn's DONE. Its hint is not proof that this turn ended.
+  if (context.requestId && hintRequestId !== context.requestId) return;
   clearDoneWatchdog(provider);
   const timer = globalThis.setTimeout(() => {
-    doneTimers.delete(provider);
+    if (doneTimers.get(provider) === timer) doneTimers.delete(provider);
+    if (!ownsAwaiting(provider, context) || !pending.has(provider)) return;
     void (async () => {
       await pullProvider(provider, { force: true });
-      if (pending.has(provider)) await synthesizeDone(provider, '[Error: bridge degraded]');
+      if (ownsAwaiting(provider, context) && pending.has(provider)) {
+        await synthesizeDone(provider, '[Error: bridge degraded]', context);
+      }
     })();
   }, DONE_WATCHDOG_MS);
   doneTimers.set(provider, timer);
@@ -151,22 +181,26 @@ function clearDoneWatchdog(provider: AIProvider): void {
 
 export async function pullProvider(provider: AIProvider, options: { force?: boolean } = {}): Promise<void> {
   if (degraded.has(provider) && !options.force) return;
+  const context = captureAwaiting(provider);
   const existing = pullInflight.get(provider);
   if (existing) {
-    if (!options.force || existing.force) return existing.promise;
+    if (sameAwaiting(existing.context, context) && (!options.force || existing.force)) return existing.promise;
     await existing.promise;
-    if (!pending.has(provider)) return;
+    if (!ownsAwaiting(provider, context) || !pending.has(provider)) return;
+    // A forced/current-turn pull cannot borrow an older turn's read as its own evidence.
+    return pullProvider(provider, options);
   }
-  const started = pullProviderInner(provider, options).finally(() => {
+  const started = pullProviderInner(provider, options, context).finally(() => {
     if (pullInflight.get(provider)?.promise === started) pullInflight.delete(provider);
   });
-  pullInflight.set(provider, { promise: started, force: options.force === true });
+  pullInflight.set(provider, { promise: started, force: options.force === true, context });
   return started;
 }
 
-async function pullProviderInner(provider: AIProvider, options: { force?: boolean }): Promise<void> {
+async function pullProviderInner(provider: AIProvider, options: { force?: boolean }, context: AwaitingContext): Promise<void> {
   if (degraded.has(provider) && !options.force) return;
-  const batch = await pullWithRetry(provider);
+  const batch = await pullWithRetry(provider, () => ownsAwaiting(provider, context));
+  if (!ownsAwaiting(provider, context)) return;
   if (!batch) {
     markDegraded(provider, 'pull_failed');
     return;
@@ -175,6 +209,7 @@ async function pullProviderInner(provider: AIProvider, options: { force?: boolea
   let sawDone = false;
   const providerBoot = activeBoot.get(provider);
   for (const message of batch) {
+    if (!ownsAwaiting(provider, context)) break;
     if (!message.bootId || typeof message.mid !== 'number' || !Number.isFinite(message.mid)) continue;
     if (providerBoot && message.bootId !== providerBoot) continue;
     maxMid = Math.max(maxMid, message.mid);
@@ -185,13 +220,14 @@ async function pullProviderInner(provider: AIProvider, options: { force?: boolea
     const current = lastConsumed.get(provider);
     if (current && message.mid <= current.mid) continue;
     lastConsumed.set(provider, { bootId: message.bootId, mid: message.mid });
+    if ((message.action === 'RESPONSE_DONE' || message.action === 'RESPONSE_CHUNK') && !matchesRequest(message, context)) continue;
     if (message.action === 'RESPONSE_DONE') sawDone = true;
     publish({ ...message, provider, transport: 'pull' });
   }
-  if (maxMid > 0) {
+  if (maxMid > 0 && ownsAwaiting(provider, context)) {
     await host.provider.eval(provider, `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.ackBulk(${maxMid});`);
   }
-  if (sawDone) setProviderAwaiting(provider, false);
+  if (sawDone && ownsAwaiting(provider, context)) setProviderAwaiting(provider, false);
 }
 
 function markDegraded(provider: AIProvider, reason: string): void {
@@ -209,17 +245,24 @@ function markDegraded(provider: AIProvider, reason: string): void {
   });
 }
 
-function synthesizeDone(provider: AIProvider, payload: string): Promise<void> {
+function synthesizeDone(provider: AIProvider, payload: string, context: AwaitingContext): Promise<void> {
   const existing = synthesizeInflight.get(provider);
-  if (existing) return existing.promise;
-  const epoch = awaitingEpoch.get(provider);
-  const requestId = getResponseRequestId(provider);
+  if (existing) {
+    if (sameAwaiting(existing.context, context)) return existing.promise;
+    return existing.promise.then(() => {
+      if (ownsAwaiting(provider, context) && pending.has(provider)) return synthesizeDone(provider, payload, context);
+    });
+  }
+  const requestId = context.requestId;
   const token = Symbol(provider);
   const operation = Promise.resolve()
-    .then(() => host.provider.stop(provider))
+    .then(() => {
+      if (!ownsAwaiting(provider, context) || !pending.has(provider)) return;
+      return host.provider.stop(provider);
+    })
     .catch(() => undefined)
     .then(() => {
-      if (synthesizeInflight.get(provider)?.token !== token || awaitingEpoch.get(provider) !== epoch) return;
+      if (synthesizeInflight.get(provider)?.token !== token || !ownsAwaiting(provider, context) || !pending.has(provider)) return;
       setProviderAwaiting(provider, false);
       publish({
         v: 1,
@@ -232,7 +275,7 @@ function synthesizeDone(provider: AIProvider, payload: string): Promise<void> {
     .finally(() => {
       if (synthesizeInflight.get(provider)?.token === token) synthesizeInflight.delete(provider);
     });
-  synthesizeInflight.set(provider, { token, promise: operation });
+  synthesizeInflight.set(provider, { token, promise: operation, context });
   return operation;
 }
 
@@ -244,8 +287,9 @@ function publish(message: BridgeMessage): void {
   publishBridgeMessage(message);
 }
 
-export async function pullWithRetry(provider: AIProvider): Promise<BridgeMessage[] | null> {
+export async function pullWithRetry(provider: AIProvider, stillOwned: () => boolean = () => true): Promise<BridgeMessage[] | null> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!stillOwned()) return null;
     try {
       const raw = await host.provider.evalWithCallback(
         provider,
@@ -255,6 +299,7 @@ export async function pullWithRetry(provider: AIProvider): Promise<BridgeMessage
       if (!Array.isArray(parsed)) throw new Error('pull result is not an array');
       return parsed as BridgeMessage[];
     } catch {
+      if (!stillOwned()) return null;
       if (attempt === 0) await sleep(1000);
     }
   }
