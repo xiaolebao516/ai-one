@@ -3,6 +3,8 @@
 //! All routes and methods are constructed here. No shell is involved, request JSON is sent on
 //! stdin, output is capped, and gh stderr / response error text never reaches the UI.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -161,52 +163,63 @@ pub(crate) struct RequestChangesArgs {
     pub text: String,
 }
 
-/// Async methods stay generic (no trait object or additional async-trait dependency).
-trait GhApi {
-    async fn get(&self, path: &str) -> Result<Value, GhError>;
-    async fn post(&self, path: &str, body: Value) -> Result<Value, GhError>;
-    async fn delete(&self, path: &str) -> Result<(), GhError>;
-    async fn graphql(&self, query: &str) -> Result<Value, GhError>;
-    async fn auth_status(&self) -> Result<bool, GhError>;
+type GhFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, GhError>> + Send + 'a>>;
+
+trait GhApi: Send + Sync {
+    fn get<'a>(&'a self, path: &'a str) -> GhFuture<'a, Value>;
+    fn post<'a>(&'a self, path: &'a str, body: Value) -> GhFuture<'a, Value>;
+    fn delete<'a>(&'a self, path: &'a str) -> GhFuture<'a, ()>;
+    fn graphql<'a>(&'a self, query: &'a str) -> GhFuture<'a, Value>;
+    fn auth_status<'a>(&'a self) -> GhFuture<'a, bool>;
 }
 
 struct RealGh;
 
 impl GhApi for RealGh {
-    async fn get(&self, path: &str) -> Result<Value, GhError> {
-        let args = api_args("GET", path, false);
-        run_json(GH_PROGRAM, &args, None).await
+    fn get<'a>(&'a self, path: &'a str) -> GhFuture<'a, Value> {
+        Box::pin(async move {
+            let args = api_args("GET", path, false);
+            run_json(GH_PROGRAM, &args, None).await
+        })
     }
 
-    async fn post(&self, path: &str, body: Value) -> Result<Value, GhError> {
-        let args = api_args("POST", path, true);
-        let bytes = serde_json::to_vec(&body).map_err(|_| GhError::Failed)?;
-        run_json(GH_PROGRAM, &args, Some(bytes)).await
+    fn post<'a>(&'a self, path: &'a str, body: Value) -> GhFuture<'a, Value> {
+        Box::pin(async move {
+            let args = api_args("POST", path, true);
+            let bytes = serde_json::to_vec(&body).map_err(|_| GhError::Failed)?;
+            run_json(GH_PROGRAM, &args, Some(bytes)).await
+        })
     }
 
-    async fn delete(&self, path: &str) -> Result<(), GhError> {
-        let args = api_args("DELETE", path, false);
-        let output = run_process(GH_PROGRAM, &args, None).await?;
-        if output.success {
-            Ok(())
-        } else {
-            Err(GhError::Failed)
-        }
+    fn delete<'a>(&'a self, path: &'a str) -> GhFuture<'a, ()> {
+        Box::pin(async move {
+            let args = api_args("DELETE", path, false);
+            let output = run_process(GH_PROGRAM, &args, None).await?;
+            if output.success {
+                Ok(())
+            } else {
+                Err(GhError::Failed)
+            }
+        })
     }
 
-    async fn graphql(&self, query: &str) -> Result<Value, GhError> {
-        let args = graphql_args(query);
-        run_json(GH_PROGRAM, &args, None).await
+    fn graphql<'a>(&'a self, query: &'a str) -> GhFuture<'a, Value> {
+        Box::pin(async move {
+            let args = graphql_args(query);
+            run_json(GH_PROGRAM, &args, None).await
+        })
     }
 
-    async fn auth_status(&self) -> Result<bool, GhError> {
-        let args = [
-            "auth".to_string(),
-            "status".to_string(),
-            "--hostname".to_string(),
-            "github.com".to_string(),
-        ];
-        Ok(run_process(GH_PROGRAM, &args, None).await?.success)
+    fn auth_status<'a>(&'a self) -> GhFuture<'a, bool> {
+        Box::pin(async move {
+            let args = [
+                "auth".to_string(),
+                "status".to_string(),
+                "--hostname".to_string(),
+                "github.com".to_string(),
+            ];
+            Ok(run_process(GH_PROGRAM, &args, None).await?.success)
+        })
     }
 }
 
@@ -1478,25 +1491,27 @@ mod tests {
     }
 
     impl GhApi for FakeGh {
-        async fn get(&self, path: &str) -> Result<Value, GhError> {
-            self.record(format!("GET {path}"))
+        fn get<'a>(&'a self, path: &'a str) -> GhFuture<'a, Value> {
+            Box::pin(async move { self.record(format!("GET {path}")) })
         }
 
-        async fn post(&self, path: &str, body: Value) -> Result<Value, GhError> {
-            self.record(format!("POST {path} {body}"))
+        fn post<'a>(&'a self, path: &'a str, body: Value) -> GhFuture<'a, Value> {
+            Box::pin(async move { self.record(format!("POST {path} {body}")) })
         }
 
-        async fn delete(&self, path: &str) -> Result<(), GhError> {
-            self.record(format!("DELETE {path}")).map(|_| ())
+        fn delete<'a>(&'a self, path: &'a str) -> GhFuture<'a, ()> {
+            Box::pin(async move { self.record(format!("DELETE {path}")).map(|_| ()) })
         }
 
-        async fn graphql(&self, query: &str) -> Result<Value, GhError> {
-            self.record(format!("GRAPHQL {query}"))
+        fn graphql<'a>(&'a self, query: &'a str) -> GhFuture<'a, Value> {
+            Box::pin(async move { self.record(format!("GRAPHQL {query}")) })
         }
 
-        async fn auth_status(&self) -> Result<bool, GhError> {
-            self.calls.lock().unwrap().push("AUTH".to_string());
-            self.auth_result
+        fn auth_status<'a>(&'a self) -> GhFuture<'a, bool> {
+            Box::pin(async move {
+                self.calls.lock().unwrap().push("AUTH".to_string());
+                self.auth_result
+            })
         }
     }
 
