@@ -147,11 +147,14 @@ export function createRealChatLedEnv(): ChatLedEnv {
     },
     prepare: prepareProviderPage,
     async newSession(provider) {
-      const previousStatusAt = (await stateOf(provider))?.lastStatusAt ?? 0;
+      // No await before newSession: the controller's stop/timeout checks happen right before this call,
+      // and a slower state read here would reopen a window in which a cancelled run still creates a session.
+      const startedAt = Date.now();
       await host.provider.newSession(provider);
       // A site that loads a whole new document (Gemini) reports status again only once its page has
-      // booted; evaluating or sending before that fails with "script evaluation is not ready".
-      await waitUntilFreshSendable(provider, previousStatusAt);
+      // booted; evaluating or sending before that fails with "script evaluation is not ready". Status
+      // timestamps come from the same machine clock, so "newer than startedAt" means "after this call".
+      await waitUntilFreshSendable(provider, startedAt);
       // Capture the native new-document acknowledgement, including its still-blank URL.
       const raw = await host.provider.evalWithCallback(provider, 'JSON.stringify({url: location.href, documentId: window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.bootId})');
       let snapshot: unknown = JSON.parse(raw);

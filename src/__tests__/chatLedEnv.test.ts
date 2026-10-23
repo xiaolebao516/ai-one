@@ -53,6 +53,13 @@ describe('chat-led real provider preparation', () => {
       vi.useRealTimers();
     }
   });
+  it('calls newSession without awaiting any state read first, so a cancelled run cannot slip in a session', async () => {
+    mocks.get.mockImplementation(() => new Promise(() => undefined)); // a stuck state read must not delay or gate the call
+    mocks.newSession.mockResolvedValue(undefined);
+    void createRealChatLedEnv().newSession('claude');
+    await Promise.resolve();
+    expect(mocks.newSession).toHaveBeenCalledTimes(1);
+  });
   it('waits for a site that loads a new document to boot before reading its new-session identity', async () => {
     vi.useFakeTimers();
     try {
@@ -64,7 +71,7 @@ describe('chat-led real provider preparation', () => {
       mocks.eval.mockImplementation(async () => {
         polls += 1;
         if (polls < 3) throw new Error('script evaluation is not ready for provider: gemini');
-        state = { ...state, dom: 'ready', login: 'logged_in', lastStatusAt: 20 };
+        state = { ...state, dom: 'ready', login: 'logged_in', lastStatusAt: Date.now() + 1 };
       });
       mocks.evalWithCallback.mockResolvedValue(JSON.stringify({ url: 'https://gemini.google.com/app', documentId: 'boot-2' }));
       const created = createRealChatLedEnv().newSession('gemini');
