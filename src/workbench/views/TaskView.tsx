@@ -20,7 +20,7 @@ export function TaskView({ locale, task, onBack }: TaskViewProps) {
   const hud = taskHudText(locale);
   return (
     <div className="grid min-h-full min-[1320px]:grid-cols-[minmax(0,1fr)_300px]">
-      <div className="mx-auto grid w-full max-w-[920px] content-start gap-v2-section p-v2-page">
+      <div className="mx-auto grid w-full max-w-[920px] content-start gap-v2-section p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:p-v2-page">
         <nav aria-label="breadcrumb" className="flex flex-wrap items-center gap-v2-sm text-v2-meta text-v2-ink-3">
           <Button size="sm" variant="ghost" onClick={onBack} icon={<Icon name="arrowLeft" size={14} />}>
             {text.t('backToTasks')}
@@ -101,7 +101,7 @@ export function TaskView({ locale, task, onBack }: TaskViewProps) {
         </section>
       </div>
 
-      <aside aria-label={text.t('delivery')} className="border-v2-line bg-v2-panel p-v2-page min-[1320px]:border-l">
+      <aside aria-label={text.t('delivery')} className="border-v2-line bg-v2-panel p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:p-v2-page min-[1320px]:border-l">
         <SectionHeader level={3} title={text.t('delivery')} />
         <dl className="mt-v2-sm grid gap-v2-sm text-v2-meta">
           <Fact label={text.t('issue')}>{task.issue ? `#${task.issue}` : text.t('unknownValue')}</Fact>

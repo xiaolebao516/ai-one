@@ -25,5 +25,5 @@ The repository history and study notes retain more detailed provenance where app
 
 ## Source Serif 4 (bundled font)
 
-`src/assets/fonts/source-serif-4/source-serif-4-latin-wght-normal.woff2` is the Latin subset of Source Serif 4 (© Adobe, SIL Open Font License 1.1), taken unmodified from the npm package `@fontsource-variable/source-serif-4` 5.3.1. The licence text is in `src/assets/fonts/source-serif-4/OFL.txt`. It is used for display and reading text in the v2 workbench (#105).
+`src/assets/fonts/source-serif-4/source-serif-4-latin-wght-normal.woff2` is the Latin subset of Source Serif 4 (Copyright 2014–2023 Adobe, with Reserved Font Name ‘Source’; SIL Open Font License 1.1), taken unmodified from the npm package `@fontsource-variable/source-serif-4` 5.3.1. The licence text is in `src/assets/fonts/source-serif-4/OFL.txt`. It is used for display and reading text in the v2 workbench (#105).
 

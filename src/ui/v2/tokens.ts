@@ -55,7 +55,7 @@ export interface V2ShapeTokens {
   font: { sans: string; mono: string; serif: string };
   /** Type scale: page title · task title · "now" line · body · reading (serif long text) · meta · micro. */
   text: { title: string; heading: string; lead: string; body: string; reading: string; meta: string; micro: string };
-  space: { xs: string; sm: string; md: string; lg: string; xl: string; card: string; page: string; section: string };
+  space: { xs: string; sm: string; md: string; lg: string; xl: string; card: string; page: string; pageMid: string; pageNarrow: string; section: string };
   /** Control heights. */
   control: { sm: string; md: string; lg: string };
 }
@@ -89,7 +89,7 @@ const PAPER: V2Skin = {
     radius: { sm: '6px', md: '8px', lg: '12px', xl: '16px', pill: '999px' },
     font: { sans: FONT_SANS, mono: FONT_MONO, serif: FONT_SERIF },
     text: TEXT_SCALE,
-    space: { xs: '4px', sm: '8px', md: '12px', lg: '20px', xl: '32px', card: '22px', page: '40px', section: '40px' },
+    space: { xs: '4px', sm: '8px', md: '12px', lg: '20px', xl: '32px', card: '22px', page: '40px', pageMid: '28px', pageNarrow: '20px', section: '40px' },
     control: { sm: '26px', md: '30px', lg: '34px' },
   },
   light: {
@@ -196,7 +196,7 @@ const MIST: V2Skin = {
     radius: { sm: '8px', md: '10px', lg: '14px', xl: '20px', pill: '999px' },
     font: { sans: FONT_SANS, mono: FONT_MONO, serif: FONT_SERIF },
     text: { ...TEXT_SCALE, body: '14.5px', meta: '12.5px' },
-    space: { xs: '4px', sm: '8px', md: '14px', lg: '22px', xl: '34px', card: '24px', page: '44px', section: '44px' },
+    space: { xs: '4px', sm: '8px', md: '14px', lg: '22px', xl: '34px', card: '24px', page: '44px', pageMid: '32px', pageNarrow: '22px', section: '44px' },
     control: { sm: '28px', md: '32px', lg: '38px' },
   },
   light: {
@@ -314,7 +314,7 @@ export function v2CssVariables(skinId: V2SkinId, mode: V2Mode): Record<string, s
   for (const [key, value] of Object.entries(skin.shape.radius)) vars[`--v2-radius-${key}`] = value;
   for (const [key, value] of Object.entries(skin.shape.font)) vars[`--v2-font-${key}`] = value;
   for (const [key, value] of Object.entries(skin.shape.text)) vars[`--v2-text-${key}`] = value;
-  for (const [key, value] of Object.entries(skin.shape.space)) vars[`--v2-space-${key}`] = value;
+  for (const [key, value] of Object.entries(skin.shape.space)) vars[`--v2-space-${kebab(key)}`] = value;
   for (const [key, value] of Object.entries(skin.shape.control)) vars[`--v2-control-${key}`] = value;
   return vars;
 }

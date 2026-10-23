@@ -82,6 +82,8 @@ export default {
         'v2-section': 'var(--v2-space-section)',
         'v2-card': 'var(--v2-space-card)',
         'v2-page': 'var(--v2-space-page)',
+        'v2-page-mid': 'var(--v2-space-page-mid)',
+        'v2-page-narrow': 'var(--v2-space-page-narrow)',
         'v2-control-sm': 'var(--v2-control-sm)',
         'v2-control-md': 'var(--v2-control-md)',
         'v2-control-lg': 'var(--v2-control-lg)',
