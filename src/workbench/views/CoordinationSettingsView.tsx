@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   AUTH_EXPIRED_OPTIONS,
   DEFAULT_COORDINATION_SETTINGS,
   EXCEED_LIMIT_OPTIONS,
   QUOTA_TIGHT_OPTIONS,
+  loadCoordination,
   loadCoordinationSettings,
   renderCoordinationBrief,
   sanitizePreferenceValue,
+  saveCoordination,
   saveCoordinationSettings,
   type AuthExpiredAction,
   type CoordinationSettings,
@@ -14,10 +16,12 @@ import {
   type QuotaTightAction,
   type StorageLike,
 } from '../../stages/coordinationModel';
+import type { LocalStoreFs } from '../../host/localStore';
 import { Badge, Button, Card, Notice, SegmentedControl, Select } from '../../ui/v2';
 
 export interface CoordinationSettingsViewProps {
   storage?: StorageLike;
+  fs?: LocalStoreFs;
   onSaved?: (settings: CoordinationSettings) => void;
   className?: string;
 }
@@ -32,38 +36,77 @@ const REWORK_LIMIT_OPTIONS = Array.from({ length: 10 }, (_, i) => ({
  *
  * Local preferences for Claude Code coordination, rendered into task brief markdown.
  */
-export function CoordinationSettingsView({ storage, onSaved, className }: CoordinationSettingsViewProps) {
+export function CoordinationSettingsView({ storage, fs, onSaved, className }: CoordinationSettingsViewProps) {
   const [settings, setSettings] = useState<CoordinationSettings>(() => loadCoordinationSettings(storage));
   const [saveStatus, setSaveStatus] = useState<{ tone: 'done' | 'block'; message: string } | null>(null);
 
+  useEffect(() => {
+    let active = true;
+    if (fs) {
+      loadCoordination(fs).then((res) => {
+        if (!active) return;
+        setSettings(res.settings);
+        if (res.status === 'recovered') {
+          setSaveStatus({
+            tone: 'block',
+            message: `读取到损坏的设置文件，已安全隔离备份为 ${res.backup ?? '备份文件'}，已恢复默认设置`,
+          });
+        }
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [fs]);
+
   const brief = renderCoordinationBrief(settings);
 
-  const updateSetting = <K extends keyof CoordinationSettings>(key: K, value: CoordinationSettings[K]) => {
+  const updateSetting = async <K extends keyof CoordinationSettings>(key: K, value: CoordinationSettings[K]) => {
     const next = { ...settings, [key]: value };
     setSettings(next);
-    const result = saveCoordinationSettings(next, storage);
-    if (result.success) {
-      setSaveStatus({ tone: 'done', message: '已自动保存到本机设置' });
-      onSaved?.(next);
+    if (fs) {
+      const result = await saveCoordination(next, fs);
+      if (result.success) {
+        setSaveStatus({ tone: 'done', message: '已自动保存到本机设置' });
+        onSaved?.(next);
+      } else {
+        setSaveStatus({ tone: 'block', message: `保存失败：${result.error ?? '写入文件失败'}` });
+      }
     } else {
-      setSaveStatus({ tone: 'block', message: `保存失败：${result.error ?? '存储不可用'}` });
+      const result = saveCoordinationSettings(next, storage);
+      if (result.success) {
+        setSaveStatus({ tone: 'done', message: '已自动保存到本机设置' });
+        onSaved?.(next);
+      } else {
+        setSaveStatus({ tone: 'block', message: `保存失败：${result.error ?? '存储不可用'}` });
+      }
     }
   };
 
   const updateAiPreference = (ai: string, role: string) => {
     const nextAi = { ...settings.aiPreferences, [ai]: sanitizePreferenceValue(role) };
-    updateSetting('aiPreferences', nextAi);
+    void updateSetting('aiPreferences', nextAi);
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     const reset = { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_COORDINATION_SETTINGS.aiPreferences } };
     setSettings(reset);
-    const result = saveCoordinationSettings(reset, storage);
-    if (result.success) {
-      setSaveStatus({ tone: 'done', message: '已恢复默认设置' });
-      onSaved?.(reset);
+    if (fs) {
+      const result = await saveCoordination(reset, fs);
+      if (result.success) {
+        setSaveStatus({ tone: 'done', message: '已恢复默认设置' });
+        onSaved?.(reset);
+      } else {
+        setSaveStatus({ tone: 'block', message: `重置失败：${result.error ?? '写入文件失败'}` });
+      }
     } else {
-      setSaveStatus({ tone: 'block', message: `重置失败：${result.error ?? '存储不可用'}` });
+      const result = saveCoordinationSettings(reset, storage);
+      if (result.success) {
+        setSaveStatus({ tone: 'done', message: '已恢复默认设置' });
+        onSaved?.(reset);
+      } else {
+        setSaveStatus({ tone: 'block', message: `重置失败：${result.error ?? '存储不可用'}` });
+      }
     }
   };
 

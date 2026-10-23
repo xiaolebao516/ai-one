@@ -1,19 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import {
+  COORDINATION_SETTINGS_BACKUP_KEY,
   COORDINATION_SETTINGS_STORAGE_KEY,
   DEFAULT_COORDINATION_SETTINGS,
+  buildTaskIssueBody,
   injectCoordinationBrief,
+  loadCoordination,
   loadCoordinationSettings,
   parseCoordinationSettingsWithRecovery,
   renderCoordinationBrief,
   sanitizePreferenceKey,
   sanitizePreferenceValue,
+  saveCoordination,
   saveCoordinationSettings,
   serializeCoordinationSettings,
   validateCoordinationSettings,
   type CoordinationSettings,
   type StorageLike,
 } from '../stages/coordinationModel';
+import { browserLocalStoreFs, type LocalStoreFs } from '../host/localStore';
 
 describe('coordinationModel', () => {
   it('provides valid default settings', () => {
@@ -44,6 +49,13 @@ describe('coordinationModel', () => {
       expect(cleaned).toBe('角色 恶意注入标题 rm -rf / 更多内容');
     });
 
+    it('neutralizes Markdown links, images, HTML tags and formatting into plain text', () => {
+      expect(sanitizePreferenceValue('[链接文字](https://evil.com)')).toBe('链接文字 https://evil.com');
+      expect(sanitizePreferenceValue('![图片描述](https://evil.com/img.png)')).toBe('图片描述 https://evil.com/img.png');
+      expect(sanitizePreferenceValue('<script>alert("xss")</script>')).toBe('script alert "xss" /script');
+      expect(sanitizePreferenceValue('**粗体**与*斜体*~删除线~')).toBe('粗体 与 斜体 删除线');
+    });
+
     it('limits preference length to 50 characters', () => {
       const longText = 'a'.repeat(100);
       expect(sanitizePreferenceValue(longText)).toHaveLength(50);
@@ -57,14 +69,14 @@ describe('coordinationModel', () => {
   });
 
   describe('validateCoordinationSettings', () => {
-    it('strictly resets to default when schemaVersion is not 1 (unknown future versions)', () => {
-      const futureVersion = validateCoordinationSettings({
-        schemaVersion: 2,
-        reworkLimit: 9,
-        onExceedLimit: 'consult_opus',
-      });
-      expect(futureVersion.valid).toBe(false);
-      expect(futureVersion.settings).toEqual(DEFAULT_COORDINATION_SETTINGS);
+    it('strictly resets to default when schemaVersion is invalid (null, undefined, string, future version)', () => {
+      expect(validateCoordinationSettings({ schemaVersion: 2, reworkLimit: 9 }).valid).toBe(false);
+      expect(validateCoordinationSettings({ schemaVersion: 2, reworkLimit: 9 }).settings).toEqual(DEFAULT_COORDINATION_SETTINGS);
+
+      expect(validateCoordinationSettings({ schemaVersion: '1', reworkLimit: 5 }).valid).toBe(false);
+      expect(validateCoordinationSettings({ schemaVersion: null }).valid).toBe(false);
+      expect(validateCoordinationSettings({ schemaVersion: undefined }).valid).toBe(false);
+      expect(validateCoordinationSettings({}).valid).toBe(false);
     });
 
     it('accepts boundary rework limits (1 and 10)', () => {
@@ -153,10 +165,12 @@ describe('coordinationModel', () => {
       expect(parsed.settings.onAuthExpired).toBe('fallback_ai');
     });
 
-    it('recovers from malformed JSON', () => {
-      const parsed = parseCoordinationSettingsWithRecovery('{ broken json ...');
+    it('recovers from malformed JSON and saves corrupt backup candidate', () => {
+      const broken = '{ broken json ...';
+      const parsed = parseCoordinationSettingsWithRecovery(broken);
       expect(parsed.recovered).toBe(true);
       expect(parsed.settings).toEqual(DEFAULT_COORDINATION_SETTINGS);
+      expect(parsed.corruptBackup).toBe(broken);
     });
 
     it('recovers from empty or blank strings without flagging error', () => {
@@ -208,7 +222,7 @@ describe('coordinationModel', () => {
     });
   });
 
-  describe('injectCoordinationBrief', () => {
+  describe('injectCoordinationBrief and buildTaskIssueBody', () => {
     it('injects brief before ## 任务与范围 if section does not exist', () => {
       const template = '# Task Title\n\n## 关联 / 派工\n- Owner: test\n\n## 任务与范围\n内容...\n';
       const output = injectCoordinationBrief(template, DEFAULT_COORDINATION_SETTINGS);
@@ -217,20 +231,53 @@ describe('coordinationModel', () => {
       expect(output.indexOf('## 协调简报')).toBeLessThan(output.indexOf('## 任务与范围'));
     });
 
-    it('replaces existing ## 协调简报 cleanly without duplicating', () => {
+    it('safely ignores ## 任务与范围 and ## 协调简报 inside code fences', () => {
+      const bodyWithFencedCode = [
+        '# Title',
+        '',
+        '```markdown',
+        '## 协调简报',
+        '- 代码块示例中的旧简报',
+        '## 任务与范围',
+        '- 代码块示例任务',
+        '```',
+        '',
+        '## 真实正文',
+        '真实说明',
+      ].join('\n');
+
+      const injected = injectCoordinationBrief(bodyWithFencedCode, DEFAULT_COORDINATION_SETTINGS);
+      // Fenced code block content must be strictly untouched
+      expect(injected).toContain('- 代码块示例中的旧简报');
+      expect(injected).toContain('- 代码块示例任务');
+      // Real brief appended outside
+      expect(injected).toContain('## 真实正文\n真实说明\n\n## 协调简报\n- 返工上限：3 轮');
+    });
+
+    it('replaces existing top-level ## 协调简报 cleanly without duplicating', () => {
       const existing = '# Task\n\n## 协调简报\n旧简报内容...\n\n## 任务与范围\n内容...\n';
       const updated = injectCoordinationBrief(existing, {
         ...DEFAULT_COORDINATION_SETTINGS,
         reworkLimit: 8,
       });
 
-      expect(updated.match(/## 协调简报/g)).toHaveLength(1);
+      expect(updated.match(/^## 协调简报/gm)).toHaveLength(1);
       expect(updated).toContain('- 返工上限：8 轮');
       expect(updated).not.toContain('旧简报内容');
     });
+
+    it('buildTaskIssueBody creates ready-to-use task issue body containing brief', () => {
+      const body = buildTaskIssueBody('实现某些特定能力', {
+        ...DEFAULT_COORDINATION_SETTINGS,
+        reworkLimit: 4,
+      });
+      expect(body).toContain('## 协调简报\n- 返工上限：4 轮');
+      expect(body).toContain('## 任务与范围\n实现某些特定能力');
+      expect(body).toContain('## 交付 / 验收标准');
+    });
   });
 
-  describe('load & save with StorageLike', () => {
+  describe('load & save with StorageLike and recovery backup', () => {
     it('saves and reloads settings cleanly and reports success', () => {
       const mem = new Map<string, string>();
       const storage: StorageLike = {
@@ -256,6 +303,18 @@ describe('coordinationModel', () => {
       expect(loaded.onExceedLimit).toBe('consult_opus');
     });
 
+    it('preserves corrupted data to backup key on recovery load', () => {
+      const mem = new Map<string, string>([[COORDINATION_SETTINGS_STORAGE_KEY, '{ corrupt-payload }']]);
+      const storage: StorageLike = {
+        getItem: (k) => mem.get(k) ?? null,
+        setItem: (k, v) => mem.set(k, v),
+      };
+
+      const loaded = loadCoordinationSettings(storage);
+      expect(loaded).toEqual(DEFAULT_COORDINATION_SETTINGS);
+      expect(mem.get(COORDINATION_SETTINGS_BACKUP_KEY)).toBe('{ corrupt-payload }');
+    });
+
     it('reports failure when storage throws and does not crash', () => {
       const brokenStorage: StorageLike = {
         getItem: () => {
@@ -272,6 +331,105 @@ describe('coordinationModel', () => {
       const saveResult = saveCoordinationSettings(DEFAULT_COORDINATION_SETTINGS, brokenStorage);
       expect(saveResult.success).toBe(false);
       expect(saveResult.error).toContain('QuotaExceededError');
+    });
+  });
+
+  describe('loadCoordination & saveCoordination with LocalStoreFs', () => {
+    it('returns fresh defaults when file is missing in store', async () => {
+      const mockFs: LocalStoreFs = {
+        read: async () => ({ status: 'missing', text: null, backup: null }),
+        write: async () => {},
+        quarantine: async () => null,
+        exportFile: async () => null,
+      };
+
+      const result = await loadCoordination(mockFs);
+      expect(result.status).toBe('fresh');
+      expect(result.settings).toEqual(DEFAULT_COORDINATION_SETTINGS);
+    });
+
+    it('saves settings to store and reloads successfully with status ok', async () => {
+      const files = new Map<string, string>();
+      const mockFs: LocalStoreFs = {
+        read: async (name) => {
+          const text = files.get(name);
+          return text ? { status: 'ok', text, backup: null } : { status: 'missing', text: null, backup: null };
+        },
+        write: async (name, json) => {
+          files.set(name, json);
+        },
+        quarantine: async (name) => {
+          files.delete(name);
+          return `${name}.json.bak-test`;
+        },
+        exportFile: async () => null,
+      };
+
+      const custom: CoordinationSettings = {
+        ...DEFAULT_COORDINATION_SETTINGS,
+        reworkLimit: 7,
+        onExceedLimit: 'consult_opus',
+      };
+
+      const saveRes = await saveCoordination(custom, mockFs);
+      expect(saveRes.success).toBe(true);
+
+      const loadRes = await loadCoordination(mockFs);
+      expect(loadRes.status).toBe('ok');
+      expect(loadRes.settings.reworkLimit).toBe(7);
+      expect(loadRes.settings.onExceedLimit).toBe('consult_opus');
+    });
+
+    it('quarantines corrupt store contents and returns recovered status with backup filename', async () => {
+      let quarantinedBackup: string | null = null;
+      const mockFs: LocalStoreFs = {
+        read: async () => ({ status: 'corrupt', text: null, backup: 'coordination.json.bak-20261023' }),
+        write: async () => {},
+        quarantine: async () => {
+          quarantinedBackup = 'coordination.json.bak-20261023';
+          return quarantinedBackup;
+        },
+        exportFile: async () => null,
+      };
+
+      const result = await loadCoordination(mockFs);
+      expect(result.status).toBe('recovered');
+      expect(result.backup).toBe('coordination.json.bak-20261023');
+      expect(result.settings).toEqual(DEFAULT_COORDINATION_SETTINGS);
+    });
+
+    it('refuses invalid settings on save with validation errors', async () => {
+      const mockFs: LocalStoreFs = {
+        read: async () => ({ status: 'missing', text: null, backup: null }),
+        write: async () => {},
+        quarantine: async () => null,
+        exportFile: async () => null,
+      };
+
+      const invalid = {
+        ...DEFAULT_COORDINATION_SETTINGS,
+        reworkLimit: 99,
+      };
+
+      const res = await saveCoordination(invalid as unknown as CoordinationSettings, mockFs);
+      expect(res.success).toBe(false);
+      expect(res.error).toContain('设置校验失败');
+    });
+
+    it('works with browserLocalStoreFs end-to-end', async () => {
+      const custom: CoordinationSettings = {
+        ...DEFAULT_COORDINATION_SETTINGS,
+        reworkLimit: 5,
+        onAuthExpired: 'fallback_ai',
+      };
+
+      const saveRes = await saveCoordination(custom, browserLocalStoreFs);
+      expect(saveRes.success).toBe(true);
+
+      const loadRes = await loadCoordination(browserLocalStoreFs);
+      expect(loadRes.status).toBe('ok');
+      expect(loadRes.settings.reworkLimit).toBe(5);
+      expect(loadRes.settings.onAuthExpired).toBe('fallback_ai');
     });
   });
 });

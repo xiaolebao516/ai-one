@@ -153,4 +153,43 @@ describe('CoordinationSettingsView mounted interactive tests', () => {
     expect(container.textContent).toContain('保存失败：QuotaExceededError: storage full');
     expect(container.textContent).not.toContain('已自动保存');
   });
+
+  it('notifies user when corrupt file is recovered on mount with fs', async () => {
+    const mockFs = {
+      read: vi.fn().mockResolvedValue({
+        status: 'corrupt',
+        text: null,
+        backup: 'coordination.json.bak-20261023140000',
+      }),
+      write: vi.fn().mockResolvedValue(undefined),
+      quarantine: vi.fn().mockResolvedValue('coordination.json.bak-20261023140000'),
+      exportFile: vi.fn().mockResolvedValue(null),
+    };
+
+    const { container } = await mount(<CoordinationSettingsView fs={mockFs} />);
+    expect(container.textContent).toContain('已安全隔离备份为 coordination.json.bak-20261023140000');
+  });
+
+  it('saves via fs and updates preview when fs prop is supplied', async () => {
+    let written = '';
+    const mockFs = {
+      read: vi.fn().mockResolvedValue({ status: 'missing', text: null, backup: null }),
+      write: vi.fn().mockImplementation(async (_name, json) => {
+        written = json;
+      }),
+      quarantine: vi.fn().mockResolvedValue(null),
+      exportFile: vi.fn().mockResolvedValue(null),
+    };
+
+    const { container } = await mount(<CoordinationSettingsView fs={mockFs} />);
+    const select = container.querySelector('#rework-limit-select') as HTMLSelectElement;
+
+    await act(async () => {
+      select.value = '8';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('已自动保存到本机设置');
+    expect(written).toContain('"reworkLimit": 8');
+  });
 });

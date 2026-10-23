@@ -36,6 +36,10 @@
     "allow-session-checkpoint-clear",
     "allow-github-readonly-get",
     "allow-github-readonly-associations",
-    "allow-dispatch-readonly-snapshot"
+    "allow-dispatch-readonly-snapshot",
+    "allow-local-store-read",
+    "allow-local-store-quarantine",
+    "allow-local-store-write",
+    "allow-local-store-export"
   ]
 }

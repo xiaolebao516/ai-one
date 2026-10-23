@@ -31,6 +31,10 @@ fn main() {
             "github_readonly_get",
             "github_readonly_associations",
             "dispatch_readonly_snapshot",
+            "local_store_read",
+            "local_store_quarantine",
+            "local_store_write",
+            "local_store_export",
         ]),
     ))
     .expect("failed to run tauri build script");

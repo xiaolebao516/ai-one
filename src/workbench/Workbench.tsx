@@ -16,6 +16,7 @@ import {
   NAV_VIEWS,
   activeTasks,
   groupByRepo,
+  isWorkbenchView,
   navViewFor,
   nextTheme,
   resolveRoute,
@@ -40,6 +41,7 @@ export interface WorkbenchProps {
   locale: Locale;
   /** Leaves the workbench for the classic multi-AI chat UI. */
   onOpenClassic: () => void;
+  initialRoute?: WorkbenchRoute;
   /** Reads GitHub; tests pass a controllable one. Must be a stable reference. */
   githubLoader?: GitHubLoader;
   /** Reads local Prodex metadata; tests pass a controllable one. Must be a stable reference. */
@@ -49,15 +51,18 @@ export interface WorkbenchProps {
 }
 
 /** The new ai-one front end (Spec #79 v2). The classic chat UI is only a capability library now. */
-export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader, isDesktop }: WorkbenchProps) {
+export function Workbench({ locale, onOpenClassic, initialRoute, githubLoader, dispatchLoader, isDesktop }: WorkbenchProps) {
   const text = workbenchText(locale);
   const data = useWorkbenchData(githubLoader);
   const dispatch = useDispatchData({ source: data.prefs.source, repoPath: data.prefs.dispatchRepo, loader: dispatchLoader, isDesktop });
   const channel = channelView(dispatch);
-  const [route, setRoute] = useState<WorkbenchRoute>(HOME_ROUTE);
+  const initialHash = typeof window !== 'undefined' ? window.location.hash.replace(/^#\/?/, '') : '';
+  const [route, setRoute] = useState<WorkbenchRoute>(() => initialRoute ?? (isWorkbenchView(initialHash) ? { view: initialHash } : HOME_ROUTE));
   const [paletteOpen, setPaletteOpen] = useState(false);
   const mainRef = useRef<HTMLElement | null>(null);
-  const mode = resolveTheme(data.prefs.theme, useSystemDark());
+  const systemDark = useSystemDark();
+  const urlTheme = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('theme') : null;
+  const mode = urlTheme === 'dark' || urlTheme === 'light' ? urlTheme : resolveTheme(data.prefs.theme, systemDark);
   const current = resolveRoute(route, data.tasks);
   // A task that is gone from a settled data set is gone: make the fallback the real route, so the
   // old task does not pop back up when the data source flips again. While loading, keep the route.

@@ -1,5 +1,4 @@
-import { useState, useMemo } from 'react';
-import { buildTaskIssueBody } from '../../stages/coordinationModel';
+import { useState } from 'react';
 import type { Locale } from '../../i18n/resolve';
 import { formatAge, inProgressTasks, needsYouTasks, pickText, type HudTask } from '../../ui/taskHudModel';
 import { taskHudText } from '../../ui/taskHudText';
@@ -199,7 +198,6 @@ function Composer({ locale }: { locale: Locale }) {
   const text = workbenchText(locale);
   const [mode, setMode] = useState<ComposerMode>('cc');
   const [draft, setDraft] = useState('');
-  const preparedIssueBody = useMemo(() => (mode === 'cc' ? buildTaskIssueBody(draft) : ''), [mode, draft]);
   return (
     <Card className="grid gap-v2-sm">
       <label className="sr-only" htmlFor="workbench-composer">
@@ -230,7 +228,7 @@ function Composer({ locale }: { locale: Locale }) {
           {text.t('composerStart')}
         </Button>
       </div>
-      <p className="text-v2-meta text-v2-ink-3">{text.t('composerNotYet')}{mode === 'cc' && preparedIssueBody ? '（将附带当前协调简报）' : ''}</p>
+      <p className="text-v2-meta text-v2-ink-3">{text.t('composerNotYet')}</p>
     </Card>
   );
 }

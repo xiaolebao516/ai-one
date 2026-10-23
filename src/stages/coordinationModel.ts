@@ -4,6 +4,8 @@
  * Local preferences for task coordination written into task issue briefs for CC execution.
  */
 
+import { getLocalStoreFs, type LocalStoreFs } from '../host/localStore';
+
 export type ExceedLimitAction = 'ask_user' | 'consult_opus';
 export type QuotaTightAction = 'auto_reassign' | 'ask_user';
 export type AuthExpiredAction = 'ask_user' | 'fallback_ai';
@@ -74,7 +76,7 @@ export function sanitizePreferenceValue(value: string): string {
       cleaned += ' ';
     } else {
       const ch = value[i];
-      // Strip markdown and HTML control punctuation: # ` * _ ~ [ ] ( ) ! < > \ |
+      // Strip markdown, HTML, and punctuation markers: # ` * _ ~ [ ] ( ) ! < > \ |
       if (
         ch === '#' ||
         ch === '`' ||
@@ -101,7 +103,6 @@ export function sanitizePreferenceValue(value: string): string {
 }
 
 export function sanitizePreferenceKey(key: string): string {
-  // Only alphanumeric, hyphen and underscore allowed for AI identifiers
   return key.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 20);
 }
 
@@ -118,7 +119,7 @@ export function validateCoordinationSettings(raw: unknown): ValidationResult {
 
   const candidate = raw as Record<string, unknown>;
 
-  // schemaVersion must be exact integer 1 (not null, not "1", not 2)
+  // schemaVersion must be exact integer 1 (not null, not "1", not 2, not undefined)
   if (candidate.schemaVersion !== 1 || typeof candidate.schemaVersion !== 'number') {
     return {
       valid: false,
@@ -274,6 +275,67 @@ export function renderCoordinationBrief(settings: CoordinationSettings): string 
 }
 
 /**
+ * Finds the index of a top-level section heading (not inside ``` code blocks).
+ */
+function findTopLevelSection(markdown: string, headingTitle: string): { start: number; end: number } | null {
+  const lines = markdown.split(/\r?\n/);
+  let inCodeBlock = false;
+  let charPos = 0;
+  let targetStart = -1;
+  let targetEnd = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isFence = line.trimStart().startsWith('```');
+
+    if (isFence) {
+      inCodeBlock = !inCodeBlock;
+    } else if (!inCodeBlock) {
+      if (line.startsWith(`## ${headingTitle}`)) {
+        targetStart = charPos;
+      } else if (targetStart !== -1 && line.startsWith('## ')) {
+        targetEnd = charPos;
+        break;
+      }
+    }
+
+    charPos += line.length + 1; // + newline
+  }
+
+  if (targetStart !== -1) {
+    if (targetEnd === -1) targetEnd = markdown.length;
+    return { start: targetStart, end: targetEnd };
+  }
+
+  return null;
+}
+
+/**
+ * Injects or updates the coordination brief section into a Task Issue body markdown.
+ * Safely ignores occurrences inside fenced code blocks.
+ */
+export function injectCoordinationBrief(issueBody: string, settings: CoordinationSettings): string {
+  const brief = renderCoordinationBrief(settings);
+  const existingBrief = findTopLevelSection(issueBody, '协调简报');
+
+  if (existingBrief) {
+    const before = issueBody.slice(0, existingBrief.start);
+    const after = issueBody.slice(existingBrief.end).replace(/^\r?\n/, '');
+    return `${before}${brief}\n\n${after}`.trimEnd() + '\n';
+  }
+
+  // Prepend before top-level ## 任务与范围 or append to the end
+  const taskSection = findTopLevelSection(issueBody, '任务与范围');
+  if (taskSection) {
+    const before = issueBody.slice(0, taskSection.start);
+    const after = issueBody.slice(taskSection.start);
+    return `${before}${brief}\n\n${after}`;
+  }
+
+  return `${issueBody.trimEnd()}\n\n${brief}\n`;
+}
+
+/**
  * Builds standard Task Issue markdown body with coordination brief injected.
  */
 export function buildTaskIssueBody(
@@ -288,27 +350,6 @@ export function buildTaskIssueBody(
     '- [ ] 完成并经独立审计 PASS',
   ].join('\n');
   return injectCoordinationBrief(base, settings);
-}
-/**
- * Injects or updates the coordination brief section into a Task Issue body markdown.
- * Anchors strictly to markdown line starts so code blocks are not corrupted.
- */
-export function injectCoordinationBrief(issueBody: string, settings: CoordinationSettings): string {
-  const brief = renderCoordinationBrief(settings);
-  const briefPattern = /^## 协调简报(?:\r?\n[\s\S]*?)?(?=\r?\n## |$)/m;
-
-  if (briefPattern.test(issueBody)) {
-    return issueBody.replace(briefPattern, brief);
-  }
-
-  // Prepend before ## 任务与范围 or append to the end
-  const taskSectionMatch = /^## 任务与范围/m.exec(issueBody);
-  if (taskSectionMatch) {
-    const idx = taskSectionMatch.index;
-    return `${issueBody.slice(0, idx)}${brief}\n\n${issueBody.slice(idx)}`;
-  }
-
-  return `${issueBody.trimEnd()}\n\n${brief}\n`;
 }
 
 function defaultStorage(): StorageLike | undefined {
@@ -352,3 +393,71 @@ export function saveCoordinationSettings(
     return { success: false, error: msg };
   }
 }
+
+export interface LoadCoordinationResult {
+  settings: CoordinationSettings;
+  status: 'fresh' | 'ok' | 'recovered';
+  backup?: string;
+  reason?: string;
+}
+
+export async function loadCoordination(fs: LocalStoreFs = getLocalStoreFs()): Promise<LoadCoordinationResult> {
+  const read = await fs.read('coordination');
+  if (read.status === 'missing') {
+    return {
+      settings: { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_AI_PREFERENCES } },
+      status: 'fresh',
+    };
+  }
+
+  if (read.status === 'corrupt') {
+    return {
+      settings: { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_AI_PREFERENCES } },
+      status: 'recovered',
+      ...(read.backup ? { backup: read.backup } : {}),
+      reason: 'corrupt-file',
+    };
+  }
+
+  if (!read.text) {
+    const backup = await fs.quarantine('coordination');
+    return {
+      settings: { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_AI_PREFERENCES } },
+      status: 'recovered',
+      ...(backup ? { backup } : {}),
+      reason: 'bad-shape',
+    };
+  }
+
+  const parsed = parseCoordinationSettingsWithRecovery(read.text);
+  if (parsed.recovered) {
+    const backup = await fs.quarantine('coordination');
+    return {
+      settings: parsed.settings,
+      status: 'recovered',
+      ...(backup ? { backup } : {}),
+      reason: parsed.corruptBackup ? 'corrupt-json' : 'invalid-schema',
+    };
+  }
+
+  return { settings: parsed.settings, status: 'ok' };
+}
+
+export async function saveCoordination(
+  settings: CoordinationSettings,
+  fs: LocalStoreFs = getLocalStoreFs(),
+): Promise<{ success: boolean; error?: string }> {
+  const validation = validateCoordinationSettings(settings);
+  if (!validation.valid) {
+    return { success: false, error: '设置校验失败：' + validation.errors.join('；') };
+  }
+  try {
+    const serialized = serializeCoordinationSettings(settings);
+    await fs.write('coordination', serialized);
+    return { success: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '写入本地文件失败';
+    return { success: false, error: msg };
+  }
+}
+
