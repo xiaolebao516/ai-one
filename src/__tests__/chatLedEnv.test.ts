@@ -85,6 +85,7 @@ describe('chat-led real provider preparation', () => {
 });
 
 describe('multi-instance preparation', () => {
+  beforeEach(() => vi.resetAllMocks());
   it('addresses the instance while CHECK_STATUS uses the base provider', async () => {
     const states = [
       { provider: 'chatgpt', webview: 'loaded', dom: 'ready', login: 'logged_in', thinking: false, lastStatusAt: 4 },

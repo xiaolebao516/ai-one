@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
     show: vi.fn(async () => undefined),
   },
   createRealChatLedEnv: vi.fn(),
-  prepareProviderPage: vi.fn(async () => undefined),
+  prepareProviderPage: vi.fn(async (_instance: string) => undefined),
   claudeCleaner: {
     provider: 'claude',
     supports: { delete: false, archive: false },
@@ -300,7 +300,7 @@ describe('extra ChatGPT worker selection', () => {
     await vi.waitFor(() => {
       const saved = JSON.parse(window.localStorage.getItem(CHAT_LED_STORAGE_KEY) || '[]') as ChatLedRun[];
       expect(saved[0]?.cleanupResults?.map((item) => item.outcome)).toEqual(['manual', 'manual']);
-    });
+    }, { timeout: 10_000 }); // the first instance is prepared (with the real 2.5 s viewport settle) before the second fails
     expect(mocks.cleaner.deleteConversation).not.toHaveBeenCalled();
   });
 });
