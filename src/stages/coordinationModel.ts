@@ -1,0 +1,248 @@
+/**
+ * Coordination Settings Data Model (Spec #108 / Design gaps §8)
+ *
+ * Local preferences for task coordination written into task issue briefs for CC execution.
+ */
+
+export type ExceedLimitAction = 'ask_user' | 'consult_opus';
+export type QuotaTightAction = 'auto_reassign' | 'ask_user';
+export type AuthExpiredAction = 'ask_user' | 'fallback_ai';
+
+export interface CoordinationSettings {
+  schemaVersion: 1;
+  reworkLimit: number;
+  onExceedLimit: ExceedLimitAction;
+  onQuotaTight: QuotaTightAction;
+  onAuthExpired: AuthExpiredAction;
+  aiPreferences: Record<string, string>;
+}
+
+export interface StorageLike {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+export const COORDINATION_SETTINGS_STORAGE_KEY = 'coordination.json';
+
+export const DEFAULT_AI_PREFERENCES: Record<string, string> = {
+  gpt: '执行、审计',
+  opus: '架构、终审',
+  argon: '独立想法',
+};
+
+export const DEFAULT_COORDINATION_SETTINGS: Readonly<CoordinationSettings> = Object.freeze({
+  schemaVersion: 1,
+  reworkLimit: 3,
+  onExceedLimit: 'ask_user',
+  onQuotaTight: 'auto_reassign',
+  onAuthExpired: 'ask_user',
+  aiPreferences: { ...DEFAULT_AI_PREFERENCES },
+});
+
+export const EXCEED_LIMIT_OPTIONS = [
+  { value: 'ask_user' as const, label: '问我', brief: '超限问用户' },
+  { value: 'consult_opus' as const, label: '先请 Opus 网页裁决，再问我', brief: '先请 Opus 网页裁决，再问用户' },
+];
+
+export const QUOTA_TIGHT_OPTIONS = [
+  { value: 'auto_reassign' as const, label: 'CC 自动改派并通知我', brief: '自动改派并通知用户' },
+  { value: 'ask_user' as const, label: '先问我', brief: '先问用户' },
+];
+
+export const AUTH_EXPIRED_OPTIONS = [
+  { value: 'ask_user' as const, label: '先问我', brief: '先问用户' },
+  { value: 'fallback_ai' as const, label: '用其他 AI 代替并通知我', brief: '用其他 AI 代替并通知用户' },
+];
+
+export interface ValidationResult {
+  valid: boolean;
+  settings: CoordinationSettings;
+  errors: string[];
+}
+
+export function validateCoordinationSettings(raw: unknown): ValidationResult {
+  const errors: string[] = [];
+
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {
+      valid: false,
+      settings: { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_AI_PREFERENCES } },
+      errors: ['Settings must be a non-null object'],
+    };
+  }
+
+  const candidate = raw as Record<string, unknown>;
+
+  // schemaVersion
+  const schemaVersion = candidate.schemaVersion === 1 ? 1 : 1;
+  if (candidate.schemaVersion !== 1) {
+    errors.push(`Invalid or missing schemaVersion: expected 1, received ${String(candidate.schemaVersion)}`);
+  }
+
+  // reworkLimit: integer between 1 and 10
+  let reworkLimit = DEFAULT_COORDINATION_SETTINGS.reworkLimit;
+  if (
+    typeof candidate.reworkLimit === 'number' &&
+    Number.isInteger(candidate.reworkLimit) &&
+    candidate.reworkLimit >= 1 &&
+    candidate.reworkLimit <= 10
+  ) {
+    reworkLimit = candidate.reworkLimit;
+  } else {
+    errors.push(`Invalid reworkLimit: must be an integer between 1 and 10, received ${String(candidate.reworkLimit)}`);
+  }
+
+  // onExceedLimit
+  let onExceedLimit: ExceedLimitAction = DEFAULT_COORDINATION_SETTINGS.onExceedLimit;
+  if (candidate.onExceedLimit === 'ask_user' || candidate.onExceedLimit === 'consult_opus') {
+    onExceedLimit = candidate.onExceedLimit;
+  } else {
+    errors.push(`Invalid onExceedLimit: received ${String(candidate.onExceedLimit)}`);
+  }
+
+  // onQuotaTight
+  let onQuotaTight: QuotaTightAction = DEFAULT_COORDINATION_SETTINGS.onQuotaTight;
+  if (candidate.onQuotaTight === 'auto_reassign' || candidate.onQuotaTight === 'ask_user') {
+    onQuotaTight = candidate.onQuotaTight;
+  } else {
+    errors.push(`Invalid onQuotaTight: received ${String(candidate.onQuotaTight)}`);
+  }
+
+  // onAuthExpired
+  let onAuthExpired: AuthExpiredAction = DEFAULT_COORDINATION_SETTINGS.onAuthExpired;
+  if (candidate.onAuthExpired === 'ask_user' || candidate.onAuthExpired === 'fallback_ai') {
+    onAuthExpired = candidate.onAuthExpired;
+  } else {
+    errors.push(`Invalid onAuthExpired: received ${String(candidate.onAuthExpired)}`);
+  }
+
+  // aiPreferences
+  let aiPreferences: Record<string, string> = { ...DEFAULT_AI_PREFERENCES };
+  if (candidate.aiPreferences && typeof candidate.aiPreferences === 'object' && !Array.isArray(candidate.aiPreferences)) {
+    const prefs: Record<string, string> = {};
+    for (const [key, val] of Object.entries(candidate.aiPreferences as Record<string, unknown>)) {
+      if (typeof val === 'string' && val.trim().length > 0) {
+        prefs[key.trim()] = val.trim();
+      }
+    }
+    if (Object.keys(prefs).length > 0) {
+      aiPreferences = prefs;
+    } else {
+      errors.push('Empty aiPreferences map; falling back to default preferences');
+    }
+  } else if (candidate.aiPreferences !== undefined) {
+    errors.push('Invalid aiPreferences format; falling back to defaults');
+  }
+
+  return {
+    valid: errors.length === 0,
+    settings: {
+      schemaVersion,
+      reworkLimit,
+      onExceedLimit,
+      onQuotaTight,
+      onAuthExpired,
+      aiPreferences,
+    },
+    errors,
+  };
+}
+
+export function parseCoordinationSettingsWithRecovery(rawJson: string | null | undefined): {
+  settings: CoordinationSettings;
+  recovered: boolean;
+} {
+  if (!rawJson || !rawJson.trim()) {
+    return {
+      settings: { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_AI_PREFERENCES } },
+      recovered: false,
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(rawJson);
+    const result = validateCoordinationSettings(parsed);
+    return {
+      settings: result.settings,
+      recovered: !result.valid,
+    };
+  } catch {
+    return {
+      settings: { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_AI_PREFERENCES } },
+      recovered: true,
+    };
+  }
+}
+
+export function serializeCoordinationSettings(settings: CoordinationSettings): string {
+  const result = validateCoordinationSettings(settings);
+  return JSON.stringify(result.settings, null, 2);
+}
+
+export function renderCoordinationBrief(settings: CoordinationSettings): string {
+  const valid = validateCoordinationSettings(settings).settings;
+
+  const exceedOpt = EXCEED_LIMIT_OPTIONS.find((o) => o.value === valid.onExceedLimit);
+  const exceedText = exceedOpt ? exceedOpt.brief : '超限问用户';
+
+  const quotaOpt = QUOTA_TIGHT_OPTIONS.find((o) => o.value === valid.onQuotaTight);
+  const quotaText = quotaOpt ? quotaOpt.brief : '自动改派并通知用户';
+
+  const authOpt = AUTH_EXPIRED_OPTIONS.find((o) => o.value === valid.onAuthExpired);
+  const authText = authOpt ? authOpt.brief : '先问用户';
+
+  const aiNameMap: Record<string, string> = {
+    gpt: 'GPT',
+    opus: 'Opus',
+    argon: 'Argon',
+  };
+
+  const aiEntries = Object.entries(valid.aiPreferences)
+    .map(([key, role]) => {
+      const name = aiNameMap[key.toLowerCase()] ?? key;
+      return `${name}（${role}）`;
+    })
+    .join('、');
+
+  const lines = [
+    '## 协调简报',
+    `- 返工上限：${valid.reworkLimit} 轮，${exceedText}`,
+    `- 额度紧张：${quotaText}`,
+    `- 登录失效：${authText}`,
+  ];
+
+  if (aiEntries) {
+    lines.push(`- 优先使用：${aiEntries}`);
+  }
+
+  return lines.join('\n');
+}
+
+function defaultStorage(): StorageLike | undefined {
+  try {
+    return typeof window === 'undefined' ? undefined : window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+export function loadCoordinationSettings(storage: StorageLike | undefined = defaultStorage()): CoordinationSettings {
+  try {
+    const raw = storage?.getItem(COORDINATION_SETTINGS_STORAGE_KEY);
+    return parseCoordinationSettingsWithRecovery(raw).settings;
+  } catch {
+    return { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_AI_PREFERENCES } };
+  }
+}
+
+export function saveCoordinationSettings(
+  settings: CoordinationSettings,
+  storage: StorageLike | undefined = defaultStorage(),
+): void {
+  try {
+    const serialized = serializeCoordinationSettings(settings);
+    storage?.setItem(COORDINATION_SETTINGS_STORAGE_KEY, serialized);
+  } catch {
+    // Graceful fallback for non-writable environments
+  }
+}

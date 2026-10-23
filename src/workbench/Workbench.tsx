@@ -27,6 +27,7 @@ import {
   type WorkbenchRoute,
 } from './workbenchModel';
 import { workbenchText, type WorkbenchText } from './workbenchText';
+import { CoordinationSettingsView } from './views/CoordinationSettingsView';
 import { HomeView } from './views/HomeView';
 import { PlannedView } from './views/PlannedView';
 import { ResourcesView } from './views/ResourcesView';
@@ -142,7 +143,14 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
       />
     );
   } else if (current.view === 'flows') {
-    view = <PlannedView title={text.t('flowsTitle')} body={text.t('flowsBody')} badge={text.t('plannedBadge')} />;
+    view = (
+        <div className="grid gap-v2-section">
+          <PlannedView title={text.t('flowsTitle')} body={text.t('flowsBody')} badge={text.t('plannedBadge')} />
+          <div className="border-t border-v2-line">
+            <CoordinationSettingsView />
+          </div>
+        </div>
+      );
   } else {
     view = <ResourcesView locale={locale} dispatch={dispatch} repoPath={data.prefs.dispatchRepo} onSetRepo={data.setDispatchRepo} onOpenClassic={onOpenClassic} />;
   }
