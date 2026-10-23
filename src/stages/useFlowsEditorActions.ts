@@ -10,6 +10,7 @@ import {
 import { applyStageDraft, canOverrideStageDraft, resolveImportChoice, stageForSelection, type StageDraftScope, type StageSelection } from './flowEditor';
 import { createFlowDefinition, createStageDefinition, replaceFlowStage, uniqueFlowEditorId } from './flows/flowEditorFactory';
 import type { FlowsEditorActionContext, FlowsEditorActionHandlers, PendingEditorAction } from './flows/flowEditorTypes';
+import { isChineseFlowsLocale } from '../workbench/views/flowsText';
 
 export function createFlowsEditorActions(context: FlowsEditorActionContext): FlowsEditorActionHandlers {
   const performAction = (action: PendingEditorAction, source = context.flows.file, selectionSource = context.selection) => {
@@ -286,7 +287,7 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
 
   const changeFlowName = (name: string) => {
     if (!context.file || !context.selectedFlow) return;
-    const isChinese = context.locale.toLowerCase().startsWith('zh');
+    const isChinese = isChineseFlowsLocale(context.locale);
     context.flows.updateFile((current) => ({
       ...current,
       flows: current.flows.map((flow) => {
