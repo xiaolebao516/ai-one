@@ -201,7 +201,7 @@ export function ChatLedView({
 
       <section aria-labelledby="chat-led-goal" className="grid gap-v2-sm">
         <SectionHeader id="chat-led-goal" title={text.t("chatLedGoal")} />
-        <Card className="whitespace-pre-wrap break-words text-v2-body text-v2-ink">
+        <Card className="v2-prose whitespace-pre-wrap break-words text-v2-ink">
           {run.goal}
         </Card>
       </section>
@@ -333,7 +333,7 @@ export function ChatLedView({
       {run.phase === "finished" && run.doneSummary ? (
         <section aria-labelledby="chat-led-summary" className="grid gap-v2-sm">
           <SectionHeader id="chat-led-summary" title={text.t("chatLedDoneSummary")} />
-          <Card className="whitespace-pre-wrap break-words text-v2-body text-v2-ink">
+          <Card className="v2-prose whitespace-pre-wrap break-words text-v2-ink">
             {run.doneSummary}
           </Card>
         </section>
