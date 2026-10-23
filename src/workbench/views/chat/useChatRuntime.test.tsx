@@ -10,7 +10,12 @@ import {
 } from '../../../ui/conversationSessions';
 import type { RunWorkflowResult } from '../../../workflow';
 import { awaitStepTimeoutAction, resetStepTimeoutForTests, type StepTimeoutAction } from '../../../workflow/stepTimeout';
+import { recordEventLog } from '../../../diagnostics/eventLogStore';
 import { useChatRuntime, type ChatRuntime, type ChatRuntimeHost, type ChatRuntimeOptions } from './useChatRuntime';
+
+const eventLogMock = vi.hoisted(() => ({ recordEventLog: vi.fn() }));
+
+vi.mock('../../../diagnostics/eventLogStore', () => eventLogMock);
 
 const mocks = vi.hoisted(() => {
   const bridgeListeners = new Set<(message: any) => void>();
@@ -221,6 +226,10 @@ describe('useChatRuntime workflow ownership', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(250); });
     expect(currentRuntime?.persistenceNotice?.tone).toBe('block');
     const failedAttempts = setItemSpy.mock.calls.length;
+    expect(recordEventLog).toHaveBeenCalledTimes(1);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+    expect(recordEventLog).toHaveBeenCalledTimes(1);
 
     allowWrites = true;
     await act(async () => { await vi.advanceTimersByTimeAsync(250); });
@@ -255,5 +264,8 @@ describe('useChatRuntime workflow ownership', () => {
     expect(currentRuntime?.sessions).toHaveLength(1);
     expect(currentRuntime?.sessions[0]?.id).toBe(currentRuntime?.activeSessionId);
     expect(currentRuntime?.persistenceNotice?.message).toContain('older conversation');
+    expect(recordEventLog).toHaveBeenCalledWith(expect.objectContaining({
+      summary: 'Oldest conversation history was removed to stay within local storage quota',
+    }));
   });
 });

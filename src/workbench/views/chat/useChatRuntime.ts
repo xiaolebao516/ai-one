@@ -33,6 +33,7 @@ import { onStepTimeoutEvent, runWorkflow as defaultRunWorkflow, type RunWorkflow
 import { chooseStepTimeoutAction } from '../../../workflow/stepTimeout';
 import type { Locale } from '../../../i18n/resolve';
 import { workbenchText } from '../../workbenchText';
+import { recordEventLog } from '../../../diagnostics/eventLogStore';
 import {
   CHAT_PROVIDERS,
   busyTargets,
@@ -283,6 +284,17 @@ export function useChatRuntime({
       const result = saveConversationSessionsWithQuotaRecovery(sessionsRef.current);
       if (!result.saved) {
         // Keep dirty set so the next interval retries instead of silently losing local history.
+        if (persistenceNoticeRef.current !== 'saveFailed') {
+          try {
+            recordEventLog({
+              kind: 'workflow-error',
+              summary: 'Conversation history save failed; recent messages may be lost on restart',
+              detail: { sessions: sessionsRef.current.length, reason: result.reason ?? 'unknown' },
+            });
+          } catch {
+            // Diagnostics must never stop the persistence retry loop.
+          }
+        }
         sessionsDirtyRef.current = true;
         persistenceNoticeRef.current = 'saveFailed';
         setPersistenceNotice({
@@ -297,6 +309,15 @@ export function useChatRuntime({
         // Match the classic UI: quota recovery's reduced session list becomes the live list too.
         sessionsRef.current = result.sessions;
         setSessions(result.sessions);
+        try {
+          recordEventLog({
+            kind: 'workflow-error',
+            summary: 'Oldest conversation history was removed to stay within local storage quota',
+            detail: { evictedSessionIds: result.evictedSessionIds.join(',') },
+          });
+        } catch {
+          // Diagnostics must not turn a successful quota-recovery write into a failure.
+        }
         persistenceNoticeRef.current = 'quota';
         setPersistenceNotice({
           tone: 'unknown',
