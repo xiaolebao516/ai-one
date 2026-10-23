@@ -81,6 +81,33 @@ describe('flow editor draft helpers', () => {
     expect(next?.flows[1].stages[0].overrides).toBeUndefined();
   });
 
+  it('promotes a saved flow-only override to the library without changing another flow ref', () => {
+    const initial = sharedFile();
+    const a = { kind: 'flow' as const, flowId: 'flow.a', index: 0 };
+    const b = { kind: 'flow' as const, flowId: 'flow.b', index: 0 };
+    const flowOnlyA = applyStageDraft(initial, a, {
+      ...initial.stages[0], participants: [{ resource: 'claude', role: 'worker' }], note: 'Old flow A',
+    }, 'flow')!;
+    const withPeerOverride = applyStageDraft(flowOnlyA, b, {
+      ...initial.stages[0], participants: [{ resource: 'codex', role: 'worker' }], note: 'Keep flow B',
+    }, 'flow')!;
+    const persisted = JSON.parse(JSON.stringify(withPeerOverride)) as FlowsFile;
+    const next = applyStageDraft(persisted, a, {
+      ...resolveStage(persisted.flows[0].stages[0], persisted.stages)!,
+      participants: [{ resource: 'gemini', role: 'worker' }], note: 'Promoted',
+    }, 'library')!;
+    const reloaded = JSON.parse(JSON.stringify(next)) as FlowsFile;
+    expect(reloaded.stages[0].participants[0].resource).toBe('gemini');
+    expect(reloaded.flows[0].stages[0].overrides).toBeUndefined();
+    expect(resolveStage(reloaded.flows[0].stages[0], reloaded.stages)).toMatchObject({
+      participants: [{ resource: 'gemini', role: 'worker' }], note: 'Promoted',
+    });
+    expect(reloaded.flows[1].stages[0].overrides).toEqual(withPeerOverride.flows[1].stages[0].overrides);
+    expect(resolveStage(reloaded.flows[1].stages[0], reloaded.stages)).toMatchObject({
+      participants: [{ resource: 'codex', role: 'worker' }], note: 'Keep flow B',
+    });
+  });
+
   it('maps Alt+Up and Alt+Down to the same move used by stage cards', () => {
     const flow: FlowDef = { id: 'flow.move', name: 'Move test', stages: [{ stageId: 'a' }, { stageId: 'b' }, { stageId: 'c' }], builtin: false };
     expect(stageMoveTarget(1, 'ArrowUp', true)).toBe(0);

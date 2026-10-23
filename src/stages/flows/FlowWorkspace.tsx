@@ -120,6 +120,7 @@ export function FlowWorkspace({ editor, locale, text, fs }: FlowWorkspaceProps) 
                 issues={editor.issues}
                 disabled={editor.mutationsDisabled}
                 saving={editor.saving}
+                draftDirty={editor.draftDirty}
                 insertIndex={editor.insertIndex}
                 selectedAddStage={editor.selectedAddStage}
                 deleteConfirm={editor.deleteFlowConfirm}

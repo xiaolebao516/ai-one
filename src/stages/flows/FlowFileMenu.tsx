@@ -17,6 +17,7 @@ interface FlowFileMenuProps {
   text: FlowsText;
   fs?: LocalStoreFs;
   disabled?: boolean;
+  draftDirty?: boolean;
   onImport: (incoming: FlowsFile, resolution: Exclude<ImportResolution, 'cancel'>) => void;
 }
 
@@ -73,7 +74,7 @@ function schemaVersionOf(value: string): string {
   return '?';
 }
 
-export function FlowFileMenu({ file, flowId, text, fs, disabled = false, onImport }: FlowFileMenuProps) {
+export function FlowFileMenu({ file, flowId, text, fs, disabled = false, draftDirty = false, onImport }: FlowFileMenuProps) {
   const fsRef = useRef<LocalStoreFs>(fs ?? getLocalStoreFs());
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -114,6 +115,11 @@ export function FlowFileMenu({ file, flowId, text, fs, disabled = false, onImpor
   };
 
   const readImport = (event: ChangeEvent<HTMLInputElement>) => {
+    if (draftDirty) {
+      setFeedback(text.t('saveBeforeSwitch'));
+      setFeedbackTone('block');
+      return;
+    }
     const selected = event.target.files?.[0];
     event.target.value = '';
     if (!selected) return;
@@ -159,7 +165,9 @@ export function FlowFileMenu({ file, flowId, text, fs, disabled = false, onImpor
   };
 
   const applyChoice = () => {
-    if (!pending || (conflictCount > 0 && !pending.choice)) return;
+    // A stage draft is not reflected in file/planImport yet. Resolve it first,
+    // then compare the newly persisted plan before accepting an old choice.
+    if (draftDirty || !pending || (conflictCount > 0 && !pending.choice)) return;
     const currentPlan = planImport(file, pending.incoming);
     if (JSON.stringify(currentPlan) !== JSON.stringify(pending.plan)) {
       setPending({ ...pending, plan: currentPlan, choice: '' });
@@ -191,10 +199,11 @@ export function FlowFileMenu({ file, flowId, text, fs, disabled = false, onImpor
         <div className="absolute right-0 top-full z-30 mt-v2-xs w-[min(440px,85vw)] max-w-[calc(100vw-2rem)]">
           <Card className="grid gap-v2-sm shadow-v2-float" role="group" aria-label={text.t('flowActions')}>
             <Button size="sm" variant="secondary" disabled={disabled} onClick={() => void exportFlow()}>{text.t('exportFile')}</Button>
-            <Button size="sm" variant="secondary" disabled={disabled} onClick={() => inputRef.current?.click()}>{text.t('importFile')}</Button>
+            <Button size="sm" variant="secondary" disabled={disabled || draftDirty} onClick={() => inputRef.current?.click()}>{text.t('importFile')}</Button>
             <input ref={inputRef} type="file" accept=".json" className="sr-only" aria-label={text.t('importFile')} onChange={readImport} />
             <p className="text-v2-micro text-v2-ink-3">{text.t('storageNote')}</p>
             {feedback ? <Notice tone={feedbackTone === 'block' ? 'block' : 'neutral'} live={feedbackTone === 'block' ? 'assertive' : 'polite'}>{feedback}</Notice> : null}
+            {pending && draftDirty ? <Notice tone="unknown">{text.t('saveBeforeSwitch')}</Notice> : null}
             {pending ? (
               <section className="grid gap-v2-sm border-t border-v2-line pt-v2-sm" aria-labelledby="flows-import-preview">
                 <h3 id="flows-import-preview" className="font-semibold text-v2-ink">{text.t('importPreview')}</h3>
@@ -222,7 +231,7 @@ export function FlowFileMenu({ file, flowId, text, fs, disabled = false, onImpor
                   </label>
                 ) : null}
                 <div className="flex flex-wrap gap-v2-sm">
-                  <Button size="sm" disabled={(conflictCount > 0 && !pending.choice) || disabled} onClick={applyChoice}>{text.t('importApply')}</Button>
+                  <Button size="sm" disabled={(conflictCount > 0 && !pending.choice) || disabled || draftDirty} onClick={applyChoice}>{text.t('importApply')}</Button>
                   <Button size="sm" variant="ghost" onClick={() => { setPending(null); setFeedback(text.t('importCancelled')); setFeedbackTone('neutral'); }}>{text.t('importCancel')}</Button>
                 </div>
               </section>

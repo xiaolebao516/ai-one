@@ -61,6 +61,66 @@ async function mount(fs: LocalStoreFs): Promise<void> {
 }
 
 describe('useFlowsEditor actions', () => {
+  it('global leave saves the current flow edit without executing a queued create-flow', async () => {
+    const fs = new MemoryFs();
+    await mount(fs);
+    await act(async () => current!.copyFlow());
+    let saved = false;
+    await act(async () => { saved = await current!.saveCurrent(); });
+    expect(saved).toBe(true);
+    const count = current!.file!.flows.length;
+    const editedFlowId = current!.selectedFlowId;
+    await act(async () => current!.changeFlowName('Edited before leaving'));
+    await act(async () => current!.createFlow());
+    expect(current!.pendingAction).toBe(true);
+    await act(async () => { saved = await current!.saveForLeave(); });
+    expect(saved).toBe(true);
+    expect(current!.pendingAction).toBe(false);
+    expect(current!.file!.flows).toHaveLength(count);
+    const reloaded = await loadFlows(fs);
+    expect(reloaded.file.flows).toHaveLength(count);
+    expect(reloaded.file.flows.find((f) => f.id === editedFlowId)?.nameEn).toBe('Edited before leaving');
+  });
+
+  it('global leave stays blocked on unresolved stage scope and on failed writes', async () => {
+    const fs = new MemoryFs();
+    await mount(fs);
+    await act(async () => current!.copyFlow());
+    const flowId = current!.selectedFlowId;
+    await act(async () => current!.createStage());
+    const stageId = current!.selection?.kind === 'library' ? current.selection.stageId : '';
+    await act(async () => current!.selectFlow(flowId));
+    await act(async () => {
+      current!.openInsert(current!.selectedFlow!.stages.length);
+      current!.selectAddStage(stageId);
+    });
+    await act(async () => current!.addSelectedStage());
+    let saved = false;
+    await act(async () => { saved = await current!.saveCurrent(); });
+    expect(saved).toBe(true);
+    await act(async () => current!.copyFlow());
+    await act(async () => { saved = await current!.saveCurrent(); });
+    expect(saved).toBe(true);
+    await act(async () => current!.selectFlowStage(current!.selectedFlow!.stages.length - 1));
+    const draft = current!.draft!;
+    expect(draft.id).toBe(stageId);
+    await act(async () => current!.changeStageDraft({ ...draft, note: 'Needs scope choice' }));
+    await act(async () => { saved = await current!.saveForLeave(); });
+    expect(saved).toBe(false);
+    expect(current!.scopePrompt).toBe(true);
+    expect((await loadFlows(fs)).file.stages.find((stage) => stage.id === stageId)?.note).not.toBe('Needs scope choice');
+
+    await act(async () => { current!.chooseScope('flow'); });
+    await act(async () => current!.changeFlowName('Failed disk write'));
+    const onDisk = fs.files.get('flows');
+    vi.spyOn(fs, 'write').mockRejectedValueOnce(new Error('disk full'));
+    await act(async () => { saved = await current!.saveForLeave(); });
+    expect(saved).toBe(false);
+    expect(current!.operationError).toContain('disk full');
+    expect(fs.files.get('flows')).toBe(onDisk);
+    expect(current!.hasUnsaved).toBe(true);
+  });
+
   it('creates a flow, adds two stages, moves them, saves and reloads the result', async () => {
     const fs = new MemoryFs();
     await mount(fs);

@@ -104,7 +104,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
     if (!target || !guard || leaveSaving) return;
     setLeaveSaving(true);
     try {
-      if (!(await guard.saveCurrent())) return;
+      if (!(await guard.saveForLeave())) return;
       leaveTo(target);
     } finally {
       setLeaveSaving(false);

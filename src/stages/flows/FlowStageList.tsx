@@ -16,6 +16,7 @@ interface FlowStageListProps {
   issues: ValidationIssue[];
   disabled: boolean;
   saving: boolean;
+  draftDirty: boolean;
   insertIndex: number | null;
   selectedAddStage: string;
   deleteConfirm: boolean;
@@ -53,6 +54,7 @@ export function FlowStageList({
   issues,
   disabled,
   saving,
+  draftDirty,
   insertIndex,
   selectedAddStage,
   deleteConfirm,
@@ -123,7 +125,7 @@ export function FlowStageList({
           <div className="flex flex-wrap items-center gap-v2-xs">
             <Button size="sm" variant="secondary" disabled={disabled} onClick={onCopyFlow}>{flow.builtin ? text.t('copyEdit') : text.t('copy')}</Button>
             <Button size="sm" disabled={disabled || saving} onClick={onSave}>{saving ? text.t('saving') : text.t('save')}</Button>
-            <FlowFileMenu file={file} flowId={flow.id} text={text} fs={fs} disabled={disabled} onImport={onImport} />
+            <FlowFileMenu file={file} flowId={flow.id} text={text} fs={fs} disabled={disabled} draftDirty={draftDirty} onImport={onImport} />
           </div>
         </div>
         {flow.builtin ? null : (

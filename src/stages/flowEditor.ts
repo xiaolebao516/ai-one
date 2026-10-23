@@ -68,6 +68,19 @@ export function applyStageDraft(
             }
           : stage,
       ),
+      // The selected ref's effective values were promoted to the library.
+      // Keep every other ref's deliberate overrides untouched.
+      flows: selection.kind === 'flow'
+        ? file.flows.map((flow) => flow.id === selection.flowId
+          ? {
+              ...flow,
+              stages: flow.stages.map((ref, index) =>
+                index === selection.index && ref.stageId === base.id
+                  ? { ...ref, overrides: undefined }
+                  : ref),
+            }
+          : flow)
+        : file.flows,
     };
   }
 

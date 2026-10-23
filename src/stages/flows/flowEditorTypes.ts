@@ -53,6 +53,7 @@ export interface FlowsEditorActionContext {
 
 export interface FlowsEditorActionHandlers {
   saveCurrent: (scope?: StageDraftScope) => Promise<boolean>;
+  saveForLeave: () => Promise<boolean>;
   discardAndContinue: () => void;
   keepEditing: () => void;
   selectFlow: (flowId: string) => void;

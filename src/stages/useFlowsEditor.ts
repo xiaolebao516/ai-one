@@ -38,6 +38,7 @@ export interface FlowsEditorController {
   editError?: string;
   reload: () => Promise<void>;
   saveCurrent: (scope?: StageDraftScope) => Promise<boolean>;
+  saveForLeave: () => Promise<boolean>;
   discardAndContinue: () => void;
   keepEditing: () => void;
   selectFlow: (flowId: string) => void;

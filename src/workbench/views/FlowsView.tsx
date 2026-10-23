@@ -9,7 +9,7 @@ import { flowsText } from './flowsText';
 
 export interface FlowsLeaveGuard {
   readonly hasUnsaved: boolean;
-  saveCurrent: () => Promise<boolean>;
+  saveForLeave: () => Promise<boolean>;
 }
 
 export interface FlowsViewProps {
@@ -42,7 +42,7 @@ export function FlowsView({
   if (!leaveGuardRef.current) {
     leaveGuardRef.current = {
       get hasUnsaved() { return editorRef.current.hasUnsaved; },
-      saveCurrent: () => editorRef.current.saveCurrent(),
+      saveForLeave: () => editorRef.current.saveForLeave(),
     };
   }
 

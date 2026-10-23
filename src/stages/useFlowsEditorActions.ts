@@ -203,7 +203,8 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
     performAction(action);
   };
 
-  const saveCurrent = async (scope?: StageDraftScope): Promise<boolean> => {
+  // Leaving must persist existing edits only; it must not execute a queued editor action.
+  const saveChanges = async (scope?: StageDraftScope, continuePending = true): Promise<boolean> => {
     if (!context.file || context.mutationsDisabled) return false;
     let candidate = context.file;
     let selectionAfterSave = context.selection;
@@ -246,13 +247,16 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
       if (context.pendingAction) {
         const action = context.pendingAction;
         context.setPendingAction(null);
-        performAction(action, candidate, selectionAfterSave);
+        if (continuePending) performAction(action, candidate, selectionAfterSave);
       }
       return true;
     }
     context.setFeedback({ tone: 'block', message: context.text.t('saveFailed') });
     return false;
   };
+
+  const saveCurrent = (scope?: StageDraftScope) => saveChanges(scope, true);
+  const saveForLeave = () => saveChanges(undefined, false);
 
   const discardAndContinue = () => {
     const restored = context.flows.discardChanges();
@@ -315,6 +319,7 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
 
   return {
     saveCurrent,
+    saveForLeave,
     discardAndContinue,
     keepEditing: () => context.setPendingAction(null),
     selectFlow: (flowId) => requestAction({ kind: 'select-flow', flowId }),
