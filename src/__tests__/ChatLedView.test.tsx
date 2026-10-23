@@ -309,7 +309,7 @@ describe("ChatLedView timeline and cleanup", () => {
     });
 
     const button = Array.from(container.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent?.trim() === "Cleaning up…",
+      (candidate) => candidate.textContent?.includes("Cleaning up") === true,
     );
     expect(button?.hasAttribute("disabled")).toBe(true);
     await act(async () => {

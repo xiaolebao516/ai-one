@@ -16,7 +16,6 @@ const CONVERSATION_PATH = '/c/' + CONVERSATION_ID;
 const CONVERSATION_URL = 'https://chatgpt.com' + CONVERSATION_PATH;
 
 function runPageScript(script: string): string {
-  // eslint-disable-next-line no-new-func
   const execute = new Function('window', 'return ' + script) as (target: Window) => unknown;
   return String(execute(window));
 }

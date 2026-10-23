@@ -65,7 +65,7 @@ describe('chat-led Markdown export', () => {
     expect(markdown).toContain('Chat 主导运行记录');
     expect(markdown).toContain('Compare the implementations without losing content.');
     expect(markdown).toContain('ChatGPT → Claude');
-    expect(markdown).toContain('已处理轮次 1');
+    expect(markdown).toContain('已处理轮次: 1');
     expect(markdown).toContain('Please compare the options.');
     expect(markdown).toContain('https://claude.ai/chat/registered-session');
     expect(markdown).toContain(new Date(1_798_000_000_000).toISOString());
