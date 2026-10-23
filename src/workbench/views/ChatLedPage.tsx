@@ -263,6 +263,7 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
 
   const doTakeOver = async (provider: AIProvider) => {
     controller?.pause();
+    if (controller?.hasPendingSessions()) await controller.stop();
     setTakeover(provider);
     try {
       await host.provider.park(provider, wideBounds());

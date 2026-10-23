@@ -19,6 +19,8 @@ const baseRun: ChatLedRun = {
   phase: "coordinator-thinking",
   forwards: [],
   conversations: [],
+  sessionInitializations: [],
+
   coordinatorReplies: [],
   createdAt: 1,
   updatedAt: 1,

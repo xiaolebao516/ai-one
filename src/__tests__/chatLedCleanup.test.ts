@@ -34,6 +34,8 @@ function makeRun(conversations: RegisteredConversation[]): ChatLedRun {
     phase: 'finished',
     forwards: [],
     conversations,
+    sessionInitializations: [],
+
     coordinatorReplies: [],
     createdAt: 100,
     updatedAt: 200,

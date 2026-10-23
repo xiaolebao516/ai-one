@@ -40,6 +40,8 @@ function makeRun(): ChatLedRun {
         registeredAt: 1_798_000_020_000,
       },
     ],
+    sessionInitializations: [],
+
     coordinatorReplies: [
       { round: 1, text: 'Please compare the options.', at: 1_798_000_005_000 },
     ],

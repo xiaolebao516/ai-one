@@ -62,6 +62,36 @@ async function create(env: ChatLedEnv, roundLimit?: number) {
 }
 
 describe('ChatLedController', () => {
+  it('sends from a verified blank new page before the server creates its conversation URL', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [] });
+    let url = 'https://chatgpt.com/';
+    env.newSession = vi.fn(async () => ({ url, freshDocument: true, documentId: 'fresh-boot' }));
+    env.readDocumentId = vi.fn(async () => 'fresh-boot');
+    env.readConversationUrl = vi.fn(async () => url);
+    env.send = vi.fn(async (provider: AIProvider, text: string) => {
+      calls.push({ provider, text });
+      url = 'https://chatgpt.com/c/11111111-1111-4111-8111-111111111111';
+      return DONE('blank-page works');
+    });
+    const controller = await create(env);
+    await controller.start();
+    expect(calls).toHaveLength(1);
+    expect(controller.getRun().phase).toBe('finished');
+    expect(controller.getRun().conversations).toContainEqual(expect.objectContaining({ url, registrationStatus: 'confirmed' }));
+    expect(controller.hasPendingSessions()).toBe(false);
+  });
+
+  it('does not treat an existing conversation as a verified blank page', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [DONE('unused')] });
+    const url = 'https://chatgpt.com/c/users-own-chat';
+    env.newSession = vi.fn(async () => ({ url, freshDocument: true }));
+    env.readConversationUrl = vi.fn(async () => url);
+    const controller = await create(env);
+    await controller.start();
+    expect(calls).toHaveLength(0);
+    expect(controller.getRun().phase).toBe('awaiting-user');
+  });
+
   it('prepares coordinator and candidates before querying sendability on a cold start', async () => {
     const ready = new Set<AIProvider>();
     const { env, calls } = makeEnv({ chatgpt: [DONE('ready')] }, []);
@@ -75,7 +105,7 @@ describe('ChatLedController', () => {
     expect(env.initialize).not.toHaveBeenCalled();
     expect(env.sendableProviders).not.toHaveBeenCalled();
     await controller.start();
-    expect(prepare.mock.calls.map(([provider]) => provider)).toEqual(['chatgpt', 'claude', 'gemini']);
+    expect(prepare.mock.calls.slice(0, 3).map(([provider]) => provider)).toEqual(['chatgpt', 'claude', 'gemini']);
     expect(env.initialize).toHaveBeenCalledTimes(1);
     expect(env.sendableProviders).toHaveBeenCalledTimes(1);
     expect(calls).toHaveLength(1);
@@ -100,7 +130,7 @@ describe('ChatLedController', () => {
 
   it('fails visibly when no candidate target is confirmed ready', async () => {
     const { env, calls } = makeEnv({ chatgpt: [DONE('unused')] });
-    env.sendableProviders = vi.fn(async () => ['chatgpt']);
+    env.sendableProviders = vi.fn(async (): Promise<AIProvider[]> => ['chatgpt']);
     const controller = await create(env);
     await controller.start();
     expect(controller.getRun().phase).toBe('awaiting-user');
@@ -290,11 +320,8 @@ describe('ChatLedController', () => {
   it('does not send while paused during prepare; resumes afterwards', async () => {
     const { env, calls } = makeEnv({ chatgpt: [DONE('ok')] });
     let finishPrepare: () => void = () => undefined;
-    env.prepare = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishPrepare = resolve;
-        }),
+    env.prepare = vi.fn(async (): Promise<void> => undefined).mockImplementationOnce(
+      () => new Promise<void>((resolve) => { finishPrepare = resolve; }),
     );
     const controller = await create(env);
     const finished = controller.start();

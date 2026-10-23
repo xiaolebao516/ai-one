@@ -70,24 +70,6 @@ async function readProviderUrlBounded(
   }
 }
 
-function hasConversationPath(url: string): boolean {
-  try {
-    return new URL(url).pathname.length > 1;
-  } catch {
-    return false;
-  }
-}
-
-function sameConversation(a: string, b: string): boolean {
-  try {
-    const x = new URL(a);
-    const y = new URL(b);
-    return x.origin === y.origin && x.pathname === y.pathname;
-  } catch {
-    return false;
-  }
-}
-
 let bridgeStart: Promise<void> | undefined;
 
 /**
@@ -96,19 +78,25 @@ let bridgeStart: Promise<void> | undefined;
  */
 export async function prepareProviderPage(provider: AIProvider): Promise<void> {
   let state = await stateOf(provider);
+  const previousStatusAt = state?.lastStatusAt ?? 0;
   if (!state || state.webview !== 'loaded') {
     resetProviderBootState(provider);
     await host.provider.open(provider, parkedBounds());
-    await host.provider.park(provider, parkedBounds());
   }
+  // Workbench hides loaded views. They must be shown offscreen again to obtain live DOM status.
+  await host.provider.park(provider, parkedBounds());
+  await host.provider.eval(provider, `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({ v: 1, action: "CHECK_STATUS", provider })})`);
   const readyDeadline = Date.now() + PAGE_READY_TIMEOUT_MS;
   for (;;) {
     state = await stateOf(provider);
-    if (state && isSendable(state)) break;
-    if (state?.login === 'logged_out' || state?.login === 'blocked') {
-      throw new Error(`${provider} is not logged in (state: ${state.login}). Log in from the classic UI or Resources page first.`);
+    const fresh = Boolean(state && state.lastStatusAt > previousStatusAt);
+    if (state && fresh && isSendable(state)) break;
+    if (Date.now() > readyDeadline) {
+      if (state?.login === 'logged_out' || state?.login === 'blocked') {
+        throw new Error(`${provider} is not logged in (state: ${state.login}). Log in from the classic UI or Resources page first.`);
+      }
+      throw new Error(`${provider} page did not become ready in time.`);
     }
-    if (Date.now() > readyDeadline) throw new Error(`${provider} page did not become ready in time.`);
     await sleep(POLL_MS);
   }
   // Busy gate (#15): never write into a page that is still generating something else.
@@ -143,22 +131,16 @@ export function createRealChatLedEnv(): ChatLedEnv {
       return snapshot.filter(isSendable).map((state) => state.provider);
     },
     prepare: prepareProviderPage,
-    async newSession(provider, previousUrl) {
+    async newSession(provider) {
       await host.provider.newSession(provider);
-      // Capture the first changed conversation URL before the separate readiness check.
-      // If navigation never changes, return the observed URL and let the controller fail closed.
-      const deadline = Date.now() + 10_000;
-      let url: string | undefined;
-      do {
-        await sleep(250);
-        const read = await readProviderUrlBounded(provider, Math.min(2_000, Math.max(1, deadline - Date.now())));
-        if (read.timedOut) return { url: undefined };
-        url = read.url;
-        if (url && hasConversationPath(url) && (!previousUrl || !sameConversation(previousUrl, url))) {
-          return { url };
-        }
-      } while (Date.now() < deadline);
-      return { url };
+      // Capture the native new-document acknowledgement, including its still-blank URL.
+      const raw = await host.provider.evalWithCallback(provider, 'JSON.stringify({url: location.href, documentId: window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.bootId})');
+      let snapshot: unknown = JSON.parse(raw);
+      if (typeof snapshot === 'string') snapshot = JSON.parse(snapshot);
+      if (!snapshot || typeof snapshot !== 'object') throw new Error('New document acknowledgement is missing.');
+      const page = snapshot as { url?: unknown; documentId?: unknown };
+      if (typeof page.url !== 'string' || typeof page.documentId !== 'string' || !page.documentId) throw new Error('New document identity is missing.');
+      return { url: page.url, documentId: page.documentId, freshDocument: true };
     },
     async send(provider, text) {
       const { response } = await sendAndWait(provider, text);
@@ -169,6 +151,11 @@ export function createRealChatLedEnv(): ChatLedEnv {
     },
     async readConversationUrl(provider) {
       return (await readProviderUrlBounded(provider)).url;
+    },
+    async readDocumentId(provider) {
+      const raw = await host.provider.evalWithCallback(provider, 'window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.bootId');
+      const value: unknown = JSON.parse(raw);
+      return typeof value === 'string' ? value : undefined;
     },
   };
 }

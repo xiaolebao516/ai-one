@@ -39,6 +39,8 @@ interface SessionInitAttempt {
   stage: InitStage;
   finalized: boolean;
   promise: Promise<void>;
+  blankUrl?: string;
+  documentId?: string;
 }
 
 function waitWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
@@ -66,19 +68,18 @@ function waitWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boole
   });
 }
 
-function readUrlWithin(env: ChatLedEnv, provider: AIProvider): Promise<string | undefined> {
+function readUrlWithin(env: ChatLedEnv, provider: AIProvider, documentId = false): Promise<string | undefined> {
   return new Promise((resolve) => {
     let settled = false;
-    let timer: ReturnType<typeof globalThis.setTimeout>;
     const finish = (url: string | undefined) => {
       if (settled) return;
       settled = true;
       globalThis.clearTimeout(timer);
       resolve(url);
     };
-    timer = globalThis.setTimeout(() => finish(undefined), CHAT_LED_URL_READ_TIMEOUT_MS);
+    const timer = globalThis.setTimeout(() => finish(undefined), CHAT_LED_URL_READ_TIMEOUT_MS);
     Promise.resolve()
-      .then(() => env.readConversationUrl(provider))
+      .then(() => documentId ? env.readDocumentId?.(provider) : env.readConversationUrl(provider))
       .then(
         (url) => finish(typeof url === 'string' ? url : undefined),
         () => finish(undefined),
@@ -96,13 +97,14 @@ export interface ChatLedEnv {
   /** Make sure the provider page exists (parked offscreen) and is idle (busy gate, #15). */
   prepare(provider: AIProvider): Promise<void>;
   /** Create a session and capture the URL observed immediately after its navigation. */
-  newSession(provider: AIProvider, previousUrl?: string): Promise<void | { url?: string }>;
+  newSession(provider: AIProvider, previousUrl?: string): Promise<void | { url?: string; freshDocument?: boolean; documentId?: string }>;
   /** Send complete text, resolve with the complete reply. Must reject on failure/timeout. */
   send(provider: AIProvider, text: string): Promise<string>;
   /** Best effort: ask a still-generating provider to stop (used by stop). */
   stop(provider: AIProvider): Promise<void>;
   /** Conversation address of the provider page, undefined when unreadable. */
   readConversationUrl(provider: AIProvider): Promise<string | undefined>;
+  readDocumentId?(provider: AIProvider): Promise<string | undefined>;
 }
 
 export interface ChatLedStartInput {
@@ -458,6 +460,7 @@ export class ChatLedController {
       await this.env.prepare(provider);
       await proceed();
 
+      let firstSend: SessionInitAttempt | undefined;
       const owned = this.run.conversations.find(
         (conversation) =>
           conversation.provider === provider &&
@@ -474,19 +477,37 @@ export class ChatLedController {
         const attempt = this.beginSessionAttempt(provider);
         const init = this.initializeSession(attempt, live, proceed);
         const initDone = init.finally(() => {
-          this.pendingInit.delete(attempt);
+          if (attempt.finalized) this.pendingInit.delete(attempt);
           this.notify();
         });
         attempt.promise = initDone;
         initDone.catch(() => undefined);
         await initDone;
         await proceed();
+        if (attempt.blankUrl) firstSend = attempt;
       }
 
-      const response = await this.env.send(provider, text);
-      const providerError = providerResponseError(provider, response);
-      if (providerError) throw providerError;
-      return response;
+      if (firstSend) {
+        const current = await readUrlWithin(this.env, provider);
+        const documentId = await readUrlWithin(this.env, provider, true);
+        await proceed();
+        if (firstSend.finalized || !current || !sameConversation(current, firstSend.blankUrl!) || documentId !== firstSend.documentId) {
+          this.finishSessionAttempt(firstSend, 'manual', undefined, 'The fresh blank page changed before its first send.');
+          throw new Error('The new blank conversation is no longer current; not sending.');
+        }
+      }
+      try {
+        const sending = this.env.send(provider, text);
+        if (firstSend) firstSend.promise = sending.then(() => undefined, () => undefined);
+        const response = await sending;
+        if (firstSend) await this.registerFirstSend(firstSend, live);
+        const providerError = providerResponseError(provider, response);
+        if (providerError) throw providerError;
+        return response;
+      } catch (error) {
+        if (firstSend && !firstSend.finalized) await this.registerFirstSend(firstSend, live);
+        throw error;
+      }
     })();
     work.catch(() => undefined);
 
@@ -533,11 +554,15 @@ export class ChatLedController {
       let creationError: unknown;
       let createdUrl: string | undefined;
       let hasCreationSnapshot = false;
+      let freshDocument = false;
+      let createdDocumentId: string | undefined;
       try {
         const result = await this.env.newSession(attempt.provider, beforeUrl);
         if (result && typeof result === 'object') {
           hasCreationSnapshot = true;
           createdUrl = result.url;
+          freshDocument = result.freshDocument === true;
+          createdDocumentId = result.documentId;
         }
       } catch (error) {
         creationFailed = true;
@@ -561,7 +586,11 @@ export class ChatLedController {
       // The real environment supplies a URL snapshot taken as part of newSession. If the page has
       // since changed, do not register that arbitrary current URL as a session owned by this run.
       const candidateUrl = hasCreationSnapshot ? createdUrl : afterUrl;
-      const creationAddressConfirmed = Boolean(
+      const blankPage = Boolean(freshDocument && createdDocumentId && candidateUrl && isBlankStart(attempt.provider, candidateUrl));
+      if (freshDocument && !blankPage) {
+        throw new Error('Native new-session acknowledgement is not a blank provider page.');
+      }
+      const creationAddressConfirmed = blankPage || Boolean(
         beforeUrl &&
         candidateUrl &&
         afterUrl &&
@@ -594,7 +623,7 @@ export class ChatLedController {
       const readyUrl = await readUrlWithin(this.env, attempt.provider);
       if (attempt.finalized) return;
       if (!live()) throw new Error('Run stopped by user');
-      if (!readyUrl || !hasConversationPath(readyUrl) || !sameConversation(candidateUrl, readyUrl)) {
+      if (!readyUrl || (!blankPage && !hasConversationPath(readyUrl)) || !sameConversation(candidateUrl, readyUrl)) {
         this.finishSessionAttempt(
           attempt,
           'manual',
@@ -604,7 +633,14 @@ export class ChatLedController {
         throw new Error('Could not re-confirm the new conversation address after readiness.');
       }
 
-      this.finishSessionAttempt(attempt, 'registered', candidateUrl, 'New conversation address was confirmed after readiness.');
+      if (blankPage) {
+        attempt.blankUrl = candidateUrl;
+        attempt.documentId = createdDocumentId;
+        // The provider creates its conversation ID only after the first prompt is accepted.
+        // Keep the attempt pending through that send instead of requiring an ID prematurely.
+      } else {
+        this.finishSessionAttempt(attempt, 'registered', candidateUrl, 'New conversation address was confirmed after readiness.');
+      }
       await proceed();
     } catch (error) {
       if (!attempt.finalized) {
@@ -619,6 +655,18 @@ export class ChatLedController {
         );
       }
       throw error;
+    }
+  }
+
+  private async registerFirstSend(attempt: SessionInitAttempt, live: () => boolean): Promise<void> {
+    if (attempt.finalized) return;
+    const url = await readUrlWithin(this.env, attempt.provider);
+    const documentId = await readUrlWithin(this.env, attempt.provider, true);
+    if (attempt.finalized) return;
+    if (live() && url && isConversationAddress(attempt.provider, url) && documentId === attempt.documentId) {
+      this.finishSessionAttempt(attempt, 'registered', url, 'Conversation address confirmed after the first prompt on the fresh document.');
+    } else {
+      this.finishSessionAttempt(attempt, 'manual', undefined, 'The first prompt may have created a conversation, but its address or document could not be confirmed.');
     }
   }
 
@@ -668,6 +716,37 @@ function resumeAfterForwarding(run: ChatLedRun, now: number): ChatLedRun {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+const PROVIDER_START: Record<AIProvider, [string[], string[]]> = {
+  chatgpt: [['chatgpt.com', 'chat.openai.com'], ['/']],
+  claude: [['claude.ai'], ['/new']],
+  gemini: [['gemini.google.com'], ['/app']],
+  grok: [['grok.com'], ['/', '/chat']],
+  meta: [['www.meta.ai', 'meta.ai'], ['/']],
+};
+
+function isBlankStart(provider: AIProvider, raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    const [hosts, paths] = PROVIDER_START[provider];
+    return url.protocol === 'https:' && !url.username && !url.password && !url.port && hosts.includes(url.hostname) && paths.includes(url.pathname);
+  } catch { return false; }
+}
+
+function isConversationAddress(provider: AIProvider, raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' || url.username || url.password || url.port || !PROVIDER_START[provider][0].includes(url.hostname)) return false;
+    const patterns: Record<AIProvider, RegExp> = {
+      chatgpt: /^(?:\/g\/[^/]+)?\/c\/[^/]+$/,
+      claude: /^\/chat\/[^/]+$/,
+      gemini: /^\/app\/[^/]+$/,
+      grok: /^\/(?:c|chat)\/[^/]+$/,
+      meta: /^\/(?:c|chat)\/[^/]+$/,
+    };
+    return patterns[provider].test(url.pathname);
+  } catch { return false; }
 }
 
 /** A bare site address (no path) is not a conversation address. */
