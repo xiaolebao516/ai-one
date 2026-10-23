@@ -1043,6 +1043,28 @@ async fn precheck_pr<G: GhApi>(
             GithubWriteCode::PrIssueMismatch,
         )));
     }
+    if !closing_ref_matches {
+        // Body-only evidence is just text: `#N` may name another PR or nothing at all. GitHub's own
+        // closingIssuesReferences only ever lists real issues, the body does not, so confirm the
+        // target really is this repository's issue (not a pull request) before any write.
+        match gh.get(&issue_path(repo, issue)).await {
+            Ok(target) => {
+                let is_issue = target.is_object()
+                    && target.get("number").and_then(Value::as_u64) == Some(issue)
+                    && target.get("pull_request").is_none();
+                if !is_issue {
+                    return Err(Box::new(simple_result(
+                        GithubWriteState::Failed,
+                        GithubWriteCode::PrIssueMismatch,
+                    )));
+                }
+            }
+            Err(error) => {
+                let code = code_for_error(gh, error).await;
+                return Err(Box::new(simple_result(GithubWriteState::Failed, code)));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1763,6 +1785,14 @@ mod tests {
         })
     }
 
+    fn issue_value(number: u64) -> Value {
+        json!({ "number": number, "title": "target" })
+    }
+
+    fn pull_request_value(number: u64) -> Value {
+        json!({ "number": number, "title": "other pr", "pull_request": { "url": "x" } })
+    }
+
     fn linked_node(repo: &str, issue: u64) -> Value {
         json!({ "number": issue, "repository": { "nameWithOwner": repo } })
     }
@@ -1797,6 +1827,16 @@ mod tests {
 
     fn valid_accept_args(expected_head: &str) -> AcceptArgs {
         AcceptArgs { repo: REPO.to_string(), issue: 12, pr: 4, expected_head: expected_head.to_string() }
+    }
+
+    fn valid_changes_args(expected_head: &str) -> RequestChangesArgs {
+        RequestChangesArgs {
+            repo: REPO.to_string(),
+            issue: 12,
+            pr: 4,
+            expected_head: expected_head.to_string(),
+            text: "please fix".to_string(),
+        }
     }
 
     #[test]
@@ -1953,8 +1993,36 @@ mod tests {
         assert_eq!(rejected.unwrap_err().code, GithubWriteCode::PrIssueMismatch);
         assert!(truncated_unrelated.write_calls().is_empty());
 
-        let body_linked = FakeGh::new(vec![Ok(pr_value(SHA, "Closes #12", vec![], true, "OPEN"))]);
+        let body_linked = FakeGh::new(vec![
+            Ok(pr_value(SHA, "Closes #12", vec![], true, "OPEN")),
+            Ok(issue_value(12)),
+        ]);
         assert!(precheck_pr(&body_linked, REPO, 12, 4, SHA).await.is_ok());
+
+        // Body-only evidence must name a real issue: a pull request (or unreadable/odd target) is
+        // rejected before any write, for both review actions.
+        for target in [
+            Ok(pull_request_value(12)),
+            Ok(issue_value(13)),
+            Ok(json!([])),
+            Err(GhError::Failed),
+        ] {
+            let accept_gh = FakeGh::new(vec![
+                Ok(pr_value(SHA, "Closes #12", vec![], true, "OPEN")),
+                target.clone(),
+            ]);
+            let accepted = accept(&accept_gh, &valid_accept_args(SHA)).await;
+            assert_eq!(accepted.status, GithubWriteState::Failed);
+            assert!(accept_gh.write_calls().is_empty(), "accept wrote for target {target:?}");
+
+            let changes_gh = FakeGh::new(vec![
+                Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+                target.clone(),
+            ]);
+            let changed = request_changes(&changes_gh, &valid_changes_args(SHA)).await;
+            assert_eq!(changed.status, GithubWriteState::Failed);
+            assert!(changes_gh.write_calls().is_empty(), "request_changes wrote for target {target:?}");
+        }
 
         let node_linked = FakeGh::new(vec![Ok(pr_value(
             SHA, "", vec![linked_node(REPO, 12)], true, "OPEN",
@@ -2020,6 +2088,7 @@ mod tests {
 
         let body_linked = FakeGh::new(vec![
             Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(51)),
             Ok(comment_read(51, 12, &body)),
             Ok(json!([])),
@@ -2034,6 +2103,7 @@ mod tests {
         let confirmed_body = accept_body(SHA);
         let confirmed = FakeGh::new(vec![
             Ok(pr_value(SHA, "Fixes owner/repo#12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(60)),
             Ok(comment_read(60, 12, &confirmed_body)),
             Ok(json!([])),
@@ -2043,6 +2113,7 @@ mod tests {
 
         let partial = FakeGh::new(vec![
             Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(61)),
             Ok(comment_read(61, 12, &confirmed_body)),
             Ok(json!([{ "name": "needs-user" }])),
@@ -2055,6 +2126,7 @@ mod tests {
 
         let uncertain = FakeGh::new(vec![
             Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(62)),
             Err(GhError::Timeout),
         ]);
@@ -2066,6 +2138,7 @@ mod tests {
 
         let failed = FakeGh::new(vec![
             Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Err(GhError::SpawnFailed),
         ]);
         let failed_result = accept(&failed, &valid_accept_args(SHA)).await;
@@ -2138,6 +2211,7 @@ mod tests {
         let accept_body = accept_body(SHA);
         let delete_unknown = FakeGh::new(vec![
             Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(80)),
             Ok(comment_read(80, 12, &accept_body)),
             Ok(json!([{ "name": "needs-user" }])),
@@ -2152,6 +2226,7 @@ mod tests {
         let changes_body = request_changes_body(SHA, "please fix");
         let post_unknown = FakeGh::new(vec![
             Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(81)),
             Ok(comment_read(81, 12, &changes_body)),
             Ok(json!([])),
@@ -2178,6 +2253,7 @@ mod tests {
             let body = accept_body(SHA);
             let gh = FakeGh::new(vec![
                 Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+                Ok(issue_value(12)),
                 Ok(comment_post(82)),
                 Ok(comment_read(82, 12, &body)),
                 labels_response,
@@ -2237,6 +2313,7 @@ mod tests {
         let body = request_changes_body(SHA, "please fix");
         let gh = FakeGh::new(vec![
             Ok(pr_value(SHA, "Fixes: owner/repo#12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(70)),
             Ok(comment_read(70, 12, &body)),
             Ok(json!([])),
