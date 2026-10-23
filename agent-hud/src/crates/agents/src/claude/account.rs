@@ -412,7 +412,9 @@ mod tests {
             reading.account.unwrap()["id"],
             legacy_unresolved("Claude", "").as_str()
         );
-        let id = account_id("claude", &["unresolved", "/u/.claude"]);
+        // ai-one change (test only): the host joins with the platform separator.
+        let home = std::path::Path::new("/u").join(".claude");
+        let id = account_id("claude", &["unresolved", home.to_string_lossy().as_ref()]);
         assert_eq!(reading.quotas[0]["id"], format!("{id}:claude-session"));
     }
 

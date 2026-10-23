@@ -383,10 +383,15 @@ fn a_log_this_run_writes_keeps_the_meter_view() {
     backend.scan_impl(None).unwrap();
     // The view reads the written log again alone rather than every log.
     assert!(backend.meters.view.is_some());
+    // ai-one change (test only): Windows joins directory entries with `\`
+    // while the test built the path with `/`; compare without the difference.
+    let spelled = |text: &str| text.replace('\\', "/");
+    let wanted = spelled(path.to_string_lossy().as_ref());
     assert!(backend
         .meters
         .changes
-        .contains(path.to_string_lossy().as_ref()));
+        .iter()
+        .any(|changed| spelled(changed) == wanted));
     let snapshot = backend.request("refresh", json!({})).unwrap();
     assert_eq!(snapshot["totals"]["total"], 70);
 }

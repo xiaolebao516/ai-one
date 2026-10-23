@@ -44,6 +44,8 @@ Apache-2.0 section 4(b): these are all the modified files.
 | `src/apps/desktop/src-tauri/Cargo.toml` | package `ai-one-hud`; `serde_json`, `chrono`; `custom-protocol` feature |
 | `src/apps/desktop/src-tauri/tauri.conf.json` | product name `AI One HUD`, identifier `com.aione.hud`, dev URL port 1522, Settings window starts hidden, no `resources` |
 | `src/apps/desktop/src-tauri/src/main.rs` | passes the ai-one product extension to `run_with_context` |
+| `src/crates/platform/src/os/windows/mod.rs` | Windows engine lookup also finds Claude Code's native `claude.exe` inside its npm package folder and Codex Desktop's `codex.exe` under `%LOCALAPPDATA%\OpenAI\Codexin\<hash>\` (product code; makes the quota readers work on Windows) |
+| tests only: `agents/src/location.rs`, `agents/src/claude/account.rs`, `agents/src/codex/account.rs`, `agents/src/deepseek/account.rs`, `agents/tests/golden.rs`, `core/src/tests/ingestion.rs`, `platform/src/os/mod.rs`, `platform/src/instance/mod.rs` | the 12 tests that failed on Windows only: expectations assumed `/` separators, a Unix absolute path or Unix-only golden cases; product code unchanged. Each edit says "ai-one change (test only)". |
 
 ## Files added by ai-one
 
@@ -54,21 +56,14 @@ Apache-2.0 section 4(b): these are all the modified files.
 
 `.gitignore` and `.gitattributes` are byte-identical to upstream (they already enforce LF endings). Also copied from upstream's root: `.cargo/config.toml`, `.editorconfig`, `.prettierrc.json`, `.prettierignore`, `rustfmt.toml`, `tsconfig.base.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`.
 
-## Known Windows problems found while porting (not fixed in this commit)
+## Windows status (2026-10-23, this machine; upstream calls Windows "preview")
 
-Upstream says Windows is preview and unverified. On this machine:
+Fixed in phase 2 of #82:
 
-1. `cargo test --workspace --no-fail-fast`: 12 tests fail, all on Windows only
-   (agents 8: path-separator expectations in `location`, `claude/codex/deepseek account` tests; agents `golden` 1: two
-   Windows-only `[unix]` hook cases are not in the golden file; core 1: `a_log_this_run_writes_keeps_the_meter_view`
-   (watched-path string form); platform 2: `os::roots_follow_the_descriptors` (separators), `instance::...names_the_holder`).
-   The other crates pass (core 76/77, host 11, hud 18, runtime 2, platform 27/29, engine, instance 3).
-2. Quotas are empty on Windows: the Claude Code account reader needs an engine `.exe`;
-   the Windows adapter only looks for `claude.exe` in `PATH`-like folders, but an npm install ships `claude.cmd` and the
-   native binary at `%APPDATA%\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe`. The Codex reader likewise does
-   not find Codex Desktop's `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`. Result today: "引擎未找到 / 安装并登录后即可读取额度".
-3. Windows host stubs upstream marks as missing: process discovery and listening ports (so sessions have no "back to the
-   session" target), stored secrets, activating another app, client hooks (approvals, questions, replies stay in the
-   agent's own prompt), Antigravity local service.
+1. 12 Windows-only test failures (listed above under tests only). `cargo test --workspace --no-fail-fast` now passes on Windows (agents 94, core 77, host 11, hud 18, platform 29, runtime 2, instance 3, engine, l10n, golden).
+2. Quotas were empty on Windows because the engine lookup accepted only `claude.exe`/`codex.exe` in PATH-like folders. After the lookup change a live run reads Codex's 5-hour and weekly limits. Claude Code reports "no subscription quota (API key or third-party login)" on a machine that signs in that way; this is shown as-is, not guessed.
 
-Items 1-2 are addressed in the next phase of #82; item 3 stays a known limitation unless a later phase implements it.
+Still open (known limitations, not claimed as working):
+
+3. Windows host stubs that upstream marks as missing: process discovery and listening ports (sessions have no "back to the session" target), stored secrets, activating another app, client hooks (approvals, questions and replies stay in the agent's own prompt), Antigravity local service.
+4. `cargo clippy --workspace --tests -- -D warnings` fails on upstream code with Rust 1.99 (`collapsible_match` in `core/src/hook_events.rs`); upstream CI used an older toolchain. Not touched.

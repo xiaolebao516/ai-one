@@ -91,9 +91,49 @@ pub(crate) fn engine_candidates(home: &Path, env: &Environment, name: &str) -> V
         home.join(".claude/local"),
     ];
     dirs.extend(executable_dirs(home, env));
-    dirs.into_iter()
+    let mut candidates: Vec<PathBuf> = dirs
+        .into_iter()
         .map(|dir| dir.join(format!("{name}.exe")))
-        .collect()
+        .collect();
+    // ai-one change: installs that leave only a `.cmd` shim in PATH keep the
+    // native program elsewhere. Look there too, so the account reader finds it.
+    candidates.extend(packaged_engines(home, env, name));
+    candidates
+}
+/// ai-one change: native programs that PATH reaches only through a `.cmd` shim
+/// or not at all. Claude Code installed with npm keeps `claude.exe` in its
+/// package folder; Codex Desktop keeps `codex.exe` in a hash-named folder.
+fn packaged_engines(home: &Path, env: &Environment, name: &str) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    match name {
+        "claude" => {
+            found.push(
+                app_support(home, env)
+                    .join("npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe"),
+            );
+        }
+        "codex" => {
+            let bin = local_app(home, env).join("OpenAI/Codex/bin");
+            if let Ok(entries) = std::fs::read_dir(&bin) {
+                let mut folders: Vec<PathBuf> = entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| path.is_dir())
+                    .collect();
+                // Newest first: the most recently updated app folder is current.
+                folders.sort_by_key(|path| {
+                    std::cmp::Reverse(
+                        std::fs::metadata(path)
+                            .and_then(|meta| meta.modified())
+                            .ok(),
+                    )
+                });
+                found.extend(folders.into_iter().map(|path| path.join("codex.exe")));
+            }
+        }
+        _ => {}
+    }
+    found
 }
 pub(crate) fn engine_path(home: &Path, env: &Environment) -> String {
     joined_path(executable_dirs(home, env))

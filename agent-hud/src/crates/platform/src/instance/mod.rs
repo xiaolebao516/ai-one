@@ -244,14 +244,16 @@ mod tests {
             _ => panic!("a second claim is turned away"),
         }
         drop(first);
-        let Claim::Acquired(_second) = claim(&path, Some(Path::new("/usr/local/bin/agent-hud")))
-        else {
+        // ai-one change (test only): a name is read back only if it is an
+        // absolute path, and "/usr/local/..." is not one on Windows.
+        let next = temp.path().join("agent-hud");
+        let Claim::Acquired(_second) = claim(&path, Some(&next)) else {
             panic!("the lock is free once its holder lets go");
         };
         drop(_second);
         assert_eq!(
             holder(&path).as_deref(),
-            Some(Path::new("/usr/local/bin/agent-hud")),
+            Some(next.as_path()),
             "the new holder replaces the old name"
         );
     }

@@ -263,12 +263,15 @@ mod tests {
         let row = &reading.billing[0];
         assert_eq!(row["amount"], 12.5);
         assert_eq!(row["currency"], "CNY");
-        assert_eq!(row["consumerHome"], "/u/.dsh");
-        let identity = legacy_unresolved("DeepSeek", "/u/.dsh");
+        // ai-one change (test only): the host joins with the platform separator.
+        let dsh = std::path::Path::new("/u").join(".dsh");
+        let dsh = dsh.to_string_lossy();
+        assert_eq!(row["consumerHome"], dsh.as_ref());
+        let identity = legacy_unresolved("DeepSeek", dsh.as_ref());
         assert_eq!(row["accountId"], identity.as_str());
         assert_eq!(
             row["id"],
-            format!("{}:CNY", account_id("deepseek", &["/u/.dsh"]))
+            format!("{}:CNY", account_id("deepseek", &[dsh.as_ref()]))
         );
         assert_eq!(reading.account.unwrap()["id"], identity.as_str());
     }

@@ -241,7 +241,9 @@ mod tests {
         location
             .resolve(Path::new("/h"), &|key| env.get(key).cloned(), &disk)
             .into_iter()
-            .map(|path| path.to_string_lossy().into_owned())
+            // ai-one change (test only): compare with `/` on every host; Windows
+            // joins with `\`.
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
             .collect()
     }
 
