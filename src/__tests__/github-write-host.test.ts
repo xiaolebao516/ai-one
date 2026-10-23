@@ -137,6 +137,10 @@ describe('host GitHub write bridge', () => {
         steps: [{ step: 'comment', state: 'confirmed' }, { step: 'label', state: 'skipped' }] },
       { status: 'partial', code: 'ok', message: okMessage, steps: [{ step: 'comment', state: 'confirmed' }] },
       { status: 'failed', code: 'ok', message: okMessage, steps: [] },
+      { status: 'failed', code: 'unconfirmed', message: '已发出，但没能确认；请先回读，不要重试',
+        steps: [{ step: 'comment', state: 'unconfirmed' }] },
+      { status: 'partial', code: 'sub_issue_failed', message: okMessage,
+        steps: [{ step: 'create_issue', state: 'confirmed' }, { step: 'sub_issue', state: 'failed' }] },
       { status: 'partial', code: 'github_failed', message: okMessage, steps: [{ step: 'comment', state: 'confirmed' }] },
     ];
     for (const value of contradictions) {

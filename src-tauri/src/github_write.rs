@@ -967,7 +967,7 @@ fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
                         if lower[end..]
                             .chars()
                             .next()
-                            .map_or(true, |ch| !ch.is_alphanumeric())
+                            .map_or(true, |ch| !is_word_character(ch))
                         {
                             return true;
                         }
@@ -1897,6 +1897,7 @@ mod tests {
         assert!(!body_links_issue("Closes #12", REPO, 1));
         assert!(!body_links_issue("Closes #12abc", REPO, 12));
         assert!(!body_links_issue("Closes #123", REPO, 12));
+        assert!(!body_links_issue("Closes #12_foo", REPO, 12));
         assert!(!body_links_issue("Discloses #12", REPO, 12));
         assert!(!body_links_issue("foo_Closes #12", REPO, 12));
         assert!(!body_links_issue("Closes other/repo#12", REPO, 12));
@@ -1976,6 +1977,7 @@ mod tests {
             "escaped \\` literal and `Closes #12`",
             "\\` x\n`start\nCloses #12\nend`",
             "stray ` backtick\nCloses #12",
+            "Closes #12_foo",
             "<span title=\"Closes #12\">text</span>",
             "`Closes <!-- ` --> #12",
         ] {

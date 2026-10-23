@@ -275,6 +275,10 @@ function normalizeResult(value: unknown): GithubWriteResult {
   }
   if (value.status === 'partial' && !(hasConfirmed && hasFailed)) return unconfirmedResult();
   if (value.status === 'failed' && hasConfirmed) return unconfirmedResult();
+  // Any unknown step means the write may have happened: only an unconfirmed total is honest.
+  if (steps.some((step) => step.state === 'unconfirmed') && value.status !== 'unconfirmed') return unconfirmedResult();
+  // The success wording is reserved for confirmed results.
+  if ((value.message === MESSAGES.ok) !== (value.status === 'confirmed')) return unconfirmedResult();
 
   return {
     status: value.status as GithubWriteResult['status'],
