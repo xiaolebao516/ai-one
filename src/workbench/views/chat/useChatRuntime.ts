@@ -770,13 +770,19 @@ export function useChatRuntime({
     const request = requestByProviderRef.current.get(provider);
     if (!request || request.sessionId !== activeSessionId) {
       const lastUserMessage = [...activeSession.messages].reverse().find((message) => message.role === 'user');
+      const retryText = lastUserMessage?.content ?? lastUserQuestion(activeSession.messages) ?? '';
       if (lastUserMessage?.forwardedFrom) {
-        return runSend(lastUserMessage.content, [provider], 'free', {
+        return runSend(retryText, [provider], 'free', {
           forwardedFrom: lastUserMessage.forwardedFrom,
           preserveComparison: true,
         });
       }
-      return runSend(lastUserQuestion(activeSession.messages) ?? '', [provider], 'free');
+      const sessionPreset: ChatSendPresetId = activeSession.presetId === 'deliberation'
+        ? 'free'
+        : activeSession.mode === 'debate' || activeSession.mode === 'consult'
+          ? activeSession.mode
+          : 'free';
+      return runSend(retryText, [provider], sessionPreset);
     }
     if (request.forwardedFrom) return runSend(request.text, [provider], 'free', { forwardedFrom: request.forwardedFrom, preserveComparison: true });
     return runSend(request.text, request.presetId === 'free' ? [provider] : CHAT_PROVIDERS.filter((candidate) => comparisonTargets.includes(candidate)), request.presetId);
