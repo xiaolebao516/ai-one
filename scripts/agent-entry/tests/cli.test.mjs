@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { EXIT } from '../../issue-claim/cli.mjs';
-import { briefing, buildBoard, formatBoard, main, parseMeta, pickNext, prLinks, toolOf } from '../cli.mjs';
+import { briefing, buildBoard, formatBoard, loadState, main, parseMeta, pickNext, prLinks, toolOf } from '../cli.mjs';
 
 const issue = (number, title, body = '', labels = []) => ({ number, title, body, labels: labels.map((name) => ({ name })), url: `https://example.test/issues/${number}` });
 
@@ -98,4 +98,40 @@ test('take --dry-run never calls the lock; bad input exits with an error', () =>
 test('briefing mentions an existing PR so the taker continues the branch', () => {
   const row = buildBoard(state).find((r) => r.number === 8);
   assert.match(briefing(row, 'a'), /已有开放 PR #80/);
+});
+
+test('toolOf ignores aliases of other tools inside the session id', () => {
+  assert.equal(toolOf('Codex / cc-coordination'), 'codex');
+  assert.equal(toolOf('Claude Code / codex-run'), 'claude');
+  assert.equal(toolOf('Antigravity/c759747d'), 'antigravity');
+});
+
+test('an Issue with a registered coordinator but no claim ref is not auto-picked', () => {
+  const issues = [
+    issue(10, '[Task] owned', ['- Priority: P0', '- Current Coordinator / claim: Claude Code / Opus'].join('\n')),
+    issue(11, '[Task] open', ['- Priority: P1', '- Current Coordinator / claim: 待认领（必须先 claim）'].join('\n')),
+    issue(12, '[Spec] owned spec', ['- Stage: PLANNED', '- 调度 agent：Codex 会话 x'].join('\n')),
+    issue(13, '[Task] template', ['- Priority: P1', '- Current Coordinator / claim: <!-- 持有认领锁者；待认领 -->'].join('\n')),
+  ];
+  const board = buildBoard({ issues, claims: [], prs: [] });
+  assert.deepEqual(board.filter((row) => row.pickable).map((row) => row.number), [11, 13]);
+  assert.match(formatBoard(board), /#10 P0 \[已登记协调者但无认领锁/);
+  assert.equal(pickNext(board, 'x').number, 11);
+});
+
+test('PR links cover repo-qualified refs and GitHub Development links', () => {
+  const issues = [issue(42, '[Task] a', '- Priority: P0'), issue(43, '[Task] b', '- Priority: P0'), issue(44, '[Task] c', '- Priority: P0')];
+  const prs = [
+    { number: 1, title: 'feat: feature', body: 'Closes xiaolebao516/ai-one#42', closingIssuesReferences: [] },
+    { number: 2, title: 'feat: other', body: 'no keyword', closingIssuesReferences: [{ number: 43 }] },
+  ];
+  const board = buildBoard({ issues, claims: [], prs });
+  assert.deepEqual(board.filter((row) => row.pickable).map((row) => row.number), [44]);
+});
+
+test('loadState fails closed when the open PR list may be truncated', () => {
+  const fetchJson = (args) => (args[0] === 'pr' ? Array.from({ length: 500 }, (_, i) => ({ number: i + 1, title: 'x', body: '' })) : []);
+  assert.throws(() => loadState({ cwd: '.', fetchJson, claims: () => [] }), /incomplete list/);
+  const ok = loadState({ cwd: '.', fetchJson: (args) => (args[0] === 'pr' ? [] : []), claims: () => [] });
+  assert.deepEqual(ok, { issues: [], prs: [], claims: [] });
 });

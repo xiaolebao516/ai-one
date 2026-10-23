@@ -24,6 +24,9 @@ const TOOL_ALIASES = {
 
 const field = (body, name) => new RegExp(`^[-*]\\s*\\**${name}\\**\\s*[:：]\\s*(.+)$`, 'im').exec(body)?.[1].replace(/\*\*/g, '').trim();
 
+// A coordinator line that still says "unclaimed" (or is the template placeholder) registers nobody.
+const registeredCoordinator = (value) => (value && !/^(<!--|待认领|待分配|无|none|tbd)/i.test(value) ? value : undefined);
+
 /** Dispatch fields an Issue body may carry; every field is optional (older Issues have none). */
 export function parseMeta(body = '') {
   const priority = /\bP[012]\b/.exec(field(body, 'Priority') ?? field(body, '优先级') ?? '')?.[0];
@@ -32,13 +35,15 @@ export function parseMeta(body = '') {
     recommended: field(body, 'Recommended Agent'),
     backup: field(body, 'Backup Agent'),
     dependsOn: field(body, 'Depends on'),
+    coordinator: registeredCoordinator(field(body, 'Current Coordinator / claim') ?? field(body, '调度 agent') ?? field(body, 'Current Coordinator')),
     readyWhen: field(body, 'Ready when'),
     planned: /Stage[:：]\s*(PLANNED|READY)\b/i.test(body),
   };
 }
 
 export function toolOf(agent = '') {
-  const lower = agent.toLowerCase();
+  // Only the tool part ("Codex / session 3" -> "codex"): session ids may contain other tools' aliases.
+  const lower = agent.split(/[\/:@]/)[0].toLowerCase();
   return Object.keys(TOOL_ALIASES).find((tool) => TOOL_ALIASES[tool].some((alias) => new RegExp(`(^|[^a-z])${alias}([^a-z]|$)`).test(lower)));
 }
 
@@ -50,7 +55,9 @@ export function prLinks(prs) {
   for (const pr of prs) {
     const found = new Set();
     for (const match of pr.title.matchAll(/#(\d+)/g)) found.add(Number(match[1]));
-    for (const match of (pr.body ?? '').matchAll(/(?:closes|fixes|resolves|spec:?)\s+#(\d+)/gi)) found.add(Number(match[1]));
+    for (const match of (pr.body ?? '').matchAll(/(?:closes|fixes|resolves|spec:?)\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi)) found.add(Number(match[1]));
+    // GitHub's own Development links, which need no keyword in the text.
+    for (const ref of pr.closingIssuesReferences ?? []) found.add(Number(ref.number));
     for (const issue of found) linked.set(issue, [...(linked.get(issue) ?? []), pr.number]);
   }
   return linked;
@@ -77,7 +84,8 @@ export function buildBoard({ issues, claims, prs }) {
         // Auto-pick only touches Issues that were explicitly made claimable (a priority or a PLANNED
         // stage). Umbrella Specs need an explicit number; an Issue with an open PR but no claim is
         // someone's mid-flight work that predates the lock, so it also needs an explicit decision.
-        pickable: !holder && !labels.includes('blocked') && !(linked.get(issue.number)?.length) && Boolean(meta.priority || meta.planned),
+        pickable:
+          !holder && !labels.includes('blocked') && !meta.coordinator && !(linked.get(issue.number)?.length) && Boolean(meta.priority || meta.planned),
       };
     })
     .sort((a, b) => a.number - b.number);
@@ -110,7 +118,9 @@ export function formatBoard(board) {
           ? '空闲'
           : row.prs.length
             ? '有PR无认领锁，先问用户'
-            : '需指定编号';
+            : row.meta.coordinator
+              ? '已登记协调者但无认领锁，先核对'
+              : '需指定编号';
     const prs = row.prs.length ? ` PR ${row.prs.map((n) => `#${n}`).join(',')}` : '';
     const rec = row.meta.recommended ? ` | 推荐: ${row.meta.recommended.slice(0, 40)}` : '';
     return `#${row.number} ${row.meta.priority ?? '--'} [${state}]${prs} ${row.title.slice(0, 60)}${rec}`;
@@ -143,10 +153,15 @@ function gh(args, cwd) {
   return JSON.parse(result.stdout);
 }
 
+const PR_LIMIT = 500;
+
 export function loadState({ cwd, fetchJson = gh, claims = listClaims } = {}) {
+  const prs = fetchJson(['pr', 'list', '--state', 'open', '--limit', String(PR_LIMIT), '--json', 'number,title,body,closingIssuesReferences'], cwd);
+  // A truncated list could hide the PR of a mid-flight Issue: fail closed instead of guessing.
+  if (prs.length >= PR_LIMIT) throw new Error(`open PR list reached the ${PR_LIMIT} limit; refusing to pick from an incomplete list`);
   return {
     issues: fetchJson(['issue', 'list', '--state', 'open', '--limit', '200', '--json', 'number,title,body,labels,url'], cwd),
-    prs: fetchJson(['pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,body'], cwd),
+    prs,
     claims: claims({ cwd }),
   };
 }
