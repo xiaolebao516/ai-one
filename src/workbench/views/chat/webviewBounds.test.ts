@@ -112,6 +112,28 @@ describe('webview bounds', () => {
     controller.dispose();
   });
 
+  it('does not confirm a bounds write when the host explicitly returns false', async () => {
+    const raf = rafWindow();
+    const current = rect(10, 20, 300, 240);
+    const setBounds = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(undefined);
+    const controller = createWebviewBoundsSyncController({
+      getRect: () => current,
+      setBounds,
+      window: raf.browserWindow,
+    });
+
+    controller.flush();
+    await settleBoundsWrites();
+    controller.flush();
+    expect(setBounds).toHaveBeenCalledTimes(2);
+    await settleBoundsWrites();
+    controller.flush();
+    expect(setBounds).toHaveBeenCalledTimes(2);
+    controller.dispose();
+  });
+
   it('retries the same rectangle after a rejected write and deduplicates after success', async () => {
     const raf = rafWindow();
     const current = rect(10, 20, 300, 240);

@@ -75,12 +75,12 @@ function isCurrentProviderIntent(provider: AIProvider, version: number): boolean
   return providerIntentVersions.get(provider) === version;
 }
 
-function enqueueProviderCommand(provider: AIProvider, command: () => Promise<void>): Promise<boolean> {
+function enqueueProviderCommand(provider: AIProvider, command: () => Promise<unknown>): Promise<boolean> {
   const previous = providerCommandQueues.get(provider) ?? Promise.resolve(true);
   const pending = previous.catch(() => false).then(async () => {
     try {
-      await command();
-      return true;
+      const result = await command();
+      return result !== false;
     } catch {
       // Keep the queue alive, but report failure so bounds deduplication can retry.
       return false;
@@ -136,9 +136,10 @@ export function createProviderWebTabController(
           !isCurrentProviderIntent(provider, version) ||
           desiredVisible !== true
         ) {
-          return;
+          return false;
         }
-        await providerHost.layout.setBounds(provider, rect);
+        const result = await providerHost.layout.setBounds(provider, rect);
+        return result === false ? false : true;
       });
     },
   });
