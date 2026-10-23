@@ -337,38 +337,71 @@ describe('host send with outbox draining (#143)', () => {
     listenMock.mockReset();
   });
 
-  it('drains stale outbox items inside the same script, before dispatching, only when asked', async () => {
-    invokeMock.mockResolvedValue(undefined);
+  async function drainedScript(): Promise<string> {
+    invokeMock.mockResolvedValue(JSON.stringify({ sent: true }));
     await host.provider.send('chatgpt#2', 'task B', { drainOutbox: true });
-    const drained = String((invokeMock.mock.calls.at(-1)?.[1] as { js: string }).js);
-    expect(drained.indexOf('peekOutbox')).toBeGreaterThan(-1);
-    expect(drained.indexOf('ackBulk')).toBeGreaterThan(drained.indexOf('peekOutbox'));
-    expect(drained.indexOf('dispatch')).toBeGreaterThan(drained.indexOf('ackBulk'));
-    expect(drained).toContain('"provider":"chatgpt"');
+    const call = invokeMock.mock.calls.at(-1) as [string, { js: string }];
+    expect(call[0]).toBe('provider_eval_with_callback');
+    return call[1].js;
+  }
 
-    await host.provider.send('chatgpt#2', 'task C');
-    const plain = String((invokeMock.mock.calls.at(-1)?.[1] as { js: string }).js);
-    expect(plain).not.toContain('peekOutbox');
-    expect(plain).toContain('dispatch');
-  });
+  function runInPage(js: string, bridge: Record<string, unknown> | undefined) {
+    return JSON.parse(String(new Function('window', 'return ' + js)({ __MAC_BRIDGE__: bridge }))) as { sent: boolean; reason?: string };
+  }
 
-  it('keeps draining until a size-limited peek reports nothing left, then dispatches once', async () => {
-    invokeMock.mockResolvedValue(undefined);
-    await host.provider.send('chatgpt#2', 'task B', { drainOutbox: true });
-    const js = String((invokeMock.mock.calls.at(-1)?.[1] as { js: string }).js);
-
-    // A page whose outbox holds 7 stale entries but only ever shows 2 per peek (the real batch limit).
-    let outbox = Array.from({ length: 7 }, (_, index) => ({ mid: index + 1 }));
-    const dispatched: unknown[] = [];
-    const bridge = {
+  it('drains in rounds until a size-limited peek reports nothing left, then dispatches once', async () => {
+    const js = await drainedScript();
+    let outbox = Array.from({ length: 7 }, (_, index) => ({ mid: index + 1 })); // only 2 visible per peek
+    const dispatched: { payload: { text: string }; provider: string }[] = [];
+    const result = runInPage(js, {
       peekOutbox: () => outbox.slice(0, 2),
       ackBulk: (maxMid: number) => { outbox = outbox.filter((entry) => entry.mid > maxMid); },
-      dispatch: (message: unknown) => { dispatched.push(message); },
-    };
-    new Function('window', js)({ __MAC_BRIDGE__: bridge });
-
+      dispatch: (message: { payload: { text: string }; provider: string }) => { dispatched.push(message); },
+    });
+    expect(result).toEqual({ sent: true });
     expect(outbox).toEqual([]);
     expect(dispatched).toHaveLength(1);
-    expect((dispatched[0] as { payload: { text: string } }).payload.text).toBe('task B');
+    expect(dispatched[0].payload.text).toBe('task B');
+    expect(dispatched[0].provider).toBe('chatgpt');
+  });
+
+  it.each([
+    ['ack throws', { peekOutbox: () => [{ mid: 1 }], ackBulk: () => { throw new Error('boom'); } }, /drain failed/],
+    ['ack does not advance', { peekOutbox: () => [{ mid: 1 }], ackBulk: () => undefined }, /did not advance/],
+    ['peek throws', { peekOutbox: () => { throw new Error('peek boom'); }, ackBulk: () => undefined }, /drain failed/],
+  ])('never dispatches when the outbox cannot be drained (%s)', async (_name, partial, reason) => {
+    const js = await drainedScript();
+    const dispatch = vi.fn();
+    const result = runInPage(js, { ...partial, dispatch });
+    expect(result.sent).toBe(false);
+    expect(result.reason).toMatch(reason);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('never dispatches when the round cap is reached with entries still arriving', async () => {
+    const js = await drainedScript();
+    let next = 1;
+    const dispatch = vi.fn();
+    const result = runInPage(js, { peekOutbox: () => [{ mid: next++ }], ackBulk: () => undefined, dispatch });
+    expect(result).toMatchObject({ sent: false });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('never dispatches without a page bridge, and the host rejects the send when the page says it did not send', async () => {
+    const js = await drainedScript();
+    expect(runInPage(js, undefined)).toEqual({ sent: false, reason: 'no bridge' });
+    invokeMock.mockResolvedValue(JSON.stringify({ sent: false, reason: 'round cap reached' }));
+    await expect(host.provider.send('chatgpt#2', 'x', { drainOutbox: true })).rejects.toThrow(/could not be drained \(round cap reached\)/);
+    invokeMock.mockResolvedValue('not json');
+    await expect(host.provider.send('chatgpt#2', 'x', { drainOutbox: true })).rejects.toThrow(/unreadable outbox drain result/);
+  });
+
+  it('keeps the plain send unchanged when draining is not requested', async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await host.provider.send('chatgpt#2', 'task C');
+    const call = invokeMock.mock.calls.at(-1) as [string, { js: string }];
+    expect(call[0]).toBe('provider_eval');
+    expect(call[1].js).not.toContain('peekOutbox');
+    expect(call[1].js).toContain('dispatch');
   });
 });

@@ -105,10 +105,11 @@ const providerApi = {
   // drainOutbox: a collector that reads the page outbox by polling (extra instances) must not see replies
   // left behind by an earlier cancelled or timed-out send. The page drops everything already queued in
   // the SAME script that dispatches the message, so no reply can fall in between. peekOutbox returns at
-  // most one size-limited batch per call, so it drains in rounds until the page reports nothing left.
-  send: (provider: ProviderInstance, text: string, options?: { drainOutbox?: boolean }): Promise<void> => {
+  // most one size-limited batch per call, so it drains in rounds. Fail closed: if the outbox cannot be
+  // proven empty (error, no progress, round cap) the message is NOT dispatched and the send is rejected.
+  send: async (provider: ProviderInstance, text: string, options?: { drainOutbox?: boolean }): Promise<void> => {
     if (providersWithUnconfirmedStop.has(provider)) {
-      return Promise.reject(new Error(`${provider} send rejected: stop failed; reload provider page before retrying`));
+      throw new Error(`${provider} send rejected: stop failed; reload provider page before retrying`);
     }
     const message = JSON.stringify({
       v: 1,
@@ -116,10 +117,21 @@ const providerApi = {
       provider: providerInstanceBase(provider),
       payload: { text },
     });
-    const js = options?.drainOutbox
-      ? `(() => { const b = window.__MAC_BRIDGE__; if (!b) return; try { for (let round = 0; round < 500; round++) { let max = 0; for (const item of (b.peekOutbox() || [])) { if (item && typeof item.mid === 'number' && item.mid > max) max = item.mid; } if (max <= 0) break; b.ackBulk(max); } } catch (e) { /* drain is best effort; the collector also checks the boot id */ } b.dispatch(${message}); })();`
-      : `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${message});`;
-    return invoke('provider_eval', { provider, js });
+    if (!options?.drainOutbox) {
+      return invoke('provider_eval', { provider, js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${message});` });
+    }
+    const raw = await invoke<string>('provider_eval_with_callback', { provider, js: drainAndDispatchScript(message) });
+    let result: unknown;
+    try {
+      result = JSON.parse(raw) as unknown;
+      if (typeof result === 'string') result = JSON.parse(result) as unknown;
+    } catch {
+      throw new Error(`${provider} send rejected: unreadable outbox drain result`);
+    }
+    const outcome = result as { sent?: unknown; reason?: unknown } | null;
+    if (!outcome || outcome.sent !== true) {
+      throw new Error(`${provider} send rejected: stale outbox could not be drained (${typeof outcome?.reason === 'string' ? outcome.reason : 'no result'})`);
+    }
   },
   fill: (provider: ProviderInstance, text: string): Promise<void> =>
     invoke('provider_eval', {
@@ -150,6 +162,31 @@ const providerApi = {
   },
   newSession: (provider: ProviderInstance): Promise<void> => invoke('provider_new_session', { provider }),
 };
+
+// Runs in the provider page. Returns JSON {sent:true} after dispatching, or {sent:false, reason} without dispatching.
+function drainAndDispatchScript(message: string): string {
+  return `(() => {
+  const b = window.__MAC_BRIDGE__;
+  if (!b) return JSON.stringify({ sent: false, reason: 'no bridge' });
+  try {
+    let lastMax = 0;
+    let drained = false;
+    for (let round = 0; round < 500; round++) {
+      let max = 0;
+      for (const item of (b.peekOutbox() || [])) { if (item && typeof item.mid === 'number' && item.mid > max) max = item.mid; }
+      if (max <= 0) { drained = true; break; }
+      if (max <= lastMax) return JSON.stringify({ sent: false, reason: 'ack did not advance' });
+      b.ackBulk(max);
+      lastMax = max;
+    }
+    if (!drained) return JSON.stringify({ sent: false, reason: 'round cap reached' });
+  } catch (e) {
+    return JSON.stringify({ sent: false, reason: 'drain failed: ' + String(e && e.message || e) });
+  }
+  b.dispatch(${message});
+  return JSON.stringify({ sent: true });
+})()`;
+}
 
 export const host = {
   app: {
