@@ -16,7 +16,7 @@ The local policy defaults to `auto` and is stored in `~/.local/share/prodex/arch
     node scripts/prodex-archive/cli.mjs policy --mode auto
     node scripts/prodex-archive/cli.mjs policy --mode manual
 
-The task dispatcher must call `auto-finish` only after the task is truly terminal and its Handoff has been posted. This is the lifecycle hook that automates archiving for the user; it is deliberately not run after every `ask` or `release`. In `manual` mode, `auto-finish` safely does nothing. `finish` remains an explicit override, and `skip` retains an individual thread.
+The task dispatcher must call `auto-finish` only after the task is truly terminal and its Handoff has been posted. This is the lifecycle hook that automates archiving for the user; it is deliberately not run after every `ask`, and a plain `release` does not archive. The standard close-out is one command that frees the slot and archives (see below). In `manual` mode, `auto-finish` safely does nothing. `finish` remains an explicit override, and `skip` retains an individual thread.
 
 ## Finish procedure
 
@@ -63,7 +63,15 @@ pending, failed, skipped, archived. Archived is idempotent. Retry explicitly
 overrides skipped.
 
 The ordinary run command continues to release its short-lived slot claim when one
-ask finishes. At FINAL THREAD closure, the dispatcher runs `auto-finish` instead of another manual release.
+ask finishes. At FINAL THREAD closure the dispatcher runs the combined close-out (#114):
+
+    node scripts/prodex-slots/cli.mjs release --slot 2 --task 94 --thread-url "$THREAD" --request-id "$REQUEST_ID" --handoff-url "$COMMENT_URL"
+
+It validates every argument before changing anything, frees the slot, then calls `auto-finish`.
+With `--thread-url` but no evidence it prints `archive NOT attempted`; under the `manual` policy
+the archive is skipped and says so; a failed archive prints `archive NOT done` and never undoes
+the release. A live claim that belongs to another task or thread blocks the whole command.
+Calling `auto-finish` directly still works for retries.
 Archive status is separate from slot closure. A failed UI archive does not
 intentionally hold the claim; a failed Handoff check never takes a claim.
 

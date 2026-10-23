@@ -1029,24 +1029,33 @@ const THREAD = 'https://chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013';
 const HANDOFF = 'https://github.com/xiaolebao516/ai-one/issues/71#issuecomment-1';
 const archiveArgs = ['release', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'req-12345', '--handoff-url', HANDOFF];
 
-test('release with archive evidence frees the slot, then hands the exact thread to auto-finish', async () => {
+test('release with archive evidence frees a real claim, then hands the exact thread to auto-finish', async () => {
   const h = harness();
   addSlots(h.home, 1);
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
   const calls = [];
   h.deps.autoFinish = async (argv) => { calls.push(argv); return 0; };
   assert.equal(await h.run(archiveArgs), EXIT.OK);
+  assert.equal(readClaim(h.home, 1), null, 'the real claim is gone');
   assert.deepEqual(calls[0], ['auto-finish', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'req-12345', '--handoff-url', HANDOFF]);
-  assert.match(h.log.err.join('\n'), /released slot 1/);
+  assert.match(h.log.err.join('\n'), /released slot 1 \(claim removed\)/);
 });
 
-test('a failed archive never fails the release and is reported loudly without URLs', async () => {
-  const h = harness();
-  addSlots(h.home, 1);
-  h.deps.autoFinish = async (_argv, io) => { io.err(`prodex-archive: Handoff mismatch ${HANDOFF}`); return 1; };
-  assert.equal(await h.run(archiveArgs), EXIT.OK);
-  const stderr = h.log.err.join('\n');
-  assert.match(stderr, /archive NOT done \(the slot is released anyway\)/);
-  assert.doesNotMatch(stderr, /issuecomment/);
+test('a failed or throwing archive never fails the release and is reported loudly without URLs', async () => {
+  for (const autoFinish of [
+    async (_argv, io) => { io.err(`prodex-archive: Handoff mismatch ${HANDOFF}`); return 1; },
+    async () => { throw new Error(`module load failed ${HANDOFF}`); },
+  ]) {
+    const h = harness();
+    addSlots(h.home, 1);
+    claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+    h.deps.autoFinish = autoFinish;
+    assert.equal(await h.run(archiveArgs), EXIT.OK);
+    const stderr = h.log.err.join('\n');
+    assert.match(stderr, /archive NOT done \(the slot is released anyway\)/);
+    assert.doesNotMatch(stderr, /issuecomment/);
+    assert.equal(readClaim(h.home, 1), null);
+  }
 });
 
 test('release with a thread but no archive evidence says the chat was not archived', async () => {
@@ -1057,11 +1066,40 @@ test('release with a thread but no archive evidence says the chat was not archiv
   assert.match(h.log.err.join('\n'), /archive NOT attempted/);
 });
 
-test('archive evidence must be complete and only applies to release', async () => {
+test('archive evidence is validated before any state changes', async () => {
   const h = harness();
   addSlots(h.home, 1);
-  assert.equal(await h.run(['release', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'req-12345']), EXIT.ERROR);
-  assert.equal(await h.run(['release', '--slot', '1', '--request-id', 'req-12345', '--handoff-url', HANDOFF]), EXIT.ERROR);
-  assert.equal(await h.run(['list', '--request-id', 'req-12345']), EXIT.ERROR);
-  assert.ok(!fs.existsSync(path.join(h.home, 'slot-claims', 'slot-1.closed.json')), 'rejected input must not release anything');
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+  const closed = path.join(h.home, 'slot-claims', 'slot-1.closed.json');
+  const bad = [
+    ['release', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'req-12345'],
+    ['release', '--slot', '1', '--request-id', 'req-12345', '--handoff-url', HANDOFF],
+    ['list', '--request-id', 'req-12345'],
+    ['release', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'x', '--handoff-url', HANDOFF],
+    ['release', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'req-12345', '--handoff-url', 'invalid-url'],
+    ['release', '--slot', '1', '--task', '72', '--thread-url', THREAD, '--request-id', 'req-12345', '--handoff-url', HANDOFF],
+  ];
+  for (const args of bad) assert.equal(await h.run(args), EXIT.ERROR, args.join(' '));
+  assert.ok(readClaim(h.home, 1), 'the claim is untouched');
+  assert.ok(!fs.existsSync(closed), 'nothing was released');
+  assert.doesNotMatch(h.log.err.join('\n'), /invalid-url|issuecomment/);
+});
+
+test('a claim that belongs to another task or thread blocks the archive release', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '99', threadUrl: THREAD } });
+  h.deps.autoFinish = async () => { throw new Error('MUST NOT CALL'); };
+  assert.equal(await h.run(archiveArgs), EXIT.ERROR);
+  assert.ok(readClaim(h.home, 1), 'the other task keeps its claim');
+  assert.match(h.log.err.join('\n'), /different task or thread/);
+});
+
+test('with the real archive tool and a manual policy, release frees the slot and archives nothing', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  const { setArchivePolicy } = await import('../../prodex-archive/archive.mjs');
+  await setArchivePolicy(h.home, 'manual');
+  assert.equal(await h.run(archiveArgs), EXIT.OK);
+  assert.match(h.log.err.join('\n'), /archive: archive policy is manual; no archive attempted/);
 });

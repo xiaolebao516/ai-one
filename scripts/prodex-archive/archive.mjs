@@ -63,7 +63,11 @@ export function verifyHandoff({ task, threadUrl, requestId, handoffUrl }, runner
   });
   if (res.error || res.status !== 0) throw new Error('Could not verify GitHub Handoff; check gh login/network');
   let body;
-  try { body = JSON.parse(res.stdout).body; } catch { throw new Error('Invalid GitHub Handoff API response'); }
+  let issueUrl;
+  try { ({ body, issue_url: issueUrl } = JSON.parse(res.stdout)); } catch { throw new Error('Invalid GitHub Handoff API response'); }
+  // The comment must really belong to the task issue, not just carry its number in the text.
+  if (typeof issueUrl !== 'string' || !new RegExp('/repos/xiaolebao516/ai-one/issues/' + String(task) + '$').test(issueUrl))
+    throw new Error('Handoff comment does not belong to the task issue; refuse to archive');
   if (typeof body !== 'string') throw new Error('Handoff comment has no body');
   const expected = ['Archive-ready: true', 'Task: #' + task,
     'Thread-SHA256: ' + digest(threadUrl), 'Request-ID: ' + requestId,

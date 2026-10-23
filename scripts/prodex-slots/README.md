@@ -281,7 +281,9 @@ the 10 s send spacing is shared by all slots; slot windows are visible windows.
 
 ## Archive finished ChatGPT conversations
 
-Archive is distinct from release: release only frees the slot. For a task that is truly
+Archive is distinct from a plain release, which only frees the slot. The standard close-out is
+`release ... --task N --thread-url URL --request-id ID --handoff-url URL`, which frees the slot and
+then runs `auto-finish` (#114; failure to archive never undoes the release). For a task that is truly
 finished and has a verified Handoff, the dispatcher calls `auto-finish` as its task-finalization
 hook using the fail-closed workflow in [scripts/prodex-archive/README.md](../prodex-archive/README.md)
 (Issue #94). The default policy is `auto`; set `policy --mode manual` to disable automatic

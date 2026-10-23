@@ -29,9 +29,11 @@ test('the Handoff must actually exist and attest the exact thread/request and co
     'Archive-ready: true', 'Task: #94', 'Thread-SHA256: ' + digest(A),
     'Request-ID: req-12345', 'Reply-verified: true', 'Artifacts-saved: true', 'No-followups: true',
   ];
-  const fetchComment = () => ({ status: 0, stdout: JSON.stringify({ body: values.join('\n') }) });
-  assert.equal(verifyHandoff(input(), fetchComment), true);
-  assert.throws(() => verifyHandoff({ ...input(), threadUrl: B }, fetchComment), /refuse/);
+  const fetchComment = (issue = 94) => () => ({ status: 0, stdout: JSON.stringify({ body: values.join('\n'), issue_url: 'https://api.github.com/repos/xiaolebao516/ai-one/issues/' + issue }) });
+  assert.equal(verifyHandoff(input(), fetchComment()), true);
+  assert.throws(() => verifyHandoff(input(), fetchComment(95)), /does not belong to the task issue/);
+  assert.throws(() => verifyHandoff(input(), () => ({ status: 0, stdout: JSON.stringify({ body: values.join('\n') }) })), /does not belong/);
+  assert.throws(() => verifyHandoff({ ...input(), threadUrl: B }, fetchComment()), /refuse/);
   assert.throws(() => verifyHandoff(input(), () => ({ status: 1, error: 'network' })), /Could not verify/);
 });
 test('finish archives only with a verified Handoff, writes status and closes slot independently', async () => {

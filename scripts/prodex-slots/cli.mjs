@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { validateFinish } from '../prodex-archive/archive.mjs';
 import { EXIT, addSlots, claimOwnership, claimSlot, loadConfig, normalizeNote, normalizeOwnership, parseCheck, processAlive, readClaim, readClosure, releaseClaim, slotEnv, slotsHome, sweepSlots, writeClosure } from './slots.mjs';
 
 // Argument mistakes (bad flags, missing values, unknown commands) are usage errors: the reason
@@ -100,6 +101,14 @@ export function parseArgs(args) {
     if (archiveFlags.length !== 2) throw new UsageError('Archiving on release needs both --request-id and --handoff-url');
     if (options.task === undefined || options.threadUrl === undefined) {
       throw new UsageError('Archiving on release also needs --task and --thread-url');
+    }
+    // Format and Handoff-URL checks happen here, before release touches any state. The archive
+    // tool's messages are generic and never repeat the rejected value.
+    try {
+      validateFinish({ task: String(options.task).replace('#', ''), slot: options.slot, threadUrl: options.threadUrl,
+        requestId: options.requestId, handoffUrl: options.handoffUrl });
+    } catch (error) {
+      throw new UsageError(`Invalid archive evidence: ${error.message}`);
     }
   }
   // Validate the note here, before release touches any state: a rejected note must not take the
@@ -354,9 +363,15 @@ async function archiveOnRelease(options, deps, err) {
   }
   const autoFinish = deps.autoFinish ?? (async (argv, io) => (await import('../prodex-archive/cli.mjs')).main(argv, { home: deps.home, ...io }));
   const lines = [];
-  const code = await autoFinish(['auto-finish', '--slot', String(options.slot), '--task', String(options.ownership.task).replace('#', ''),
-    '--thread-url', options.ownership.threadUrl, '--request-id', options.requestId, '--handoff-url', options.handoffUrl],
-  { out: (line) => lines.push(line), err: (line) => lines.push(line) });
+  let code;
+  try {
+    code = await autoFinish(['auto-finish', '--slot', String(options.slot), '--task', String(options.ownership.task).replace('#', ''),
+      '--thread-url', options.ownership.threadUrl, '--request-id', options.requestId, '--handoff-url', options.handoffUrl],
+    { out: (line) => lines.push(line), err: (line) => lines.push(line) });
+  } catch (error) {
+    code = 1;
+    lines.push(`archive tool failed: ${error?.message ?? 'unknown error'}`);
+  }
   const detail = lines.join(' ').replace(/https?:\/\/\S+/g, '[url]');
   if (code === 0) err(`prodex-slots: archive: ${detail}`);
   else err(`prodex-slots: archive NOT done (the slot is released anyway): ${detail}. Inspect it, then retry with scripts/prodex-archive/cli.mjs retry.`);
@@ -400,6 +415,15 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
       // Ownership and note were validated in parseArgs, so nothing below can reject after the
       // claim is already gone.
       const had = readClaim(deps.home, options.slot);
+      if (options.requestId !== undefined && had) {
+        // A live claim says which task/thread this slot serves; archiving a different one is refused
+        // before anything changes.
+        const owner = claimOwnership(had);
+        const wanted = options.ownership;
+        if ((owner.task && owner.task !== wanted.task) || (owner.threadUrl && owner.threadUrl !== wanted.threadUrl)) {
+          throw new Error('The slot claim belongs to a different task or thread than the one to archive; nothing was released or archived');
+        }
+      }
       releaseClaim(deps.home, options.slot);
       const record = writeClosure(deps.home, options.slot, { ownership: options.ownership, note: options.note });
       err(`prodex-slots: released slot ${options.slot}${had ? ' (claim removed)' : ' (no claim was present)'}; closed record written (${record.task ?? 'no task'}${record.note ? `, "${record.note}"` : ''}). The slot is reusable.`);
