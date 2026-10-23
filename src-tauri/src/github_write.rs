@@ -908,6 +908,12 @@ fn is_word_character(ch: char) -> bool {
 }
 
 fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
+    // Conservative gate: backslash-escaped backticks or an odd number of backticks make code-span
+    // pairing ambiguous, so a keyword inside real code could leak out. Treat the body as no evidence
+    // (closingIssuesReferences stays the primary source) instead of guessing.
+    if body.contains("\\`") || body.matches('`').count() % 2 != 0 {
+        return false;
+    }
     let prose = strip_fenced_code_and_quotes(body);
     let prose = strip_html_comments(&prose);
     let prose = strip_inline_code(&prose);
@@ -1911,6 +1917,9 @@ mod tests {
         assert!(!body_links_issue("`Closes #12`", REPO, 12));
         assert!(!body_links_issue("Closes `#12`", REPO, 12));
         assert!(!body_links_issue("`Closes\n#12`", REPO, 12));
+        assert!(!body_links_issue("escaped \\` literal and `Closes #12`", REPO, 12));
+        assert!(!body_links_issue("\\` x\n`start\nCloses #12\nend`", REPO, 12));
+        assert!(!body_links_issue("stray ` backtick\nCloses #12", REPO, 12));
         assert!(!body_links_issue("<!-- Closes #12 -->", REPO, 12));
         assert!(!body_links_issue("<!--\nCloses #12\n-->", REPO, 12));
     }
