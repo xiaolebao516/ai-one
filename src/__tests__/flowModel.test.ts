@@ -64,6 +64,54 @@ describe('flow model validation', () => {
     })).toEqual([]);
   });
 
+  it('rejects every same-resource author/audit pair even when another author is independent', () => {
+    const stage: StageDef = {
+      ...customStage('review-multi'),
+      collaboration: 'author-review',
+      participants: [
+        { resource: 'codex', role: 'author' },
+        { resource: 'chatgpt', role: 'author' },
+        { resource: 'chatgpt', role: 'audit' },
+      ],
+    };
+
+    expect(validateStage(stage).map((item) => item.code)).toContain('same-author-audit-session');
+  });
+
+  it('normalizes resource identifiers before checking author-review independence', () => {
+    const stage: StageDef = {
+      ...customStage('review-normalized'),
+      collaboration: 'author-review',
+      participants: [
+        { resource: ' ChatGPT ', role: 'author' },
+        { resource: 'chatgpt', role: 'audit' },
+      ],
+    };
+
+    expect(validateStage(stage).map((item) => item.code)).toContain('same-author-audit-session');
+    expect(validateStage({
+      ...stage,
+      participants: [
+        { resource: ' ChatGPT ', role: 'author' },
+        { resource: ' CHATGPT ', role: 'audit', freshSession: false },
+      ],
+    }).map((item) => item.code)).toContain('same-author-audit-session');
+    expect(validateStage({
+      ...stage,
+      participants: [
+        { resource: ' ChatGPT ', role: 'author' },
+        { resource: ' CHATGPT ', role: 'audit', freshSession: true },
+      ],
+    })).toEqual([]);
+    expect(validateStage({
+      ...stage,
+      participants: [
+        { resource: ' ChatGPT ', role: 'author' },
+        { resource: ' Codex ', role: 'audit' },
+      ],
+    })).toEqual([]);
+  });
+
   it('matches participant counts to collaboration modes and validates enum values', () => {
     expect(validateStage({ ...customStage('solo-empty'), participants: [] }).some((item) => item.code === 'invalid-participants')).toBe(true);
     const parallel = {
