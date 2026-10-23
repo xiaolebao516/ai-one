@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-local-store-read"
+description = "Enables the local_store_read command without any pre-configured scope."
+commands.allow = ["local_store_read"]
+
+[[permission]]
+identifier = "deny-local-store-read"
+description = "Denies the local_store_read command without any pre-configured scope."
+commands.deny = ["local_store_read"]
