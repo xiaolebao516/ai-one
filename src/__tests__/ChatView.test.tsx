@@ -86,6 +86,7 @@ function fakeRuntime(overrides: Partial<ChatRuntime> = {}): ChatRuntime {
     retryProvider: vi.fn(async () => true),
     skipProvider: vi.fn(),
     setReplayRunning: vi.fn(),
+    canStartReplay: vi.fn(() => runtime.busyProviders.length === 0 && !runtime.replayRunning),
     clearPersistenceNotice: vi.fn(),
     setPreset: vi.fn(),
   };

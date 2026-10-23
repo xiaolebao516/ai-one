@@ -476,7 +476,7 @@ export function ChatView({ locale, runtime, onConvertToTask }: ChatViewProps) {
               <ReplayPanel
                 locale={locale}
                 activeProviders={[...CHAT_PROVIDERS]}
-                canStartReplay={() => !hasBusy}
+                canStartReplay={runtime.canStartReplay}
                 runBlockedMessage={text.t('chatReplayBusy')}
                 onReplayStateChange={runtime.setReplayRunning}
               />

@@ -99,6 +99,7 @@ export interface ChatRuntime {
   retryProvider: (provider: AIProvider) => Promise<boolean>;
   skipProvider: (provider: AIProvider) => void;
   setReplayRunning: (running: boolean) => void;
+  canStartReplay: () => boolean;
   clearPersistenceNotice: () => void;
   setPreset: (presetId: import('./chatModel').ChatPresetId) => void;
   desktopAvailable: boolean;
@@ -566,6 +567,8 @@ export function useChatRuntime({
     replayRunningRef.current = running;
     setReplayRunningState(running);
   }, []);
+
+  const canStartReplay = useCallback(() => activeWorkflowRunRef.current === undefined && !replayRunningRef.current, []);
 
   const clearPersistenceNotice = useCallback(() => {
     persistenceNoticeRef.current = undefined;
@@ -1055,6 +1058,7 @@ export function useChatRuntime({
     retryProvider,
     skipProvider,
     setReplayRunning,
+    canStartReplay,
     clearPersistenceNotice,
     setPreset,
     desktopAvailable,

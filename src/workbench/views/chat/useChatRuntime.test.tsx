@@ -137,6 +137,7 @@ describe('useChatRuntime workflow ownership', () => {
     const runner = vi.fn(async (): Promise<RunWorkflowResult> => ({ ok: true }));
     await mount(runner);
     await act(async () => currentRuntime?.setReplayRunning(true));
+    expect(currentRuntime?.canStartReplay()).toBe(false);
     let sent: boolean | undefined;
     await act(async () => {
       sent = await currentRuntime!.sendMessage('keep this question', ['chatgpt'], 'free');
@@ -155,6 +156,7 @@ describe('useChatRuntime workflow ownership', () => {
       sending = currentRuntime!.sendMessage('local question', ['chatgpt'], 'free');
     });
     await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(1));
+    expect(currentRuntime?.canStartReplay()).toBe(false);
 
     const localResponse = {
       v: 1,
@@ -172,6 +174,7 @@ describe('useChatRuntime workflow ownership', () => {
     pendingRun.resolve({ ok: true });
     await act(async () => { await sending; });
     expect(currentRuntime?.busyProviders).not.toContain('chatgpt');
+    expect(currentRuntime?.canStartReplay()).toBe(true);
   });
 
   it.each(['retry', 'skip'] as const)('routes timeout %s to the matching workflow request and releases busy state', async (action) => {
