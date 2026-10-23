@@ -46,6 +46,8 @@
     "allow-local-store-read",
     "allow-local-store-quarantine",
     "allow-local-store-write",
-    "allow-local-store-export"
+    "allow-local-store-export",
+    "allow-quota-hud-read",
+    "allow-quota-hud-start"
   ]
 }

@@ -41,6 +41,8 @@ fn main() {
             "local_store_quarantine",
             "local_store_write",
             "local_store_export",
+            "quota_hud_read",
+            "quota_hud_start",
         ]),
     ))
     .expect("failed to run tauri build script");
