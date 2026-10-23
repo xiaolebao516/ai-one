@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { AI_PROVIDERS } from '../../../../shared/constants';
 import type { AIProvider } from '../../../../shared/types';
 import { t as translateKey } from '../../../i18n/t';
@@ -152,12 +152,12 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentQuestion = lastUserQuestion(runtime.activeSession.messages);
   const hasBusy = runtime.busyProviders.length > 0;
-  const presetOptions = useMemo(() => [
+  const presetOptions = [
     { value: 'free', label: text.t('chatPresetFree') },
     { value: 'debate', label: text.t('chatPresetDebate') },
     { value: 'consult', label: text.t('chatPresetConsult') },
     { value: 'deliberation', label: text.t('chatPresetDeliberation') },
-  ], [text]);
+  ];
   const readyFiles = readyAttachmentFiles(attachments);
   const attachmentsReading = hasReadingAttachment(attachments);
   const activeTargets = presetId === 'free' ? runtime.selectedTargets : [];
@@ -317,7 +317,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
         <aside className={`w-[180px] shrink-0 flex-col gap-v2-sm border-r border-v2-line pr-v2-md ${sidebarOpen ? 'flex' : 'hidden'} min-[1100px]:flex max-[1099px]:fixed max-[1099px]:inset-y-16 max-[1099px]:left-0 max-[1099px]:z-20 max-[1099px]:bg-v2-panel max-[1099px]:p-v2-md max-[1099px]:shadow-v2-float`}>
           <div className="flex items-center justify-between gap-v2-xs">
             <span className="text-v2-meta font-semibold text-v2-ink-2">{text.t('chatConversations')}</span>
-            <Button size="sm" variant="secondary" onClick={() => { runtime.newConversation(); setRenameOpen(false); setForwardSource(undefined); }}>
+            <Button size="sm" variant="secondary" onClick={() => { runtime.newConversation(); setDraft(''); setAttachments([]); setRenameOpen(false); setForwardSource(undefined); setActionNotice(undefined); }}>
               {text.t('chatNewConversation')}
             </Button>
           </div>
@@ -329,7 +329,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
                 variant={session.id === runtime.activeSessionId ? 'primary' : 'secondary'}
                 className="w-full justify-start text-left"
                 aria-current={session.id === runtime.activeSessionId ? 'page' : undefined}
-                onClick={() => { runtime.selectSession(session); setSidebarOpen(false); setRenameOpen(false); setForwardSource(undefined); }}
+                onClick={() => { runtime.selectSession(session); setDraft(''); setAttachments([]); setSidebarOpen(false); setRenameOpen(false); setForwardSource(undefined); setActionNotice(undefined); }}
               >
                 <span className="block max-w-full truncate">{session.title}</span>
               </Button>
