@@ -100,7 +100,8 @@ export function useFlowsEditor(locale: Locale, fs?: LocalStoreFs): FlowsEditorCo
   const usageFlows = file && baseStage
     ? file.flows.filter((flow) => flow.stages.some((ref) => ref.stageId === baseStage.id))
     : [];
-  const scopeCanFlow = Boolean(baseStage && draft && canOverrideStageDraft(baseStage, draft));
+  const selectedFlowUsesStage = Boolean(selectedFlow && selectedStage && selectedFlow.stages.some((ref) => ref.stageId === selectedStage.id));
+  const scopeCanFlow = Boolean(baseStage && draft && selectedFlow && !selectedFlow.builtin && selectedFlowUsesStage && canOverrideStageDraft(baseStage, draft));
   const mutationsDisabled = flows.loading || flows.saving || flows.status === 'error';
 
   useEffect(() => {
