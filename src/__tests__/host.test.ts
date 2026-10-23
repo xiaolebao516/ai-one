@@ -299,3 +299,34 @@ describe('host connection states with provider instances (#143)', () => {
     expect(everything).toHaveBeenCalledWith(state('chatgpt#2'));
   });
 });
+
+describe('host bridge title messages with provider instances (#143)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    listenMock.mockReset();
+  });
+
+  it('keeps the old subscription on first-instance messages and offers an instance-aware one', async () => {
+    let emit!: (event: { payload: unknown }) => void;
+    listenMock.mockImplementation(async (_name: string, handler: (event: { payload: unknown }) => void) => {
+      emit = handler;
+      return () => undefined;
+    });
+    const base = vi.fn();
+    const all = vi.fn();
+    await host.bridge.subscribeTitle(base);
+    const baseEmit = emit;
+    await host.bridge.subscribeTitleAll(all);
+    const allEmit = emit;
+
+    const message = (provider?: string) => ({ v: 1, action: 'STATUS', provider });
+    baseEmit({ payload: message('chatgpt') });
+    baseEmit({ payload: message('chatgpt#2') });
+    baseEmit({ payload: message(undefined) });
+    allEmit({ payload: message('chatgpt#2') });
+
+    expect(base).toHaveBeenCalledTimes(2);
+    expect(base).not.toHaveBeenCalledWith(message('chatgpt#2'));
+    expect(all).toHaveBeenCalledWith(message('chatgpt#2'));
+  });
+});

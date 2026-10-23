@@ -104,4 +104,10 @@ export interface BridgeMessage {
   mid?: number;
 }
 
+// What the host emits on bridge://msg: the page engine itself always speaks the base provider
+// (BridgeMessage), but the host stamps the instance key of the page the frame came from.
+export interface BridgeInstanceMessage extends Omit<BridgeMessage, 'provider'> {
+  provider?: ProviderInstance;
+}
+
 export type ExtensionMessage = Omit<BridgeMessage, 'v' | 'bootId' | 'seq' | 'mid'>;

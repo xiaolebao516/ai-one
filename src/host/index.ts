@@ -1,4 +1,4 @@
-import type { AIProvider, BridgeMessage, ProviderInstance, ProviderState } from '../../shared/types';
+import type { AIProvider, BridgeInstanceMessage, BridgeMessage, ProviderInstance, ProviderState } from '../../shared/types';
 import { parseProviderInstance, providerInstanceBase } from '../../shared/providerInstances';
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
@@ -188,8 +188,16 @@ export const host = {
       invoke('provider_set_bounds', { provider, bounds: toBounds(rect) }),
   },
   bridge: {
+    // Existing consumers only ever saw first-instance pages: they still get exactly those messages.
     subscribeTitle: async (handler: (message: BridgeMessage) => void): Promise<() => void> => {
-      const unlisten = await listen<BridgeMessage>('bridge://msg', (event) => handler(event.payload));
+      const unlisten = await listen<BridgeInstanceMessage>('bridge://msg', (event) => {
+        const provider = event.payload.provider;
+        if (provider === undefined || parseProviderInstance(provider)?.n === 1) handler(event.payload as BridgeMessage);
+      });
+      return unlisten;
+    },
+    subscribeTitleAll: async (handler: (message: BridgeInstanceMessage) => void): Promise<() => void> => {
+      const unlisten = await listen<BridgeInstanceMessage>('bridge://msg', (event) => handler(event.payload));
       return unlisten;
     },
     subscribe: async (handler: (message: BridgeMessage) => void): Promise<() => void> =>
