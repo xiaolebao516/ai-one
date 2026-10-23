@@ -5,6 +5,7 @@ import {
   buildConfirmArchivedScript,
   buildConfirmGoneScript,
   buildDeleteScript,
+  buildConfirmScript,
   buildOpenMenuScript,
   createChatGptCleaner,
   normalizeConversationUrl,
@@ -70,6 +71,29 @@ describe('ChatGPT page scripts', () => {
 
     expect(result.ok).toBe(true);
     expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not click an archive confirmation while deleting', () => {
+    window.history.replaceState({}, '', CONVERSATION_PATH);
+    document.body.innerHTML = [
+      '<div role="dialog">',
+      '<button data-testid="confirm-archive-button">Archive</button>',
+      '<button data-testid="confirm-delete-button">Delete</button>',
+      '</div>',
+    ].join('');
+    const archiveButton = document.querySelector('[data-testid="confirm-archive-button"]');
+    const deleteButton = document.querySelector('[data-testid="confirm-delete-button"]');
+    if (!archiveButton || !deleteButton) throw new Error('Test fixture buttons were not created');
+    const archiveClick = vi.fn();
+    const deleteClick = vi.fn();
+    archiveButton.addEventListener('click', archiveClick);
+    deleteButton.addEventListener('click', deleteClick);
+
+    const result = JSON.parse(runPageScript(buildConfirmScript(CONVERSATION_PATH, 'delete'))) as { ok: boolean };
+
+    expect(result.ok).toBe(true);
+    expect(deleteClick).toHaveBeenCalledTimes(1);
+    expect(archiveClick).not.toHaveBeenCalled();
   });
 
   it('opens options and selects archive actions only on the registered path', () => {

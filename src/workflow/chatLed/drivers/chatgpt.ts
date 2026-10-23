@@ -148,9 +148,9 @@ export function buildArchiveScript(path: string): string {
 
 export function buildConfirmScript(path: string, action: 'delete' | 'archive'): string {
   const labelPattern = action === 'delete'
-    ? '/delete|confirm|yes|删除|确认/i'
-    : '/archive|confirm|yes|归档|确认/i';
-  const testIdPattern = action === 'delete' ? '/delete|confirm/i' : '/archive|confirm/i';
+    ? '/delete|remove|删除/i'
+    : '/archive|归档/i';
+  const testIdPattern = action === 'delete' ? '/delete/i' : '/archive/i';
 
   return guardedScript(path, [
     '  const action = ' + JSON.stringify(action) + ';',
