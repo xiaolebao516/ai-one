@@ -7,8 +7,6 @@ import {
   Badge,
   Button,
   Card,
-  Divider,
-  Icon,
   Notice,
   SectionHeader,
   Select,
@@ -140,7 +138,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
   const [activeTab, setActiveTab] = useState('compare');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [draft, setDraft] = useState('');
-  const [presetId, setPresetId] = useState<ChatPresetId>(() => presetForSession(runtime));
+  const presetId = presetForSession(runtime);
   const [expanded, setExpanded] = useState<Set<AIProvider>>(() => new Set());
   const [forwardSource, setForwardSource] = useState<AIProvider>();
   const [forwardTargets, setForwardTargets] = useState<AIProvider[]>([]);
@@ -171,7 +169,6 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
   const choosePreset = (value: string) => {
     if (!(CHAT_PRESET_IDS as readonly string[]).includes(value)) return;
     const next = value as ChatPresetId;
-    setPresetId(next);
     runtime.setPreset(next);
   };
 
@@ -374,7 +371,6 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
                   forwarding={forwardSource === provider}
                   forwardTargets={forwardTargets}
                   forwardNote={forwardNote}
-                  actionNotice={actionNotice}
                   onForwardNote={setForwardNote}
                   onToggleForwardTarget={(target) => setForwardTargets((current) =>
                     current.includes(target) ? current.filter((item) => item !== target) : [...current, target],
@@ -525,7 +521,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
                   }}
                 />
                 <Button size="sm" variant="secondary" disabled={attachmentBusy} loading={attachmentBusy} onClick={() => fileInputRef.current?.click()}>
-                  <Icon name="paperclip" size={14} /> {text.t('chatAttach')}
+                  {text.t('chatAttach')}
                 </Button>
               </div>
               <Button
@@ -554,7 +550,6 @@ interface ReplyCardProps {
   forwarding: boolean;
   forwardTargets: AIProvider[];
   forwardNote: string;
-  actionNotice?: string;
   onForwardNote: (note: string) => void;
   onToggleForwardTarget: (provider: AIProvider) => void;
   onBeginForward: () => void;
