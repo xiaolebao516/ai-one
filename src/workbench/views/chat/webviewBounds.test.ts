@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
-import { createWebviewBoundsSyncController, getVisibleWebviewRect } from './webviewBounds';
+import { clipRectToVisibleArea, createWebviewBoundsSyncController, getVisibleWebviewRect } from './webviewBounds';
 
 function rect(x: number, y: number, width: number, height: number): DOMRectReadOnly {
   const top = y;
@@ -100,5 +100,47 @@ describe('webview bounds', () => {
     controller.reset();
     expect(raf.pending()).toBe(0);
     controller.dispose();
+  });
+});
+
+describe('clipRectToVisibleArea', () => {
+  const box = (left: number, top: number, right: number, bottom: number) =>
+    ({ x: left, y: top, left, top, right, bottom, width: right - left, height: bottom - top, toJSON: () => ({}) }) as DOMRectReadOnly;
+
+  function scrollerWith(scrollBox: DOMRectReadOnly, bar?: DOMRectReadOnly) {
+    const scroller = document.createElement('main');
+    scroller.style.overflowY = 'auto';
+    scroller.getBoundingClientRect = () => scrollBox;
+    if (bar) {
+      const sticky = document.createElement('div');
+      sticky.setAttribute('data-native-occluder', '');
+      sticky.getBoundingClientRect = () => bar;
+      scroller.append(sticky);
+    }
+    const element = document.createElement('div');
+    scroller.append(element);
+    document.body.append(scroller);
+    return { scroller, element };
+  }
+
+  it('cuts the rectangle to the scrolling ancestor', () => {
+    const { scroller, element } = scrollerWith(box(0, 100, 800, 600));
+    const clipped = clipRectToVisibleArea(box(50, 40, 500, 400), element, window);
+    expect([clipped.x, clipped.y, clipped.width, clipped.height]).toEqual([50, 100, 450, 300]);
+    scroller.remove();
+  });
+
+  it('also stays below a sticky bar and becomes empty when fully scrolled away', () => {
+    const { scroller, element } = scrollerWith(box(0, 50, 800, 600), box(0, 50, 800, 120));
+    const below = clipRectToVisibleArea(box(50, 80, 500, 400), element, window);
+    expect(below.y).toBe(120);
+    const gone = clipRectToVisibleArea(box(50, 0, 500, 40), element, window);
+    expect(gone.width * gone.height).toBe(0);
+    scroller.remove();
+  });
+
+  it('leaves the rectangle alone without computed styles (non-DOM windows)', () => {
+    const rect = box(1, 2, 3, 4);
+    expect(clipRectToVisibleArea(rect, document.createElement('div'), {} as unknown as Window)).toBe(rect);
   });
 });

@@ -49,6 +49,7 @@ export function NativeOverlayProvider({ children }: PropsWithChildren) {
  * Register a DOM overlay while it is open so native provider WebViews can be parked off-screen.
  * Registration is effect-owned: toggling open off or unmounting always releases the count.
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function useNativeOverlayGuard(open: boolean): void {
   const store = useContext(NativeOverlayContext);
 
@@ -58,6 +59,7 @@ export function useNativeOverlayGuard(open: boolean): void {
   }, [open, store]);
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useNativeOverlayCount(): number {
   const store = useContext(NativeOverlayContext);
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);

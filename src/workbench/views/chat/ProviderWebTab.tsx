@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef } from 'react';
 import type { AIProvider } from '../../../../shared/types';
 import { host } from '../../../host';
 import { useNativeOverlayCount } from './nativeOverlay';
-import { createWebviewBoundsSyncController, getVisibleWebviewRect } from './webviewBounds';
+import { clipRectToVisibleArea, createWebviewBoundsSyncController, getVisibleWebviewRect } from './webviewBounds';
 
 function makeRect(x: number, y: number, width: number, height: number): DOMRectReadOnly {
   const top = y;
@@ -116,7 +116,7 @@ export function createProviderWebTabController(
   const readRect = (): DOMRectReadOnly => {
     if (!container) return EMPTY_RECT;
     try {
-      return container.getBoundingClientRect();
+      return clipRectToVisibleArea(container.getBoundingClientRect(), container, browserWindow);
     } catch {
       return EMPTY_RECT;
     }

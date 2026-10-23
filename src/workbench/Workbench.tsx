@@ -429,7 +429,7 @@ function SourceBar({ text, data, locale }: { text: WorkbenchText; data: Workbenc
   const notices = prefs.source === 'github' && !github.loading ? repoNotices(current) : [];
   const observed = observedAt(current);
   return (
-    <div className="sticky top-0 z-10 grid gap-v2-xs border-b border-v2-line bg-v2-panel px-v2-page py-v2-sm">
+    <div data-native-occluder className="sticky top-0 z-10 grid gap-v2-xs border-b border-v2-line bg-v2-panel px-v2-page py-v2-sm">
       <div className="flex flex-wrap items-center gap-v2-sm text-v2-meta">
         <SegmentedControl
           idBase="workbench-source"

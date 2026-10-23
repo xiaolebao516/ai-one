@@ -797,7 +797,7 @@ export function useChatRuntime({
     }
     if (request.forwardedFrom) return runSend(request.text, [provider], 'free', { forwardedFrom: request.forwardedFrom, preserveComparison: true });
     return runSend(request.text, request.presetId === 'free' ? [provider] : CHAT_PROVIDERS.filter((candidate) => comparisonTargets.includes(candidate)), request.presetId);
-  }, [activeSession.messages, comparisonTargets, runSend]);
+  }, [activeSession.messages, activeSession.mode, activeSession.presetId, activeSessionId, comparisonTargets, runSend]);
 
   const skipProvider = useCallback((provider: AIProvider) => {
     setSelectedTargets((current) => current.filter((candidate) => candidate !== provider));

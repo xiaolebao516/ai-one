@@ -380,6 +380,12 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
           </div>
 
           <TabPanel idBase="chat-view-tabs" id="compare" active={activeTab === 'compare'} className="min-h-0 flex-1">
+            {currentQuestion ? (
+              <p className="mb-v2-md whitespace-pre-wrap break-words text-v2-body text-v2-ink" data-testid="chat-current-question">
+                <span className="mr-v2-sm font-semibold text-v2-ink-3">{text.t('chatYou')}</span>
+                {currentQuestion}
+              </p>
+            ) : null}
             <div className="grid min-h-0 grid-cols-[repeat(auto-fit,minmax(min(100%,250px),1fr))] gap-v2-md">
               {CHAT_PROVIDERS.map((provider) => (
                 <ReplyCard
@@ -414,7 +420,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
             </div>
           </TabPanel>
           {CHAT_PROVIDERS.map((provider) => (
-            <TabPanel key={provider} idBase="chat-view-tabs" id={provider} active={activeTab === provider} className="min-h-0 flex-1">
+            <TabPanel key={provider} idBase="chat-view-tabs" id={provider} active={activeTab === provider} className="min-h-[max(320px,calc(100vh-520px))] flex-1 flex-col [&:not([hidden])]:flex">
               <ProviderWebTab provider={provider} active={activeTab === provider} />
             </TabPanel>
           ))}

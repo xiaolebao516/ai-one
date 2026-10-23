@@ -90,3 +90,44 @@ export function createWebviewBoundsSyncController(options: WebviewBoundsSyncOpti
 
   return { schedule, flush, reset, dispose };
 }
+
+function intersectRects(a: DOMRectReadOnly, b: { left: number; top: number; right: number; bottom: number }): DOMRectReadOnly {
+  const left = Math.max(a.left, b.left);
+  const top = Math.max(a.top, b.top);
+  const right = Math.min(a.right, b.right);
+  const bottom = Math.min(a.bottom, b.bottom);
+  const width = Math.max(0, right - left);
+  const height = Math.max(0, bottom - top);
+  return { x: left, y: top, left, top, right: left + width, bottom: top + height, width, height, toJSON: () => ({}) } as DOMRectReadOnly;
+}
+
+const CLIPPING_OVERFLOW = /(auto|scroll|hidden|clip)/;
+
+/**
+ * A native WebView cannot be clipped by CSS: it paints over whatever is above the container. So the
+ * rectangle sent to the host is the container's rectangle cut down to what its scrolling ancestors
+ * show, minus the bottom edge of any `[data-native-occluder]` element (a sticky bar inside the
+ * scroller). Fully clipped means an empty rectangle, which callers treat as "not visible".
+ */
+export function clipRectToVisibleArea(
+  rect: DOMRectReadOnly,
+  element: Element,
+  view: Pick<Window, 'getComputedStyle'>,
+): DOMRectReadOnly {
+  if (typeof view.getComputedStyle !== 'function') return rect;
+  let clipped = rect;
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const style = view.getComputedStyle(node);
+    if (!CLIPPING_OVERFLOW.test(style.overflowY) && !CLIPPING_OVERFLOW.test(style.overflowX)) continue;
+    const box = node.getBoundingClientRect();
+    clipped = intersectRects(clipped, box);
+    for (const occluder of node.querySelectorAll('[data-native-occluder]')) {
+      const bar = occluder.getBoundingClientRect();
+      if (bar.width <= 0 || bar.height <= 0) continue;
+      if (bar.bottom > clipped.top && bar.top <= clipped.top) {
+        clipped = intersectRects(clipped, { left: clipped.left, top: bar.bottom, right: clipped.right, bottom: clipped.bottom });
+      }
+    }
+  }
+  return clipped;
+}
