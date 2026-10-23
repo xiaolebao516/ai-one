@@ -72,8 +72,15 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
     setRoute(next);
   }, []);
   useEffect(() => {
-    if (fellBack && data.health !== 'loading') go({ view: 'tasks' });
-  }, [fellBack, data.health, go]);
+    if (!fellBack || data.health === 'loading') return;
+    let disposed = false;
+    Promise.resolve().then(() => {
+      if (!disposed) setRoute({ view: 'tasks' });
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [fellBack, data.health]);
   const chatRuntime = useChatRuntime({ enabled: chatRuntimeEnabled, locale, isDesktop });
   const openTask = (task: HudTask) => go({ view: 'task', taskId: task.id });
 
