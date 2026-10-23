@@ -119,10 +119,11 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
     }
 
     if (action.kind === 'remove-stage') {
-      if (action.selection.kind !== 'flow') return;
-      const flow = source.flows.find((item) => item.id === action.selection.flowId);
-      if (!flow || flow.builtin || !flow.stages[action.selection.index]) return;
-      const nextFlow = removeStageRef(flow, action.selection.index);
+      const removal = action.selection;
+      if (removal.kind !== 'flow') return;
+      const flow = source.flows.find((item) => item.id === removal.flowId);
+      if (!flow || flow.builtin || !flow.stages[removal.index]) return;
+      const nextFlow = removeStageRef(flow, removal.index);
       const next = { ...source, flows: source.flows.map((item) => item.id === flow.id ? nextFlow : item) };
       context.flows.updateFile(() => next);
       context.setSelection(null);
@@ -273,11 +274,12 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
     const copy = allIds.includes(copied.id) ? { ...copied, id: uniqueFlowEditorId('stage-copy', allIds) } : copied;
     let next: FlowsFile = { ...context.file, stages: [...context.file.stages, copy] };
     let nextSelection: StageSelection = { kind: 'library', stageId: copy.id };
-    if (context.selection?.kind === 'flow') {
-      const flow = context.file.flows.find((item) => item.id === context.selection?.flowId);
+    const currentSelection = context.selection;
+    if (currentSelection?.kind === 'flow') {
+      const flow = context.file.flows.find((item) => item.id === currentSelection.flowId);
       if (flow && !flow.builtin) {
-        next = replaceFlowStage(next, flow.id, context.selection.index, copy.id);
-        nextSelection = { kind: 'flow', flowId: flow.id, index: context.selection.index };
+        next = replaceFlowStage(next, flow.id, currentSelection.index, copy.id);
+        nextSelection = { kind: 'flow', flowId: flow.id, index: currentSelection.index };
       }
     }
     context.flows.updateFile(() => next);

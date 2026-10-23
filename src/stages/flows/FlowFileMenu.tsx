@@ -6,8 +6,8 @@ import {
   planImport,
   type FlowsFile,
   type ImportPlan,
-  type ImportResolution,
 } from '../flowModel';
+import type { ImportResolution } from '../flowEditor';
 import { Button, Card, Notice } from '../../ui/v2';
 import type { FlowsText } from '../../workbench/views/flowsText';
 

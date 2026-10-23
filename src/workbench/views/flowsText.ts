@@ -1,5 +1,4 @@
 import type { Locale } from '../../i18n/resolve';
-import { hudLocale } from '../../ui/taskHudModel';
 
 const EN = {
   collabSolo: 'Solo',
@@ -371,7 +370,11 @@ export interface FlowsText {
   t: (key: Key, values?: Record<string, string | number>) => string;
 }
 
+export function isChineseFlowsLocale(locale: Locale): boolean {
+  return locale.toLowerCase().startsWith('zh');
+}
+
 export function flowsText(locale: Locale): FlowsText {
-  const zh = locale.toLowerCase().startsWith('zh');
+  const zh = isChineseFlowsLocale(locale);
   return { zh, t: (key, values) => fill((zh ? ZH : EN)[key], values) };
 }

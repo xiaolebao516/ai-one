@@ -58,7 +58,7 @@ const FAIL_POLICIES: Array<{ value: StageDef['onFail']; key: 'failStopAndAsk' | 
   { value: 'escalate-to-user', key: 'failEscalate' },
 ];
 
-function label(stage: StageDef, locale: Locale): string {
+function label(stage: { name: string; nameEn?: string }, locale: Locale): string {
   return isChineseFlowsLocale(locale) ? stage.name : stage.nameEn ?? stage.name;
 }
 
