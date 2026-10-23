@@ -216,7 +216,7 @@ export function StageEditor({
         <textarea id="flows-stage-note" rows={3} value={draft.note ?? ''} disabled={effectiveReadOnly || disabled} placeholder={text.t('notePlaceholder')} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => change({ note: event.target.value || undefined })} className={cx(textInputClass(), 'h-auto py-v2-sm')} />
       </div>
 
-      {selection.kind === 'flow' && usageFlows.length > 1 ? (
+      {selection.kind === 'flow' && usageFlows.length > 1 && scopePrompt ? (
         <Notice tone="unknown">
           <p>{text.t('sharedStage', { n: usageFlows.length })}</p>
           <p className="mt-1">{text.t('sharedStageHint')}</p>
