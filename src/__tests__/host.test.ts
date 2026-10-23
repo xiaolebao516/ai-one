@@ -259,3 +259,43 @@ describe('host read-only GitHub bindings (#51)', () => {
     await expect(host.github.get('user')).rejects.toThrow(new Error('gh query timed out; snapshot is incomplete.'));
   });
 });
+
+describe('host connection states with provider instances (#143)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    listenMock.mockReset();
+  });
+
+  const state = (provider: string) => ({ provider, webview: 'loaded', dom: 'ready', login: 'logged_in' });
+
+  it('gives existing consumers only the first instance of each provider, and instance-aware code everything', async () => {
+    const all = [state('chatgpt'), state('chatgpt#2'), state('claude')];
+    invokeMock.mockResolvedValueOnce(all);
+    await expect(host.connections.get()).resolves.toEqual([state('chatgpt'), state('claude')]);
+    invokeMock.mockResolvedValueOnce(all);
+    await expect(host.connections.getAll()).resolves.toEqual(all);
+    expect(invokeMock).toHaveBeenLastCalledWith('connections_get');
+  });
+
+  it('forwards update events by the same rule', async () => {
+    let emit!: (event: { payload: unknown }) => void;
+    listenMock.mockImplementation(async (_name: string, handler: (event: { payload: unknown }) => void) => {
+      emit = handler;
+      return () => undefined;
+    });
+    const base = vi.fn();
+    const everything = vi.fn();
+    await host.connections.onUpdate(base);
+    const baseEmit = emit;
+    await host.connections.onUpdateAll(everything);
+    const allEmit = emit;
+
+    baseEmit({ payload: state('chatgpt') });
+    baseEmit({ payload: state('chatgpt#2') });
+    allEmit({ payload: state('chatgpt#2') });
+
+    expect(base).toHaveBeenCalledTimes(1);
+    expect(base).toHaveBeenCalledWith(state('chatgpt'));
+    expect(everything).toHaveBeenCalledWith(state('chatgpt#2'));
+  });
+});

@@ -1,5 +1,5 @@
 import type { AIProvider, BridgeMessage, ProviderInstance, ProviderState } from '../../shared/types';
-import { providerInstanceBase } from '../../shared/providerInstances';
+import { parseProviderInstance, providerInstanceBase } from '../../shared/providerInstances';
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -29,6 +29,8 @@ export interface ProviderStopResult {
 
 // Fail closed at the host as well if the stop callback fails or the page engine is unavailable.
 // Only a successful explicit provider reload clears the host-side latch.
+const isBaseProviderState = (state: ProviderState<ProviderInstance>): state is ProviderState => parseProviderInstance(state.provider)?.n === 1;
+
 const providersWithUnconfirmedStop = new Set<ProviderInstance>();
 
 const STOP_ENGINE_JS =
@@ -166,9 +168,18 @@ export const host = {
     },
   },
   connections: {
-    get: (): Promise<ProviderState[]> => invoke('connections_get'),
+    // Existing consumers key states by AIProvider and never show extra instances: they get only the
+    // first instance of each provider. Instance-aware code uses getAll / onUpdateAll.
+    get: async (): Promise<ProviderState[]> => (await invoke<ProviderState<ProviderInstance>[]>('connections_get')).filter(isBaseProviderState),
+    getAll: (): Promise<ProviderState<ProviderInstance>[]> => invoke('connections_get'),
     onUpdate: async (handler: (state: ProviderState) => void): Promise<() => void> => {
-      const unlisten = await listen<ProviderState>('connections://update', (event) => handler(event.payload));
+      const unlisten = await listen<ProviderState<ProviderInstance>>('connections://update', (event) => {
+        if (isBaseProviderState(event.payload)) handler(event.payload);
+      });
+      return unlisten;
+    },
+    onUpdateAll: async (handler: (state: ProviderState<ProviderInstance>) => void): Promise<() => void> => {
+      const unlisten = await listen<ProviderState<ProviderInstance>>('connections://update', (event) => handler(event.payload));
       return unlisten;
     },
   },

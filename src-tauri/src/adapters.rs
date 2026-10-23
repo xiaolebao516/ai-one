@@ -146,6 +146,8 @@ pub async fn open_adapter_issue(
     body: String,
 ) -> Result<(), String> {
     crate::webviews::ensure_control_webview(&webview)?;
+    // Reject malformed or out-of-range instance keys before any external action.
+    parse_provider_instance(&provider)?;
     let title = format!("[adapter-broken] {provider}");
     let mut url =
         tauri::Url::parse("https://github.com/TED-H-com/multi-ai-chat-desktop/issues/new")
