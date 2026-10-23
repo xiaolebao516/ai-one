@@ -102,7 +102,7 @@ export function StageEditor({
     );
   }
 
-  const effectiveReadOnly = readOnly || stage.builtin || Boolean(selectedFlow?.builtin);
+  const effectiveReadOnly = readOnly || stage.builtin || (selection.kind === 'flow' && Boolean(selectedFlow?.builtin));
   const references = usageFlows.map((flow) => label(flow, locale));
   const canDelete = selection.kind === 'library' && !stage.builtin && references.length === 0;
   const unsupportedOverride = selection.kind === 'flow' && usageFlows.length > 1 && !canOverrideStageDraft(file.stages.find((item) => item.id === stage.id) ?? stage, draft);
@@ -239,7 +239,7 @@ export function StageEditor({
         <Notice tone="unknown" title={text.t('deleteConfirm')}>
           <p>{text.t('confirmDeleteStage')}</p>
           <div className="mt-v2-sm flex flex-wrap gap-v2-sm">
-            <Button size="sm" variant="danger" onClick={onConfirmDelete}>{text.t('delete')}</Button>
+            <Button size="sm" variant="secondary" onClick={onConfirmDelete}>{text.t('delete')}</Button>
             <Button size="sm" variant="ghost" onClick={onCancelDelete}>{text.t('cancel')}</Button>
           </div>
         </Notice>
