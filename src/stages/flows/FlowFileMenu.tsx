@@ -142,6 +142,13 @@ export function FlowFileMenu({ file, flowId, text, fs, disabled = false, onImpor
         return;
       }
 
+      if (parsed.file.flows.length === 0 && parsed.file.stages.length === 0) {
+        setFeedback(text.t('importNone'));
+        setFeedbackTone('block');
+        setPending(null);
+        setOpen(true);
+        return;
+      }
       const plan = planImport(file, parsed.file);
       setPending({ incoming: parsed.file, plan, choice: '' });
       setFeedback(undefined);
