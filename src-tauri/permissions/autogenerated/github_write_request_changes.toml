@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-github-write-request-changes"
+description = "Enables the github_write_request_changes command without any pre-configured scope."
+commands.allow = ["github_write_request_changes"]
+
+[[permission]]
+identifier = "deny-github-write-request-changes"
+description = "Denies the github_write_request_changes command without any pre-configured scope."
+commands.deny = ["github_write_request_changes"]
