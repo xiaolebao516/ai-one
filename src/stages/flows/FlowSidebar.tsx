@@ -43,7 +43,6 @@ export function FlowSidebar({
             <li key={flow.id}>
               <button
                 type="button"
-                disabled={disabled}
                 aria-current={selectedFlowId === flow.id ? 'page' : undefined}
                 onClick={() => onSelectFlow(flow.id)}
                 className={cx(
@@ -72,7 +71,6 @@ export function FlowSidebar({
                 <li key={stage.id}>
                   <button
                     type="button"
-                    disabled={disabled}
                     aria-current={active ? 'page' : undefined}
                     onClick={() => onSelectLibraryStage(stage.id)}
                     className={cx(
@@ -142,7 +140,7 @@ export function CompactFlowSelectors({
         <Button size="sm" variant="secondary" disabled={disabled} onClick={onCreateStage}>＋ {text.t('createStage')}</Button>
       </div>
       <div className="grid grid-cols-1 gap-v2-sm min-[700px]:grid-cols-2">
-        <Select id="flows-compact-flow" label={text.t('myFlows')} options={flowOptions} value={selectedFlowId} onChange={onSelectFlow} disabled={disabled} className="w-full" />
+        <Select id="flows-compact-flow" label={text.t('myFlows')} options={flowOptions} value={selectedFlowId} onChange={onSelectFlow} className="w-full" />
         <Select id="flows-compact-stage" label={text.t('stageLibrary')} options={stageOptions} value={librarySelection} onChange={onSelectLibraryStage} disabled={disabled} className="w-full" />
       </div>
     </div>
