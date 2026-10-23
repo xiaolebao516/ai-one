@@ -145,7 +145,7 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
 
   if (!selected) {
     return (
-      <div className="mx-auto grid max-w-[1180px] gap-v2-lg p-v2-page">
+      <div className="mx-auto grid max-w-[1180px] grid-cols-[minmax(0,1fr)] gap-v2-lg p-v2-page">
         <header>
           <h1 className="text-[24px] font-semibold leading-tight text-v2-ink">{text.t('chatLedPageTitle')}</h1>
           <p className="mt-v2-xs text-v2-meta text-v2-ink-2">{text.t('chatLedPageIntro')}</p>
@@ -182,7 +182,7 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
             </div>
           </div>
         </Card>
-        <section aria-labelledby="chatled-history" className="grid gap-v2-sm">
+        <section aria-labelledby="chatled-history" className="grid grid-cols-[minmax(0,1fr)] gap-v2-sm">
           <SectionHeader id="chatled-history" title={text.t('chatLedHistory')} />
           {runs.length === 0 ? (
             <p className="text-v2-meta text-v2-ink-2">{text.t('chatLedHistoryEmpty')}</p>
@@ -278,10 +278,12 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
       if (!persistedRef.current) throw new Error('Cleanup completion checkpoint could not be saved.');
     } catch (cause) {
       // A failed checkpoint or setup step leaves every unconfirmed conversation manual-only.
-      setError(cause instanceof Error ? cause.message : String(cause));
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setError(message);
       apply((run) => interruptCleanup(
         run.cleanupRunning ? run : { ...run, cleanupRunning: true },
         Date.now(),
+        message,
       ));
     } finally {
       await host.provider.park('chatgpt', offscreenBounds()).catch(() => undefined);

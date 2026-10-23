@@ -14,6 +14,7 @@ import {
   failProvider,
   finishSessionInitialization,
   hasPendingInitialization,
+  interruptCleanup,
   isRunActive,
   isTerminal,
   pauseRun,
@@ -83,6 +84,20 @@ describe('chat-led state machine', () => {
     expect(violation.phase).toBe('awaiting-user');
     expect(isRunActive(violation)).toBe(true);
     expect(isRunActive(stopRun(violation, 13))).toBe(false);
+  });
+
+  it('records why a cleanup stopped in the stored manual results', () => {
+    const run = registerConversation(
+      { ...start(), phase: 'finished', cleanupRunning: true, cleanupResults: [] },
+      { provider: 'chatgpt', url: 'https://chatgpt.com/c/abc', createdByAiOne: true, registrationStatus: 'confirmed' },
+      12,
+    );
+
+    const reasoned = interruptCleanup(run, 13, 'provider page   did not become ready');
+    expect(reasoned.cleanupRunning).toBe(false);
+    expect(reasoned.cleanupResults?.[0]).toMatchObject({ outcome: 'manual' });
+    expect(reasoned.cleanupResults?.[0].note).toContain('(provider page did not become ready)');
+    expect(interruptCleanup(run, 13).cleanupResults?.[0].note).toContain('was interrupted');
   });
 
   it('keeps a pending creation lock until registration or explicit manual resolution', () => {

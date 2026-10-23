@@ -477,16 +477,21 @@ export function finishCleanup(run: ChatLedRun, now: number): ChatLedRun {
  * registered conversation without a confirmed result is marked manual, including the one that
  * was in flight when the app stopped.
  */
-export function interruptCleanup(run: ChatLedRun, now: number): ChatLedRun {
+export function interruptCleanup(run: ChatLedRun, now: number, reason?: string): ChatLedRun {
   if (!run.cleanupRunning) return run;
   const done = new Set((run.cleanupResults ?? []).map((r) => r.provider + '\n' + (r.url ?? '')));
+  // A reason (setup or checkpoint failure) is kept in the stored record: the UI error disappears on reload.
+  const short = reason?.replace(/\s+/g, ' ').trim().slice(0, 160);
+  const note = short
+    ? `Cleanup stopped before this conversation was confirmed (${short}); check it by hand.`
+    : 'Cleanup was interrupted before this conversation was confirmed; check it by hand.';
   const rest: CleanupItemResult[] = run.conversations
     .filter((c) => !done.has(c.provider + '\n' + c.url))
     .map((c) => ({
       provider: c.provider,
       url: c.url,
       outcome: 'manual' as const,
-      note: 'Cleanup was interrupted before this conversation was confirmed; check it by hand.',
+      note,
     }));
   return { ...run, cleanupRunning: false, cleanupResults: [...(run.cleanupResults ?? []), ...rest], updatedAt: now };
 }
