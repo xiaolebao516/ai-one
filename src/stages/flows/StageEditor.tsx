@@ -138,12 +138,12 @@ export function StageEditor({
 
       <div className="grid gap-v2-xs">
         <label className={fieldLabelClass()} htmlFor="flows-stage-name">{text.t('stageName')}</label>
-        <input id="flows-stage-name" className={textInputClass()} value={draft.name} disabled={effectiveReadOnly || disabled} onChange={(event: ChangeEvent<HTMLInputElement>) => change({ name: event.target.value, nameEn: draft.nameEn && event.target.value !== draft.name ? undefined : draft.nameEn })} />
+        <input id="flows-stage-name" className={textInputClass()} value={locale.toLowerCase().startsWith('zh') ? draft.name : draft.nameEn ?? draft.name} disabled={effectiveReadOnly || disabled} onChange={(event: ChangeEvent<HTMLInputElement>) => change(locale.toLowerCase().startsWith('zh') ? { name: event.target.value, nameEn: draft.nameEn && event.target.value !== draft.name ? undefined : draft.nameEn } : { nameEn: event.target.value })} />
       </div>
 
       <div className="grid gap-v2-xs">
         <label className={fieldLabelClass()} htmlFor="flows-stage-command">{text.t('command')}</label>
-        <input id="flows-stage-command" className={textInputClass()} value={draft.command ?? ''} disabled={effectiveReadOnly || disabled} placeholder="/build" onChange={(event: ChangeEvent<HTMLInputElement>) => change({ command: event.target.value || undefined })} />
+        <input id="flows-stage-command" className={textInputClass()} value={draft.command ?? ''} disabled={effectiveReadOnly || disabled} placeholder="build" onChange={(event: ChangeEvent<HTMLInputElement>) => change({ command: event.target.value || undefined })} />
       </div>
 
       <div className="grid gap-v2-xs">
