@@ -485,6 +485,23 @@ describe('host send with outbox draining (#143)', () => {
     await host.provider.reload('chatgpt#3');
   });
 
+  it('reconnect does not release the unknown-send quarantine (the host may not reload the page), reload does', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('provider eval callback timed out'));
+    await expect(host.provider.send('chatgpt#2', 'A', { drainOutbox: true })).rejects.toThrow(/drain result unknown/);
+
+    invokeMock.mockResolvedValue(undefined);
+    await host.provider.reconnect('chatgpt#2');
+    invokeMock.mockResolvedValue(JSON.stringify({ sent: true }));
+    const before = invokeMock.mock.calls.length;
+    await expect(host.provider.send('chatgpt#2', 'B', { drainOutbox: true })).rejects.toThrow(/reload provider page/);
+    expect(invokeMock.mock.calls.length).toBe(before);
+
+    invokeMock.mockResolvedValue(undefined);
+    await host.provider.reload('chatgpt#2');
+    invokeMock.mockResolvedValue(JSON.stringify({ sent: true }));
+    await expect(host.provider.send('chatgpt#2', 'C', { drainOutbox: true })).resolves.toBeUndefined();
+  });
+
   it('an explicit sent:false is the only result that does not quarantine', async () => {
     invokeMock.mockResolvedValueOnce(JSON.stringify({ sent: false, reason: 'expired' }));
     await expect(host.provider.send('chatgpt#3', 'A', { drainOutbox: true })).rejects.toThrow(/could not be drained \(expired\)/);

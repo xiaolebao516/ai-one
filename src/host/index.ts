@@ -181,7 +181,8 @@ const providerApi = {
   reconnect: async (provider: ProviderInstance): Promise<void> => {
     await invoke('provider_reload', { provider, reconnect: true });
     providersWithUnconfirmedStop.delete(provider);
-    providersWithUnknownSend.delete(provider);
+    // Not providersWithUnknownSend: for providers other than Grok the host accepts reconnect without
+    // reloading the page, so the old page (and a late reply in it) may still be there. Only reload() clears it.
   },
   newSession: (provider: ProviderInstance): Promise<void> => invoke('provider_new_session', { provider }),
 };
