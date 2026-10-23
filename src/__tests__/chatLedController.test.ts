@@ -4,6 +4,7 @@ import type { ChatLedRun } from '../workflow/chatLed/types';
 import { loadRuns, saveRunChecked, type ChatLedStorage } from '../workflow/chatLed/store';
 import {
   CHAT_LED_INIT_SETTLE_TIMEOUT_MS,
+  CHAT_LED_FORWARD_TIMEOUT_MS,
   ChatLedController,
   type ChatLedEnv,
 } from '../workflow/chatLed/controller';
@@ -190,21 +191,33 @@ describe('ChatLedController', () => {
     expect(run.conversations.every((c) => c.createdByAiOne)).toBe(true);
   });
 
-  it('stops on a protocol violation without forwarding anything', async () => {
-    const { env, calls } = makeEnv({ chatgpt: ['I think we should ask claude to review it.'] });
+  it('automatically reminds twice and stops after a third recoverable violation', async () => {
+    const { env, calls } = makeEnv({ chatgpt: ['no fence', 'still no fence', 'again no fence'] });
     const controller = await create(env);
     await controller.start();
     const run = controller.getRun();
     expect(run.phase).toBe('awaiting-user');
-    expect(run.stop).toMatchObject({ type: 'protocol-violation' });
+    expect(run.stop).toMatchObject({ type: 'protocol-violation', violation: { code: 'no-directive' } });
+    expect(run.autoReminderStreak).toBe(2);
+    expect(run.coordinatorReplies.slice(0, 2).every((r) => r.autoReminder?.includes('顶层指令'))).toBe(true);
     expect(run.forwards).toHaveLength(0);
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(3);
   });
 
-  it('remind() continues after a violation', async () => {
-    const { env, calls } = makeEnv({ chatgpt: ['no fence here', DONE('ok')] });
+  it('automatically recovers from a format error without requiring a click', async () => {
+    const { env, calls } = makeEnv({ chatgpt: ['bad format', DONE('recovered')] });
     const controller = await create(env);
     await controller.start();
+    expect(controller.getRun().phase).toBe('finished');
+    expect(controller.getRun().coordinatorReplies[0].autoReminder).toBeDefined();
+    expect(calls).toHaveLength(2);
+  });
+
+  it('manual remind() still works for a non-recoverable violation', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [SEND(['not-a-provider'], 'bad'), DONE('ok')] });
+    const controller = await create(env);
+    await controller.start();
+    expect(calls).toHaveLength(1);
     await controller.remind();
     expect(controller.getRun().phase).toBe('finished');
     expect(calls).toHaveLength(2);
@@ -811,5 +824,77 @@ describe('ChatLedController', () => {
       registrationStatus: 'manual',
     }));
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('chat-led parallel deadlines', () => {
+  it('forwards concurrently, settles one timeout, and returns the successful target response', async () => {
+    vi.useFakeTimers();
+    try {
+      const { env, calls } = makeEnv({ chatgpt: [] });
+      env.send = vi.fn(async (provider: AIProvider, text: string) => {
+        calls.push({ provider, text });
+        if (provider === 'chatgpt') {
+          return calls.filter(c => c.provider === 'chatgpt').length === 1
+            ? SEND(['claude', 'gemini'], 'parallel') : DONE('complete');
+        }
+        if (provider === 'claude') return new Promise<string>(() => undefined);
+        return 'Gemini success';
+      });
+      const controller = await create(env);
+      const started = controller.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(calls.some(c => c.provider === 'claude')).toBe(true);
+      expect(calls.some(c => c.provider === 'gemini')).toBe(true);
+      expect(controller.getRun().forwards.find(f => f.to === 'gemini')?.status).toBe('done');
+      await vi.advanceTimersByTimeAsync(CHAT_LED_FORWARD_TIMEOUT_MS);
+      await started;
+      const run = controller.getRun();
+      expect(run.phase).toBe('finished');
+      expect(run.forwards.find(f => f.to === 'claude')?.status).toBe('timed-out');
+      expect(run.forwards.find(f => f.to === 'gemini')?.reply).toBe('Gemini success');
+      const feedback = calls.filter(c => c.provider === 'chatgpt')[1]?.text ?? '';
+      expect(feedback).toContain('Gemini success');
+      expect(feedback).toContain('来自 Claude 的转发失败');
+      expect(feedback).not.toContain('来自 Claude 的完整回复');
+      expect(env.stop).toHaveBeenCalledWith('claude');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns all target failures rather than freezing the coordinator', async () => {
+    const { env, calls } = makeEnv({
+      chatgpt: [SEND(['claude', 'gemini'], 'parallel'), DONE('handled')],
+      claude: [new Error('Claude failed')],
+      gemini: [new Error('Gemini failed')],
+    });
+    const controller = await create(env);
+    await controller.start();
+    expect(controller.getRun().phase).toBe('finished');
+    expect(controller.getRun().forwards.map(f => f.status)).toEqual(['failed', 'failed']);
+    expect(calls[3].text).toContain('Claude failed');
+    expect(calls[3].text).toContain('Gemini failed');
+  });
+
+  it('does not automatically send while paused and cancels the next reminder on stop', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [] });
+    let release: () => void = () => undefined;
+    env.send = vi.fn(async (provider: AIProvider, text: string) => {
+      calls.push({ provider, text });
+      if (calls.length === 1) return new Promise<string>(resolve => { release = () => resolve('not a directive'); });
+      return DONE('never');
+    });
+    const controller = await create(env);
+    const started = controller.start();
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    controller.pause();
+    release();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toHaveLength(1);
+    await controller.stop();
+    await started;
+    expect(calls).toHaveLength(1);
   });
 });

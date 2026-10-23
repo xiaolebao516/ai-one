@@ -70,7 +70,7 @@ const PHASE_TONE: Record<RunPhase, V2StatusTone> = {
   stopped: "block",
 };
 
-const FORWARD_STATUS_COPY: Record<ForwardStatus, WorkbenchTextKey> = {
+const FORWARD_STATUS_COPY: Record<Exclude<ForwardStatus, 'timed-out'>, WorkbenchTextKey> = {
   queued: "chatLedStatusQueued",
   sending: "chatLedStatusSending",
   waiting: "chatLedStatusWaiting",
@@ -85,6 +85,7 @@ const FORWARD_STATUS_TONE: Record<ForwardStatus, V2StatusTone> = {
   waiting: "you",
   done: "done",
   failed: "block",
+  "timed-out": "block",
   cancelled: "paused",
 };
 
@@ -224,6 +225,9 @@ export function ChatLedView({
                         <summary className="cursor-pointer text-v2-meta font-semibold text-v2-ink">
                           {text.t("chatLedCoordinatorReply")}
                         </summary>
+                        {reply.autoReminder !== undefined ? (
+                          <p className="mt-v2-xs text-v2-meta text-v2-ink-2">自动催促 · {reply.autoReminder}</p>
+                        ) : null}
                         <pre className="mt-v2-xs max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-v2-sm bg-v2-sunken p-v2-sm font-v2-mono text-v2-micro text-v2-ink-2">
                           {reply.text}
                         </pre>
@@ -488,7 +492,7 @@ function ForwardRow({
           })}
         </span>
         <Badge tone={FORWARD_STATUS_TONE[forward.status]}>
-          {text.t(FORWARD_STATUS_COPY[forward.status])}
+          {forward.status === "timed-out" ? (locale === "zh" ? "超时" : "Timed out") : text.t(FORWARD_STATUS_COPY[forward.status])}
         </Badge>
       </div>
       <details className="min-w-0">

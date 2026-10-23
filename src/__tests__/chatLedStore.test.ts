@@ -108,3 +108,17 @@ describe('persistence failures are visible and pending sessions recover', () => 
     expect(isRunActive(loaded)).toBe(false);
   });
 });
+
+describe('v1 run compatibility', () => {
+  it('loads records without mode or auto-reminder fields', () => {
+    const storage = memoryStorage();
+    const legacy = stoppedRunWithTwoConversations();
+    delete legacy.mode;
+    delete legacy.autoReminderStreak;
+    storage.setItem(CHAT_LED_STORAGE_KEY, JSON.stringify([legacy]));
+    const [loaded] = loadRuns(storage);
+    expect(loaded.id).toBe(legacy.id);
+    expect(loaded.mode ?? 'general').toBe('general');
+    expect(loaded.autoReminderStreak ?? 0).toBe(0);
+  });
+});

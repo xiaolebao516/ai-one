@@ -21,6 +21,7 @@ import {
   registerConversation,
   resumeAfterStop,
   resumeRun,
+  scheduleAutoReminder,
   settledFeedbackItems,
   setAvailableProviders,
   setInitializationPending,
@@ -310,5 +311,45 @@ describe('chat-led state machine', () => {
     expect(closed.closed).toEqual({ at: 13, exportedMarkdown: true });
     expect(isTerminal(closed)).toBe(true);
     expect(closeRun(closed, false, 14)).toBe(closed);
+  });
+});
+
+describe('automatic protocol reminders', () => {
+  it('retries each recoverable violation twice, respects the round limit and resets after sending', () => {
+    for (const code of ['no-directive', 'invalid-json', 'multiple-directives', 'invalid-shape'] as const) {
+      const raw = code === 'no-directive' ? 'plain reply' :
+        code === 'invalid-json' ? block('ai-one-send', '{broken') :
+        code === 'multiple-directives' ? block('ai-one-done', '{"summary":"ok"}') + '\n' + block('ai-one-done', '{"summary":"ok"}') :
+        block('ai-one-send', '{"to":[],"message":"bad"}');
+      let run = applyCoordinatorReply(start(), raw, 30).run;
+      run = scheduleAutoReminder(run, 'remind', 31);
+      expect(run.phase).toBe('coordinator-thinking');
+      expect(run.autoReminderStreak).toBe(1);
+      expect(run.coordinatorReplies[0].autoReminder).toBe('remind');
+      run = applyCoordinatorReply(run, raw, 32).run;
+      run = scheduleAutoReminder(run, 'remind again', 33);
+      expect(run.autoReminderStreak).toBe(2);
+      run = applyCoordinatorReply(run, raw, 34).run;
+      expect(scheduleAutoReminder(run, 'not sent', 35)).toBe(run);
+      const sent = applyCoordinatorReply(resumeAfterStop(run, 36), sendToClaude('different task'), 37).run;
+      expect(sent.autoReminderStreak).toBe(0);
+    }
+    const limited = applyCoordinatorReply(start(makeRun(1)), 'plain reply', 40).run;
+    expect(scheduleAutoReminder(limited, 'never', 41)).toBe(limited);
+  });
+
+  it('does not remind on non-recoverable violations, a pause, or a stopped run', () => {
+    const unknown = applyCoordinatorReply(start(), block('ai-one-send', '{"to":"unreal","message":"task"}'), 12).run;
+    expect(scheduleAutoReminder(unknown, 'never', 13)).toBe(unknown);
+    const violated = applyCoordinatorReply(start(), 'plain reply', 14).run;
+    expect(scheduleAutoReminder({ ...violated, phase: 'paused' }, 'never', 15).phase).toBe('paused');
+    expect(scheduleAutoReminder(stopRun(violated, 16), 'never', 17).phase).toBe('stopped');
+  });
+
+  it('settles timeouts as failures and blocks a late successful overwrite', () => {
+    const forwarded = applyCoordinatorReply(start(), sendToClaude(), 12).run;
+    const timed = updateForward(forwarded, 'r1-claude', { status: 'timed-out', error: 'timeout' }, 13);
+    expect(settledFeedbackItems(timed, 1)?.[0]).toMatchObject({ error: 'timeout' });
+    expect(updateForward(timed, 'r1-claude', { status: 'done', reply: 'late' }, 14)).toBe(timed);
   });
 });

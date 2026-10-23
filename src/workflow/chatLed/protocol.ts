@@ -178,6 +178,7 @@ export function buildIntroPrompt(input: {
   coordinator: AIProvider;
   available: readonly { provider: AIProvider; label: string }[];
   roundLimit: number;
+  mode?: 'general' | 'repo' | 'discuss';
 }): string {
   const fence = String.fromCharCode(96).repeat(3);
   const providers = input.available.length > 0
@@ -185,7 +186,7 @@ export function buildIntroPrompt(input: {
     : '（当前没有可转发的 AI）';
   const exampleTarget = input.available[0]?.provider ?? 'claude';
 
-  return [
+  const parts = [
     '你是本次任务的协调者，provider 标识为 ' + input.coordinator + '。请根据用户目标组织其他 AI 协作，并在收到完整回复后继续判断。',
     '可转发的 AI 列表：' + providers + '。to 字段必须使用列表中的 provider 标识，不要使用显示名称。',
     '需要转发时，输出且只输出一个如下格式的围栏块；围栏内部必须是严格 JSON：',
@@ -200,7 +201,13 @@ export function buildIntroPrompt(input: {
     '不要在同一回复里放两个 ai-one 围栏块。不要用 ai-one 围栏展示示例或引用内容。普通文字不会触发转发；只有上述顶层围栏块会被识别。',
     '最多执行 ' + input.roundLimit + ' 轮转发；收到第 ' + (input.roundLimit + 1) + ' 条协调者回复时会暂停并交由用户决定。完成时必须使用 ai-one-done 围栏，不要只用自然语言宣告完成。',
     '用户任务原文如下，请保留其目标与约束：\n\n' + input.goal,
-  ].join('\n\n');
+  ];
+  if (input.mode === 'repo') {
+    parts.splice(-1, 0, '仓库协作模式：每位工人使用独立分支，同一分支同一时间只有一个写入者。仓库写操作必须由网页 AI 使用其自带的 GitHub 连接器执行；ai-one 不检查、不代执行任何 GitHub 写操作。');
+  } else if (input.mode === 'discuss') {
+    parts.splice(-1, 0, '讨论模式：请让各方独立给出观点、理由和证据，不要让一方代替另一方回答；收到各方完整回复后，由协调者比较分歧并汇总形成结论。');
+  }
+  return parts.join('\n\n');
 }
 
 export function buildFeedbackPrompt(
@@ -210,7 +217,7 @@ export function buildFeedbackPrompt(
 ): string {
   const sections = items.map((item) => {
     if (item.error !== undefined) {
-      return '[ai-one] 向 ' + item.label + ' 转发失败：' + item.error;
+      return '[ai-one] 来自 ' + item.label + ' 的转发失败：' + item.error;
     }
     return '[ai-one] 来自 ' + item.label + ' 的完整回复：\n' + (item.reply ?? '');
   });

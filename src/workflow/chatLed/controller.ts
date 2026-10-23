@@ -14,6 +14,7 @@ import {
   registerConversation,
   resumeAfterStop,
   resumeRun,
+  scheduleAutoReminder,
   settledFeedbackItems,
   setAvailableProviders,
   setInitializationPending,
@@ -23,12 +24,15 @@ import {
 } from './machine';
 import { buildFeedbackPrompt, buildIntroPrompt, buildViolationReminder, PROVIDER_LABELS } from './protocol';
 import { providerResponseError } from '../providerResponse';
-import type { ChatLedRun, CleanupItemResult, ForwardRecord, SessionInitializationStatus } from './types';
+import type { ChatLedMode, ChatLedRun, CleanupItemResult, ForwardRecord, SessionInitializationStatus } from './types';
 import { DEFAULT_COORDINATOR, DEFAULT_ROUND_LIMIT } from './types';
 
 export const CHAT_LED_URL_READ_TIMEOUT_MS = 3_000;
 export const CHAT_LED_INIT_SETTLE_TIMEOUT_MS = 5_000;
 export const CHAT_LED_STOP_WAIT_TIMEOUT_MS = 5_000;
+export const CHAT_LED_FORWARD_TIMEOUT_MS = 180_000;
+
+class ForwardTimeoutError extends Error {}
 
 type Listener = (run: ChatLedRun) => boolean | void;
 type InitStage = 'before-url' | 'creating' | 'after-url';
@@ -115,6 +119,7 @@ export interface ChatLedStartInput {
   /** Candidate targets; only those prepared and confirmed sendable are offered to the coordinator. */
   candidates: readonly AIProvider[];
   roundLimit?: number;
+  mode?: ChatLedMode;
 }
 
 /** Drives one chat-led run (#113), with pure state transitions and bounded provider I/O. */
@@ -152,6 +157,7 @@ export class ChatLedController {
       coordinator: input.coordinator ?? DEFAULT_COORDINATOR,
       available: [],
       roundLimit: input.roundLimit ?? DEFAULT_ROUND_LIMIT,
+      mode: input.mode ?? 'general',
       now: env.now(),
     });
     return Promise.resolve(new ChatLedController(env, run, input.candidates));
@@ -221,6 +227,7 @@ export class ChatLedController {
       coordinator: this.run.coordinator,
       available: this.run.available.map((provider) => ({ provider, label: PROVIDER_LABELS[provider] ?? provider })),
       roundLimit: this.run.roundLimit,
+      mode: this.run.mode ?? 'general',
     });
     await this.drive(intro);
   }
@@ -432,6 +439,16 @@ export class ChatLedController {
         if (!(await this.waitWhilePaused()) || !live()) return;
         const applied = applyCoordinatorReply(this.run, reply, this.env.now());
         this.set(applied.run);
+        if (applied.parsed.kind === 'violation') {
+          const reminder = buildViolationReminder(applied.parsed.code);
+          const scheduled = scheduleAutoReminder(this.run, reminder, this.env.now());
+          if (scheduled !== this.run) {
+            this.set(scheduled);
+            text = reminder;
+            continue;
+          }
+          return;
+        }
         if (applied.parsed.kind !== 'send' || this.run.phase !== 'forwarding') return;
         const round = this.run.round;
         await this.forwardRound(round, live);
@@ -455,19 +472,39 @@ export class ChatLedController {
     const patch = (p: Partial<ForwardRecord>) => {
       if (live()) this.set(updateForward(this.run, forward.id, p, this.env.now()));
     };
-    try {
-      if (!(await this.waitWhilePaused()) || !live()) return;
-      patch({ status: 'sending', startedAt: this.env.now() });
+    if (!(await this.waitWhilePaused()) || !live()) return;
+    patch({ status: 'sending', startedAt: this.env.now() });
+    let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+    const work = (async () => {
       this.assertPersisted();
       const sendable = await this.env.sendableProviders();
       this.assertPersisted();
+      if (!live()) return;
       if (!sendable.includes(forward.to)) throw new Error('Target AI is not logged in or its page is not ready.');
       patch({ status: 'waiting' });
       const reply = await this.sendOwned(forward.to, forward.message, live);
       if (!live()) return;
       patch({ status: 'done', reply, replyChars: reply.length, finishedAt: this.env.now() });
+    })();
+    // A timed-out send can still finish later; it must never overwrite the settled timeout.
+    work.catch(() => undefined);
+    const deadline = new Promise<never>((_, reject) => {
+      timer = globalThis.setTimeout(
+        () => reject(new ForwardTimeoutError('Target AI exceeded the forwarding timeout.')),
+        CHAT_LED_FORWARD_TIMEOUT_MS,
+      );
+    });
+    try {
+      await Promise.race([work, deadline]);
     } catch (error) {
-      patch({ status: 'failed', error: errorMessage(error), finishedAt: this.env.now() });
+      if (error instanceof ForwardTimeoutError) {
+        patch({ status: 'timed-out', error: error.message, finishedAt: this.env.now() });
+        if (live()) void Promise.resolve().then(() => this.env.stop(forward.to)).catch(() => undefined);
+      } else {
+        patch({ status: 'failed', error: errorMessage(error), finishedAt: this.env.now() });
+      }
+    } finally {
+      if (timer !== undefined) globalThis.clearTimeout(timer);
     }
   }
 

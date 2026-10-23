@@ -2,6 +2,8 @@ import type { AIProvider } from '../../../shared/types';
 import {
   DEFAULT_COORDINATOR,
   DEFAULT_ROUND_LIMIT,
+  MAX_CONSECUTIVE_AUTO_REMINDERS,
+  type ChatLedMode,
   type ChatLedRun,
   type CleanupItemResult,
   type ForwardRecord,
@@ -25,6 +27,7 @@ export function createRun(input: {
   coordinator?: AIProvider;
   available: readonly AIProvider[];
   roundLimit?: number;
+  mode?: ChatLedMode;
   now: number;
 }): ChatLedRun {
   const coordinator = input.coordinator ?? DEFAULT_COORDINATOR;
@@ -36,6 +39,7 @@ export function createRun(input: {
     coordinator,
     available,
     roundLimit: input.roundLimit ?? DEFAULT_ROUND_LIMIT,
+    mode: input.mode ?? 'general',
     round: 0,
     phase: 'idle',
     forwards: [],
@@ -249,6 +253,7 @@ export function applyCoordinatorReply(
         phase: 'forwarding',
         pausedFrom: undefined,
         stop: undefined,
+        autoReminderStreak: 0,
         forwards: [...run.forwards, ...newForwards],
       },
       parsed,
@@ -279,6 +284,34 @@ export function applyCoordinatorReply(
   };
 }
 
+const RECOVERABLE_VIOLATIONS: ReadonlySet<string> = new Set([
+  'no-directive', 'invalid-json', 'multiple-directives', 'invalid-shape',
+]);
+
+/** Checkpoint retries before sending so the timeline retains the decision after reload. */
+export function scheduleAutoReminder(run: ChatLedRun, reminder: string, now: number): ChatLedRun {
+  if (
+    run.phase !== 'awaiting-user' ||
+    run.stop?.type !== 'protocol-violation' ||
+    !RECOVERABLE_VIOLATIONS.has(run.stop.violation.code) ||
+    (run.autoReminderStreak ?? 0) >= MAX_CONSECUTIVE_AUTO_REMINDERS ||
+    run.round >= run.roundLimit ||
+    run.closed
+  ) return run;
+  const replies = run.coordinatorReplies.slice();
+  const last = replies[replies.length - 1];
+  if (!last || last.round !== run.round || last.autoReminder !== undefined) return run;
+  replies[replies.length - 1] = { ...last, autoReminder: reminder };
+  return {
+    ...run,
+    coordinatorReplies: replies,
+    autoReminderStreak: (run.autoReminderStreak ?? 0) + 1,
+    phase: 'coordinator-thinking',
+    stop: undefined,
+    updatedAt: now,
+  };
+}
+
 export function updateForward(
   run: ChatLedRun,
   id: string,
@@ -290,7 +323,7 @@ export function updateForward(
   if (index < 0) return run;
 
   const current = run.forwards[index];
-  if (current.status === 'done' || current.status === 'failed' || current.status === 'cancelled') {
+  if (current.status === 'done' || current.status === 'failed' || current.status === 'timed-out' || current.status === 'cancelled') {
     return run;
   }
 
@@ -337,7 +370,7 @@ export function settledFeedbackItems(
   const forwards = run.forwards.filter((forward) => forward.round === round);
   if (forwards.length === 0) return undefined;
 
-  const settledStatuses: readonly ForwardStatus[] = ['done', 'failed', 'cancelled'];
+  const settledStatuses: readonly ForwardStatus[] = ['done', 'failed', 'timed-out', 'cancelled'];
   if (forwards.some((forward) => !settledStatuses.includes(forward.status))) {
     return undefined;
   }

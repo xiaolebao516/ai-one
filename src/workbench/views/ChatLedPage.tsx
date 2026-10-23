@@ -11,7 +11,7 @@ import { createRealChatLedEnv, prepareProviderPage } from '../../workflow/chatLe
 import { exportRunMarkdown } from '../../workflow/chatLed/exportMarkdown';
 import { appendCleanupResult, beginCleanup, closeRun, finishCleanup, interruptCleanup, isRunActive, recordExport } from '../../workflow/chatLed/machine';
 import { loadRuns, saveRunChecked } from '../../workflow/chatLed/store';
-import type { ChatLedRun } from '../../workflow/chatLed/types';
+import type { ChatLedMode, ChatLedRun } from '../../workflow/chatLed/types';
 import { workbenchText } from '../workbenchText';
 import { ChatLedView } from './ChatLedView';
 
@@ -60,6 +60,7 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
   const [runs, setRuns] = useState<ChatLedRun[]>(() => loadRuns(storage));
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [goal, setGoal] = useState('');
+  const [mode, setMode] = useState<ChatLedMode>('general');
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [takeover, setTakeover] = useState<AIProvider | undefined>();
@@ -119,7 +120,7 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
     setError(undefined);
     try {
       const env = createRealChatLedEnv();
-      const controller = await ChatLedController.create(env, { id: newRunId(), goal: trimmed, candidates: CANDIDATES });
+      const controller = await ChatLedController.create(env, { id: newRunId(), goal: trimmed, candidates: CANDIDATES, mode });
       controllers.current.set(controller.getRun().id, controller);
       persist(controller.getRun());
       if (!persistedRef.current) {
@@ -162,6 +163,20 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
               placeholder={text.t('chatLedGoalPlaceholder')}
               onChange={(event) => setGoal(event.target.value)}
             />
+            <label htmlFor="chatled-mode" className="text-v2-meta font-medium text-v2-ink">
+              {text.zh ? '协作模式' : 'Collaboration mode'}
+            </label>
+            <select
+              id="chatled-mode"
+              aria-label={text.zh ? '协作模式' : 'Collaboration mode'}
+              className="w-full rounded-v2-md border border-v2-line bg-v2-surface p-v2-sm text-v2-body text-v2-ink"
+              value={mode}
+              onChange={(event) => setMode(event.target.value as ChatLedMode)}
+            >
+              <option value="general">{text.zh ? '通用' : 'General'}</option>
+              <option value="repo">{text.zh ? '仓库协作（仅文案约束）' : 'Repository (instructions only)'}</option>
+              <option value="discuss">{text.zh ? '独立讨论' : 'Independent discussion'}</option>
+            </select>
             <p className="text-v2-meta text-v2-ink-2">
               {text.t('chatLedCoordinatorLine', {
                 name: AI_PROVIDERS.chatgpt.name,

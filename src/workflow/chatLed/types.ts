@@ -11,6 +11,8 @@ import type { AIProvider } from '../../../shared/types';
 
 export const DEFAULT_COORDINATOR: AIProvider = 'chatgpt';
 export const DEFAULT_ROUND_LIMIT = 8;
+export const MAX_CONSECUTIVE_AUTO_REMINDERS = 2;
+export type ChatLedMode = 'general' | 'repo' | 'discuss';
 /** Max forward targets in one `ai-one-send` block. */
 export const MAX_TARGETS_PER_DIRECTIVE = 4;
 
@@ -50,7 +52,7 @@ export interface ProtocolViolation {
 export type ParsedReply = SendDirective | DoneDirective | ProtocolViolation;
 
 /** One forwarded exchange shown as a timeline row. */
-export type ForwardStatus = 'queued' | 'sending' | 'waiting' | 'done' | 'failed' | 'cancelled';
+export type ForwardStatus = 'queued' | 'sending' | 'waiting' | 'done' | 'failed' | 'timed-out' | 'cancelled';
 
 export interface ForwardRecord {
   id: string; // unique within the run, e.g. "r3-claude"
@@ -115,6 +117,8 @@ export interface ChatLedRun {
   coordinator: AIProvider;
   available: AIProvider[]; // logged-in providers the coordinator may address (never includes coordinator)
   roundLimit: number;
+  mode?: ChatLedMode; // absent in v1 storage means general
+  autoReminderStreak?: number; // consecutive automatic retries since a successful send
   round: number; // number of coordinator replies processed so far
   phase: RunPhase;
   pausedFrom?: RunPhase;
@@ -127,7 +131,7 @@ export interface ChatLedRun {
   /** True while bridge/provider readiness is being prepared before the first send. */
   initializationPending?: boolean;
   /** Raw coordinator replies in order (kept locally for the timeline; never uploaded). */
-  coordinatorReplies: { round: number; text: string; at: number }[];
+  coordinatorReplies: { round: number; text: string; at: number; autoReminder?: string }[];
   createdAt: number;
   updatedAt: number;
   closed?: { at: number; exportedMarkdown: boolean }; // set once cleanup finished or user closed
