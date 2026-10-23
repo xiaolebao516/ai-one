@@ -592,6 +592,66 @@ describe('ChatLedController', () => {
     }));
   });
 
+
+  it('keeps a blank first-send intent durable and stops before forwarding if URL ownership cannot be saved', async () => {
+    const { env } = makeEnv({ chatgpt: [SEND(['claude'], 'must not forward')] });
+    const data = new Map<string, string>();
+    const storage: ChatLedStorage = {
+      getItem: (key) => data.get(key) ?? null,
+      setItem: (key, value) => {
+        const stored = JSON.parse(value) as ChatLedRun[];
+        if (stored.some((run) => run.sessionInitializations.some((item) => item.status === 'registered'))) {
+          throw new Error('simulated first-send ownership checkpoint failure');
+        }
+        data.set(key, value);
+      },
+    };
+    let existing: ChatLedRun[] = [];
+    let currentUrl = 'https://chatgpt.com/';
+    const conversationUrl = 'https://chatgpt.com/c/123e4567-e89b-42d3-a456-426614174123';
+    const durableStatusAtCreation: string[] = [];
+    const sent: AIProvider[] = [];
+    env.readConversationUrl = vi.fn(async (provider: AIProvider) =>
+      provider === 'chatgpt' ? currentUrl : ('https://example.test/' + provider + '/c/existing'));
+    env.readDocumentId = vi.fn(async () => 'doc-blank-1');
+    env.newSession = vi.fn(async (provider: AIProvider) => {
+      const raw = JSON.parse(Array.from(data.values())[0] || '[]') as ChatLedRun[];
+      durableStatusAtCreation.push(raw[0]?.sessionInitializations[0]?.status ?? 'missing');
+      if (provider === 'chatgpt') {
+        currentUrl = 'https://chatgpt.com/';
+        return { url: currentUrl, freshDocument: true, documentId: 'doc-blank-1' };
+      }
+      return { url: 'https://example.test/' + provider + '/c/unexpected' };
+    });
+    env.send = vi.fn(async (provider: AIProvider) => {
+      sent.push(provider);
+      if (provider === 'chatgpt') {
+        currentUrl = conversationUrl;
+        return SEND(['claude'], 'must not forward');
+      }
+      return DONE('unexpected');
+    });
+    const controller = await create(env);
+    controller.subscribe((run) => {
+      const saved = saveRunChecked(storage, run, existing);
+      existing = saved.runs;
+      return saved.persisted;
+    });
+
+    await controller.start();
+
+    expect(durableStatusAtCreation).toEqual(['pending']);
+    expect(sent).toEqual(['chatgpt']);
+    expect(env.newSession).toHaveBeenCalledTimes(1);
+    const [recovered] = loadRuns(storage);
+    expect(recovered.sessionInitializations[0]).toMatchObject({ status: 'manual' });
+    expect(recovered.conversations).toContainEqual(expect.objectContaining({
+      provider: 'chatgpt',
+      url: '',
+      registrationStatus: 'manual',
+    }));
+  });
+
   it('records the export and the cleanup outcome once', async () => {
     const { env } = makeEnv({ chatgpt: [DONE('ok')] });
     const controller = await create(env);
