@@ -29,6 +29,8 @@ import {
 import { workbenchText, type WorkbenchText } from './workbenchText';
 import { HomeView } from './views/HomeView';
 import { ChatLedPage } from './views/ChatLedPage';
+import { ChatView } from './views/chat/ChatView';
+import { useChatRuntime } from './views/chat/useChatRuntime';
 import { PlannedView } from './views/PlannedView';
 import { ResourcesView } from './views/ResourcesView';
 import { TaskView } from './views/TaskView';
@@ -55,6 +57,8 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
   const dispatch = useDispatchData({ source: data.prefs.source, repoPath: data.prefs.dispatchRepo, loader: dispatchLoader, isDesktop });
   const channel = channelView(dispatch);
   const [route, setRoute] = useState<WorkbenchRoute>(HOME_ROUTE);
+  const [chatRuntimeEnabled, setChatRuntimeEnabled] = useState(false);
+  const [composerPrefill, setComposerPrefill] = useState<{ text: string; mode: 'grill' }>();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const mainRef = useRef<HTMLElement | null>(null);
   const mode = resolveTheme(data.prefs.theme, useSystemDark());
@@ -62,10 +66,15 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
   // A task that is gone from a settled data set is gone: make the fallback the real route, so the
   // old task does not pop back up when the data source flips again. While loading, keep the route.
   const fellBack = route.view === 'task' && current.view !== 'task';
+  const go = useCallback((next: WorkbenchRoute) => {
+    if (next.view === 'chat') setChatRuntimeEnabled(true);
+    if (next.view !== 'home') setComposerPrefill(undefined);
+    setRoute(next);
+  }, []);
   useEffect(() => {
-    if (fellBack && data.health !== 'loading') setRoute({ view: 'tasks' });
-  }, [fellBack, data.health]);
-  const go = (next: WorkbenchRoute) => setRoute(next);
+    if (fellBack && data.health !== 'loading') go({ view: 'tasks' });
+  }, [fellBack, data.health, go]);
+  const chatRuntime = useChatRuntime({ enabled: chatRuntimeEnabled, locale, isDesktop });
   const openTask = (task: HudTask) => go({ view: 'task', taskId: task.id });
 
   useHideProviderWebviews();
@@ -93,12 +102,12 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
       } else if (!paletteOpenRef.current && !isEditableTarget(event.target)) {
         // Page switching never steals keys from a text field or the open palette.
         event.preventDefault();
-        setRoute({ view: shortcut.view });
+        go({ view: shortcut.view });
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [go]);
 
   const commands = useMemo(() => paletteCommands(text, data.tasks, locale), [text, data.tasks, locale]);
   const runCommand = (command: PaletteCommand) => {
@@ -123,6 +132,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
         onOpenTask={openTask}
         onShowTasks={() => go({ view: 'tasks' })}
         onShowResources={() => go({ view: 'resources' })}
+        prefill={composerPrefill}
       />
     );
   } else if (current.view === 'tasks') {
@@ -131,15 +141,18 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
     view = <TaskView key={task.id} locale={locale} task={task} onBack={() => go({ view: 'tasks' })} />;
   } else if (current.view === 'chat') {
     view = (
-      <PlannedView
-        title={text.t('chatTitle')}
-        body={text.t('chatBody')}
-        badge={text.t('plannedBadge')}
-        action={
-          <Button onClick={onOpenClassic} icon={<Icon name="external" size={14} />}>
-            {text.t('chatOpenClassic')}
-          </Button>
-        }
+      <ChatView
+        locale={locale}
+        runtime={chatRuntime}
+        onConvertToTask={({ text: prefillText }) => {
+          setComposerPrefill({ text: prefillText, mode: 'grill' });
+          setRoute({ view: 'home' });
+        }}
+        onStartGrill={(text) => {
+          // Task dispatch is owned by another implementation line; keep this callback intentionally inert.
+          void text;
+          go({ view: 'tasks' });
+        }}
       />
     );
   } else if (current.view === 'chatled') {
@@ -494,6 +507,7 @@ function useSystemDark(): boolean {
  */
 function useHideProviderWebviews(): void {
   useEffect(() => {
+    if (!host.app.isDesktop()) return;
     for (const provider of ALL_AI_PROVIDERS) {
       try {
         void host.provider.hide(provider).catch(() => undefined);
