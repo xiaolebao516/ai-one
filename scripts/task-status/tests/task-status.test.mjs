@@ -296,6 +296,28 @@ test('review verdict resolution parses explicit verdict even when text mentions 
   };
   const s6 = await collect(fixture({ reviews: [approvedConflict] }));
   assert.equal(s6.pullRequests[0].review.verdict, 'blocked');
+
+  // Conflicting current-round markers must resolve fail-closed to BLOCKED
+  const multiCurrentConflict = {
+    id: 107,
+    user: 'reviewer',
+    body: '本轮裁定：BLOCKED\n本次裁定：PASS',
+    state: 'commented',
+    commit_id: sha,
+  };
+  const s7 = await collect(fixture({ reviews: [multiCurrentConflict] }));
+  assert.equal(s7.pullRequests[0].review.verdict, 'blocked');
+
+  // Narrative mentioning previous pass followed by formal BLOCKED on next line
+  const narrativeNextLine = {
+    id: 108,
+    user: 'reviewer',
+    body: '之前测试曾给过 PASS，但是本轮发现新问题。\n**裁定：BLOCKED**',
+    state: 'commented',
+    commit_id: sha,
+  };
+  const s8 = await collect(fixture({ reviews: [narrativeNextLine] }));
+  assert.equal(s8.pullRequests[0].review.verdict, 'blocked');
 });
 
 test('comments 500-cap truncation records error and marks snapshot partial', async () => {

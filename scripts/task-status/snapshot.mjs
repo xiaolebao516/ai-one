@@ -13,37 +13,39 @@ export function extractReviewVerdict(body, state) {
         continue;
       }
       if (inFence) continue;
-      // Skip markdown blockquotes (frequently quoting earlier reviews)
+      // Skip markdown blockquotes
       if (line.startsWith('>')) continue;
       unquotedLines.push(line);
     }
 
-    const text = unquotedLines.join('\n');
-
-    // 1. Check for explicit current-round markers first (e.g. 本轮裁定：BLOCKED)
-    const currentMatches = Array.from(text.matchAll(/(?:本轮|当前|最终|本次|current|final)\s*(?:[：:\s*]|\*\*)*\s*(?:裁定|verdict)[：:\s*]+\s*(PASS|REVISE|BLOCKED)\b/gi));
-    if (currentMatches.length > 0) {
-      const v = currentMatches[currentMatches.length - 1][1].toUpperCase();
-      if (v === 'BLOCKED') return 'blocked';
-      if (v === 'REVISE') return 'revise';
-      if (v === 'PASS') return 'pass';
-    }
-
-    // 2. Filter out historical mentions like '上一轮...裁定：PASS'
     const verdictsFound = [];
-    const verdictPattern = /(?:^|[，。,.\s])(?:\*\*|##+\s*|#\s*)?(?:裁定|verdict)[：:\s*]+\s*(PASS|REVISE|BLOCKED)\b/gi;
-    for (const match of text.matchAll(verdictPattern)) {
-      const start = match.index;
-      const preceding = text.slice(Math.max(0, start - 30), start);
-      if (/(?:上一轮|上一次|历史|前一轮|旧裁定|之前|往期|previous|prior)/i.test(preceding)) {
+    // Line-anchored formal verdict markers (e.g. **裁定：BLOCKED**, ## 裁定：PASS, 本轮裁定：REVISE)
+    const lineVerdictPattern = /^(?:\*\*|##+\s*|#\s*)?(?:(?:本轮|当前|最终|本次)?\s*(?:裁定|verdict))[：:\s*]+\s*(PASS|REVISE|BLOCKED)\b/i;
+    // Standalone verdict line (e.g. PASS, BLOCKED)
+    const standalonePattern = /^(?:\*\*|##+\s*|#\s*)?(PASS|REVISE|BLOCKED)(?:\*\*)?$/i;
+
+    for (const line of unquotedLines) {
+      // Handle lines with historical mentions (e.g. '上一轮 **裁定：PASS**，本轮 **裁定：BLOCKED**')
+      if (/(?:上一轮|上一次|历史|前一轮|旧裁定|之前|往期|previous|prior)/i.test(line)) {
+        const parts = line.split(/[，,；;。\n]/);
+        for (const part of parts) {
+          const trimmedPart = part.trim();
+          if (/(?:上一轮|上一次|历史|前一轮|旧裁定|之前|往期|previous|prior)/i.test(trimmedPart)) {
+            continue;
+          }
+          const pMatch = trimmedPart.match(/(?:\*\*|##+\s*|#\s*)?(?:(?:本轮|当前|最终|本次)?\s*(?:裁定|verdict))[：:\s*]+\s*(PASS|REVISE|BLOCKED)\b/i);
+          if (pMatch) verdictsFound.push(pMatch[1].toUpperCase());
+        }
         continue;
       }
-      verdictsFound.push(match[1].toUpperCase());
-    }
 
-    // 3. Check standalone lines: ^(PASS|REVISE|BLOCKED)$
-    for (const line of unquotedLines) {
-      const sMatch = line.match(/^(?:\*\*|##+\s*|#\s*)?(PASS|REVISE|BLOCKED)(?:\*\*)?$/i);
+      const vMatch = line.match(lineVerdictPattern);
+      if (vMatch) {
+        verdictsFound.push(vMatch[1].toUpperCase());
+        continue;
+      }
+
+      const sMatch = line.match(standalonePattern);
       if (sMatch) {
         verdictsFound.push(sMatch[1].toUpperCase());
       }
