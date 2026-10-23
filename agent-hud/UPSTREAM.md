@@ -44,7 +44,7 @@ Apache-2.0 section 4(b): these are all the modified files.
 | `src/apps/desktop/src-tauri/Cargo.toml` | package `ai-one-hud`; `serde_json`, `chrono`; `custom-protocol` feature |
 | `src/apps/desktop/src-tauri/tauri.conf.json` | product name `AI One HUD`, identifier `com.aione.hud`, dev URL port 1522, Settings window starts hidden, no `resources` |
 | `src/apps/desktop/src-tauri/src/main.rs` | passes the ai-one product extension to `run_with_context` |
-| `src/crates/platform/src/os/windows/mod.rs` | Windows engine lookup also finds Claude Code's native `claude.exe` inside its npm package folder and Codex Desktop's `codex.exe` under `%LOCALAPPDATA%\OpenAI\Codexin\<hash>\` (product code; makes the quota readers work on Windows) |
+| `src/crates/platform/src/os/windows/mod.rs` | Windows engine lookup also finds Claude Code's native `claude.exe` inside its npm package folder and Codex Desktop's `codex.exe` under `%LOCALAPPDATA%/OpenAI/Codex/bin/<hash>/` (product code; makes the quota readers work on Windows) |
 | tests only: `agents/src/location.rs`, `agents/src/claude/account.rs`, `agents/src/codex/account.rs`, `agents/src/deepseek/account.rs`, `agents/tests/golden.rs`, `core/src/tests/ingestion.rs`, `platform/src/os/mod.rs`, `platform/src/instance/mod.rs` | the 12 tests that failed on Windows only: expectations assumed `/` separators, a Unix absolute path or Unix-only golden cases; product code unchanged. Each edit says "ai-one change (test only)". |
 
 ## Files added by ai-one
