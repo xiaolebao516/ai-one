@@ -507,7 +507,11 @@ function useSystemDark(): boolean {
  */
 function useHideProviderWebviews(): void {
   useEffect(() => {
-    if (!host.app.isDesktop()) return;
+    try {
+      if (!host.app.isDesktop()) return;
+    } catch {
+      return;
+    }
     for (const provider of ALL_AI_PROVIDERS) {
       try {
         void host.provider.hide(provider).catch(() => undefined);
