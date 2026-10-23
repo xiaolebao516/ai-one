@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import type { DispatchSnapshot } from '../../dispatch/types';
 import type { Locale } from '../../i18n/resolve';
 import {
@@ -16,7 +16,6 @@ import { Badge, Button, Card, Icon, Notice, SectionHeader } from '../../ui/v2';
 import { TaskAcceptanceActions } from '../drawer/TaskAcceptanceActions';
 import { TaskCommentBox } from '../drawer/TaskCommentBox';
 import { TaskDrawer, type DrawerTabKey } from '../drawer/TaskDrawer';
-import { TaskNotificationIsland } from '../drawer/TaskNotificationIsland';
 import { TaskPauseControl, type PauseState } from '../drawer/TaskPauseControl';
 import { TaskTakeoverBanner } from '../drawer/TaskTakeoverBanner';
 import { derivePauseState, formatCommentBody, formatPauseBody } from '../../host/githubWrite';
@@ -52,7 +51,7 @@ export function TaskView({
   onOpenClassic,
   onTakeoverAi,
   onRefreshData,
-  onNavigateTask,
+  onNavigateTask: _onNavigateTask,
 }: TaskViewProps) {
   const isZh = locale.startsWith('zh');
   const text = workbenchText(locale);
@@ -79,15 +78,10 @@ export function TaskView({
     onOpenClassic?.();
   };
 
-  const handleNavigateCurrentTask = useCallback(() => {
-    if (onNavigateTask) {
-      onNavigateTask(task);
-    } else if (typeof window !== 'undefined') {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  }, [onNavigateTask, task]);
-
   const initialPauseState: PauseState = useMemo(() => {
+    if (task.commentsCompleteness && task.commentsCompleteness !== 'complete') {
+      return 'unknown';
+    }
     type PauseEntry = { body: string; time: number };
     const pauseComments: PauseEntry[] = [];
     for (const item of allEvidence) {
@@ -107,7 +101,7 @@ export function TaskView({
     pauseComments.sort((a, b) => a.time - b.time);
     const derived = derivePauseState(pauseComments);
     return derived.paused ? 'paused' : 'running';
-  }, [allEvidence]);
+  }, [allEvidence, task.commentsCompleteness]);
 
   // Team members derived from task or standard multi-AI workflow
   const teamMembers: TeamMember[] = [
@@ -403,13 +397,6 @@ export function TaskView({
         task={{ ...task, evidence: allEvidence }}
         locale={locale}
         snapshot={dispatchSnapshot ?? undefined}
-      />
-
-      {/* Notification Island (Design §6.7) */}
-      <TaskNotificationIsland
-        task={task}
-        locale={locale}
-        onNavigate={handleNavigateCurrentTask}
       />
     </div>
   );

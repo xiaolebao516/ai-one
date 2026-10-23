@@ -263,6 +263,39 @@ test('review verdict resolution parses explicit verdict even when text mentions 
   };
   const s3 = await collect(fixture({ reviews: [passReview] }));
   assert.equal(s3.pullRequests[0].review.verdict, 'pass');
+
+  // Quoted historical PASS with current BLOCKED must yield blocked
+  const quotedReview = {
+    id: 104,
+    user: 'reviewer',
+    body: '> 上一轮 **裁定：PASS**\n本轮存在阻断项。\n**裁定：BLOCKED**',
+    state: 'commented',
+    commit_id: sha,
+  };
+  const s4 = await collect(fixture({ reviews: [quotedReview] }));
+  assert.equal(s4.pullRequests[0].review.verdict, 'blocked');
+
+  // Explicit historical narrative with current BLOCKED must yield blocked
+  const narrativeReview = {
+    id: 105,
+    user: 'reviewer',
+    body: '上一轮 **裁定：PASS**，本轮 **裁定：BLOCKED**',
+    state: 'commented',
+    commit_id: sha,
+  };
+  const s5 = await collect(fixture({ reviews: [narrativeReview] }));
+  assert.equal(s5.pullRequests[0].review.verdict, 'blocked');
+
+  // Explicit BLOCKED overrides approved GitHub review state (fail-closed)
+  const approvedConflict = {
+    id: 106,
+    user: 'reviewer',
+    body: '需要重新修复，不得合并。\n**裁定：BLOCKED**',
+    state: 'approved',
+    commit_id: sha,
+  };
+  const s6 = await collect(fixture({ reviews: [approvedConflict] }));
+  assert.equal(s6.pullRequests[0].review.verdict, 'blocked');
 });
 
 test('comments 500-cap truncation records error and marks snapshot partial', async () => {

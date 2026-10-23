@@ -330,6 +330,7 @@ export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void 
   const [adapterNotice, setAdapterNotice] = useState<AdapterNotice | null>(null);
   const [sharing, setSharing] = useState(false);
   const [takeoverAi, setTakeoverAi] = useState<string | null>(() => getTakeoverAi());
+  const [takeoverError, setTakeoverError] = useState<string | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings>(() => defaultSettings());
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [initialRestoreComplete, setInitialRestoreComplete] = useState(false);
@@ -1266,9 +1267,13 @@ export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void 
     const ai = getTakeoverAi();
     if (ai) {
       setTakeoverAi(ai);
+      setTakeoverError(null);
       const target = providerForTakeover(ai);
       setScrollFocusedProvider(target);
-      void forceProviderNativeCenter(target);
+      forceProviderNativeCenter(target).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        setTakeoverError(msg);
+      });
     }
   }, [forceProviderNativeCenter]);
 
@@ -1947,12 +1952,24 @@ export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void 
         <aside
           data-testid="classic-takeover-banner"
           aria-label={locale.startsWith('zh') ? '接管横幅' : 'Takeover banner'}
-          className="flex flex-shrink-0 items-center justify-between border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 text-sm text-amber-900 dark:text-amber-200"
+          className={`flex flex-shrink-0 items-center justify-between border-b px-4 py-2 text-sm ${
+            takeoverError
+              ? 'border-red-500/40 bg-red-500/15 text-red-900 dark:text-red-200'
+              : 'border-amber-500/40 bg-amber-500/15 text-amber-900 dark:text-amber-200'
+          }`}
         >
           <div className="flex items-center gap-2">
-            <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+            <span
+              className={`inline-block h-2 w-2 rounded-full ${
+                takeoverError ? 'bg-red-500' : 'bg-amber-500 animate-pulse'
+              }`}
+            />
             <span>
-              {locale.startsWith('zh')
+              {takeoverError
+                ? locale.startsWith('zh')
+                  ? `接管 ${takeoverAi} 失败：${takeoverError}（该模型可能处于待命状态或未启用）。`
+                  : `Failed to takeover ${takeoverAi}: ${takeoverError}.`
+                : locale.startsWith('zh')
                 ? `你正在接管操作 ${takeoverAi}。`
                 : `You are manually controlling ${takeoverAi}.`}
             </span>
@@ -1960,10 +1977,15 @@ export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void 
           <button
             type="button"
             data-testid="classic-exit-takeover"
-            className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 transition-colors"
+            className={`rounded px-3 py-1 text-xs font-medium text-white transition-colors ${
+              takeoverError
+                ? 'bg-red-600 hover:bg-red-700'
+                : 'bg-amber-600 hover:bg-amber-700'
+            }`}
             onClick={() => {
               setStoredTakeoverAi(null);
               setTakeoverAi(null);
+              setTakeoverError(null);
               if (onOpenWorkbench) onOpenWorkbench();
               else switchUiRoot('workbench');
             }}

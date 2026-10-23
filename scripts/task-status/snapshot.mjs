@@ -1,27 +1,64 @@
 export function extractReviewVerdict(body, state) {
   const normState = typeof state === 'string' ? state.toLowerCase() : '';
+
+  if (body && typeof body === 'string') {
+    const rawLines = body.split(/\r?\n/);
+    const unquotedLines = [];
+    let inFence = false;
+
+    for (const raw of rawLines) {
+      const line = raw.trim();
+      if (/^(```|~~~)/.test(line)) {
+        inFence = !inFence;
+        continue;
+      }
+      if (inFence) continue;
+      // Skip markdown blockquotes (frequently quoting earlier reviews)
+      if (line.startsWith('>')) continue;
+      unquotedLines.push(line);
+    }
+
+    const text = unquotedLines.join('\n');
+
+    // 1. Check for explicit current-round markers first (e.g. 本轮裁定：BLOCKED)
+    const currentMatches = Array.from(text.matchAll(/(?:本轮|当前|最终|本次|current|final)\s*(?:[：:\s*]|\*\*)*\s*(?:裁定|verdict)[：:\s*]+\s*(PASS|REVISE|BLOCKED)\b/gi));
+    if (currentMatches.length > 0) {
+      const v = currentMatches[currentMatches.length - 1][1].toUpperCase();
+      if (v === 'BLOCKED') return 'blocked';
+      if (v === 'REVISE') return 'revise';
+      if (v === 'PASS') return 'pass';
+    }
+
+    // 2. Filter out historical mentions like '上一轮...裁定：PASS'
+    const verdictsFound = [];
+    const verdictPattern = /(?:^|[，。,.\s])(?:\*\*|##+\s*|#\s*)?(?:裁定|verdict)[：:\s*]+\s*(PASS|REVISE|BLOCKED)\b/gi;
+    for (const match of text.matchAll(verdictPattern)) {
+      const start = match.index;
+      const preceding = text.slice(Math.max(0, start - 30), start);
+      if (/(?:上一轮|上一次|历史|前一轮|旧裁定|之前|往期|previous|prior)/i.test(preceding)) {
+        continue;
+      }
+      verdictsFound.push(match[1].toUpperCase());
+    }
+
+    // 3. Check standalone lines: ^(PASS|REVISE|BLOCKED)$
+    for (const line of unquotedLines) {
+      const sMatch = line.match(/^(?:\*\*|##+\s*|#\s*)?(PASS|REVISE|BLOCKED)(?:\*\*)?$/i);
+      if (sMatch) {
+        verdictsFound.push(sMatch[1].toUpperCase());
+      }
+    }
+
+    // Fail-closed resolution: BLOCKED > REVISE > PASS.
+    // Explicit body verdicts take precedence over GitHub official review state.
+    if (verdictsFound.includes('BLOCKED')) return 'blocked';
+    if (verdictsFound.includes('REVISE')) return 'revise';
+    if (verdictsFound.includes('PASS')) return 'pass';
+  }
+
+  // Fall back to GitHub official review state when no explicit body verdict is present
   if (normState === 'approved') return 'pass';
   if (normState === 'changes_requested') return 'revise';
-  if (!body || typeof body !== 'string') return 'none';
-
-  const markerMatch = body.match(/(?:\*\*|##\s*)?(?:裁定|verdict)[：:\s*]*\s*(PASS|REVISE|BLOCKED)\b/i);
-  if (markerMatch) {
-    const v = markerMatch[1].toUpperCase();
-    if (v === 'PASS') return 'pass';
-    if (v === 'REVISE') return 'revise';
-    if (v === 'BLOCKED') return 'blocked';
-  }
-
-  if (/\*\*裁定：BLOCKED\*\*/i.test(body)) return 'blocked';
-  if (/\*\*裁定：REVISE\*\*/i.test(body)) return 'revise';
-  if (/\*\*裁定：PASS\*\*/i.test(body)) return 'pass';
-
-  const lines = body.split(/\r?\n/).map((l) => l.trim().replace(/^\*+|\*+$/g, '').trim());
-  for (const line of lines) {
-    if (/^BLOCKED$/i.test(line)) return 'blocked';
-    if (/^REVISE$/i.test(line)) return 'revise';
-    if (/^PASS$/i.test(line)) return 'pass';
-  }
 
   return 'none';
 }

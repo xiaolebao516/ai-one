@@ -5,76 +5,102 @@ import { taskHudText } from '../../ui/taskHudText';
 import { Badge, Button, Icon, IconButton } from '../../ui/v2';
 
 export interface TaskNotificationIslandProps {
-  task: HudTask;
+  task?: HudTask;
+  tasks?: readonly HudTask[];
   locale: Locale;
-  onNavigate?: () => void;
+  currentTaskId?: string;
+  onNavigate?: (task?: HudTask) => void;
 }
 
-export function TaskNotificationIsland({ task, locale, onNavigate }: TaskNotificationIslandProps) {
+export function TaskNotificationIsland({
+  task,
+  tasks,
+  locale,
+  currentTaskId,
+  onNavigate,
+}: TaskNotificationIslandProps) {
   const isZh = locale.startsWith('zh');
   const hud = taskHudText(locale);
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(() => new Set());
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
-  const notifiedKeyRef = useRef<string>('');
+  const notifiedKeysRef = useRef<Set<string>>(new Set());
 
-  const needsAction = isNeedsYou(task.status);
+  // Aggregate candidate tasks from `tasks` or `task`
+  const allTasks: readonly HudTask[] = tasks && tasks.length > 0 ? tasks : task ? [task] : [];
+  const needsYouTasks = allTasks.filter((t) => isNeedsYou(t.status));
 
-  // Reset dismissed state if task ID or status changes to another needsYou
+  // Desktop notifications: monitor all needs-you tasks independently
   useEffect(() => {
-    setDismissed(false);
-  }, [task.id, task.status]);
+    if (needsYouTasks.length === 0) return;
 
-  // When window is in background / hidden, trigger desktop notification with category and action routing
-  useEffect(() => {
-    if (!needsAction || dismissed) return;
-
-    const key = `${task.id}:${task.status}`;
-
-    const triggerNotification = () => {
+    const triggerNotifications = () => {
       if (typeof document === 'undefined' || !document.hidden) return;
       if (typeof window === 'undefined' || !('Notification' in window)) return;
-      if (notifiedKeyRef.current === key) return;
 
-      const category = task.status === 'blocked'
-        ? (isZh ? '【阻塞】' : '[Blocked]')
-        : task.status === 'accept'
-        ? (isZh ? '【验收】' : '[Acceptance]')
-        : (isZh ? '【决策】' : '[Decision]');
+      for (const t of needsYouTasks) {
+        const key = `${t.id}:${t.status}`;
+        if (notifiedKeysRef.current.has(key)) continue;
 
-      const title = isZh
-        ? `${category} ai-one: 任务需要你处理`
-        : `${category} ai-one: Task needs you`;
-      const body = `${task.repo} · ${pickText(task.title, locale)}`;
+        const category = t.status === 'blocked'
+          ? (isZh ? '【阻塞】' : '[Blocked]')
+          : t.status === 'accept'
+          ? (isZh ? '【验收】' : '[Acceptance]')
+          : (isZh ? '【决策】' : '[Decision]');
 
-      const show = () => {
-        try {
-          notifiedKeyRef.current = key;
-          const n = new Notification(title, { body });
-          n.onclick = () => {
-            window.focus();
-            onNavigateRef.current?.();
-          };
-        } catch { /* ignore */ }
-      };
+        const title = isZh
+          ? `${category} ai-one: 任务需要你处理`
+          : `${category} ai-one: Task needs you`;
+        const body = `${t.repo} · ${pickText(t.title, locale)}`;
 
-      if (Notification.permission === 'granted') {
-        show();
-      } else if (Notification.permission !== 'denied') {
-        Notification.requestPermission().then((perm) => {
-          if (perm === 'granted') show();
-        });
+        const show = () => {
+          try {
+            notifiedKeysRef.current.add(key);
+            const n = new Notification(title, { body });
+            n.onclick = () => {
+              window.focus();
+              onNavigateRef.current?.(t);
+            };
+          } catch {
+            /* ignore notification error */
+          }
+        };
+
+        if (Notification.permission === 'granted') {
+          show();
+        } else if (Notification.permission !== 'denied') {
+          Notification.requestPermission().then((perm) => {
+            if (perm === 'granted') show();
+          });
+        }
       }
     };
 
-    triggerNotification();
-    document.addEventListener('visibilitychange', triggerNotification);
+    triggerNotifications();
+    document.addEventListener('visibilitychange', triggerNotifications);
     return () => {
-      document.removeEventListener('visibilitychange', triggerNotification);
+      document.removeEventListener('visibilitychange', triggerNotifications);
     };
-  }, [needsAction, dismissed, task.id, task.status, task.repo, task.title, locale, isZh]);
+  }, [needsYouTasks, locale, isZh]);
 
-  if (!needsAction || dismissed) return null;
+  // For on-screen UI island: pick the first candidate that isn't dismissed and not currently viewed
+  const visibleTasks = needsYouTasks.filter((t) => !dismissedKeys.has(`${t.id}:${t.status}`) && t.id !== currentTaskId);
+  if (visibleTasks.length === 0) return null;
+
+  const currentItem = visibleTasks[0];
+  const moreCount = visibleTasks.length - 1;
+
+  const handleDismiss = () => {
+    setDismissedKeys((prev) => {
+      const next = new Set(prev);
+      next.add(`${currentItem.id}:${currentItem.status}`);
+      return next;
+    });
+  };
+
+  const handleView = () => {
+    onNavigateRef.current?.(currentItem);
+  };
 
   return (
     <aside
@@ -84,17 +110,22 @@ export function TaskNotificationIsland({ task, locale, onNavigate }: TaskNotific
     >
       <div className="flex flex-1 flex-col gap-0.5">
         <div className="flex items-center gap-v2-xs">
-          <Badge tone={task.status === 'blocked' ? 'block' : 'you'}>
-            {hud.needKind(task.status)}
+          <Badge tone={currentItem.status === 'blocked' ? 'block' : 'you'}>
+            {hud.needKind(currentItem.status)}
           </Badge>
-          <span className="text-v2-micro opacity-75">{task.repo}</span>
+          <span className="text-v2-micro opacity-75">{currentItem.repo}</span>
+          {moreCount > 0 ? (
+            <Badge tone="neutral" className="text-v2-micro">
+              +{moreCount}
+            </Badge>
+          ) : null}
         </div>
-        <p className="line-clamp-1 text-v2-meta font-medium">{pickText(task.title, locale)}</p>
+        <p className="line-clamp-1 text-v2-meta font-medium">{pickText(currentItem.title, locale)}</p>
       </div>
 
       <div className="flex items-center gap-1">
         {onNavigate ? (
-          <Button size="sm" variant="ghost" onClick={onNavigate}>
+          <Button size="sm" variant="ghost" onClick={handleView}>
             {isZh ? '查看' : 'View'}
           </Button>
         ) : null}
@@ -103,7 +134,7 @@ export function TaskNotificationIsland({ task, locale, onNavigate }: TaskNotific
           variant="ghost"
           label={isZh ? '忽略通知' : 'Dismiss'}
           icon={<Icon name="close" size={14} />}
-          onClick={() => setDismissed(true)}
+          onClick={handleDismiss}
         />
       </div>
     </aside>

@@ -4,7 +4,7 @@ import { githubWrite, type GithubWriteResult } from '../../host/githubWrite';
 import { isInProgress, type HudTask } from '../../ui/taskHudModel';
 import { Badge, Button, Icon, Notice } from '../../ui/v2';
 
-export type PauseState = 'paused' | 'running' | 'none';
+export type PauseState = 'paused' | 'running' | 'none' | 'unknown';
 
 export interface TaskPauseControlProps {
   task: HudTask;
@@ -48,7 +48,10 @@ export function TaskPauseControl({
 
   const isMock = task.dataSource === 'mock';
   const isPaused = pauseState === 'paused';
-  const canWrite = !isMock && ghAvailable;
+  const isCommentsIncomplete =
+    pauseState === 'unknown' ||
+    (task.commentsCompleteness !== undefined && task.commentsCompleteness !== 'complete');
+  const canWrite = !isMock && ghAvailable && !isCommentsIncomplete;
 
   const handleToggle = async () => {
     if (!canWrite || submitting) return;
@@ -84,7 +87,9 @@ export function TaskPauseControl({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex flex-wrap items-center gap-v2-xs">
-        {isPaused ? (
+        {isCommentsIncomplete ? (
+          <Badge tone="unknown">{isZh ? '暂停状态未确认' : 'Pause unconfirmed'}</Badge>
+        ) : isPaused ? (
           <Badge tone="paused">{isZh ? '已暂停' : 'Paused'}</Badge>
         ) : null}
 
@@ -100,17 +105,25 @@ export function TaskPauseControl({
             ? isZh
               ? '提交中…'
               : 'Updating…'
+            : isCommentsIncomplete
+            ? isZh
+              ? '暂停状态未确认'
+              : 'Status unconfirmed'
             : isPaused
             ? isZh
               ? '继续'
               : 'Resume'
             : isZh
             ? '暂停'
-            : 'Pause'}
+              : 'Pause'}
         </Button>
 
         <span className="text-v2-micro text-v2-ink-3">
-          {isMock
+          {isCommentsIncomplete
+            ? isZh
+              ? '评论未完整读取，禁止反向写入；请先刷新以获取完整记录。'
+              : 'Comments incomplete; pause toggle disabled to prevent conflicting state. Please refresh.'
+            : isMock
             ? isZh
               ? '演示数据，不会真正暂停'
               : 'Demo mode: pause disabled'

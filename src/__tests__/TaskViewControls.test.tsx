@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as ghWriteModule from '../host/githubWrite';
 import type { HudTask } from '../ui/taskHudModel';
 import { TaskView } from '../workbench/views/TaskView';
+import { TaskNotificationIsland } from '../workbench/drawer/TaskNotificationIsland';
 import { getTakeoverAi, getTakeoverTaskId, setStoredTakeoverAi, clearStoredTakeover, providerForTakeover } from '../workbench/workbenchStorage';
 import { loadGitHubTasks } from '../ui/taskHudGithub';
 
@@ -96,7 +97,7 @@ describe('TaskView Controls & Live Inspector integration (Spec #110)', () => {
       status: 'blocked',
     };
 
-    const html = renderToStaticMarkup(<TaskView locale="zh-CN" task={blockedTask} onBack={vi.fn()} />);
+    const html = renderToStaticMarkup(<TaskNotificationIsland locale="zh-CN" task={blockedTask} />);
     expect(html).toContain('data-testid="notification-island"');
     expect(html).toContain('阻塞');
   });
@@ -608,8 +609,9 @@ describe('TaskView Controls & Live Inspector integration (Spec #110)', () => {
     expect(getTakeoverTaskId()).toBeNull();
   });
 
-  it('refresh head: awaits onRefreshData, retrieves fresh SHA and resolves head mismatch', async () => {
-    const newHead = '2222222222222222222222222222222222222222';
+  it('refresh head: deferred promise verifies pending state, failure recovery, and SHA baseline update', async () => {
+    const sha1 = '1111111111111111111111111111111111111111';
+    const sha2 = '2222222222222222222222222222222222222222';
 
     const acceptTask: HudTask = {
       ...baseTask,
@@ -617,7 +619,7 @@ describe('TaskView Controls & Live Inspector integration (Spec #110)', () => {
       pr: {
         number: 126,
         draft: false,
-        headSha: newHead,
+        headSha: sha1,
       },
     };
 
@@ -626,23 +628,193 @@ describe('TaskView Controls & Live Inspector integration (Spec #110)', () => {
     const root = createRoot(container);
     live.push({ root, container });
 
-    const onRefreshData = vi.fn().mockResolvedValue([
-      { ...acceptTask, pr: { number: 126, draft: false, headSha: newHead } },
-    ]);
-
+    // 1. Initial render with sha1 matching
     await act(async () => {
       root.render(
         <TaskView
           locale="zh-CN"
           task={acceptTask}
           onBack={vi.fn()}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain(`HEAD: ${sha1}`);
+    expect(container.textContent).not.toContain('PR HEAD 已更新');
+
+    // 2. Remote HEAD changes to sha2
+    const updatedTask: HudTask = {
+      ...acceptTask,
+      pr: {
+        ...acceptTask.pr!,
+        headSha: sha2,
+      },
+    };
+
+    let resolveRefresh: ((tasks: readonly HudTask[]) => void) | undefined;
+    const onRefreshData = vi.fn().mockImplementation(() => {
+      return new Promise<readonly HudTask[]>((resolve) => {
+        resolveRefresh = resolve;
+      });
+    });
+
+    await act(async () => {
+      root.render(
+        <TaskView
+          locale="zh-CN"
+          task={updatedTask}
+          onBack={vi.fn()}
           onRefreshData={onRefreshData}
         />
       );
     });
 
-    // Both expected and live are now refreshed to newHead
-    expect(onRefreshData).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('PR HEAD 已更新');
+    const refreshBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('刷新 HEAD'));
+    expect(refreshBtn).toBeDefined();
+
+    const acceptBtn = container.querySelector('[data-testid="accept-pass-button"]');
+    expect(acceptBtn?.hasAttribute('disabled')).toBe(true);
+
+    // 3. Click refresh HEAD -> enters pending state
+    await act(async () => {
+      refreshBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onRefreshData).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('刷新中…');
+    expect(refreshBtn?.hasAttribute('disabled')).toBe(true);
+    expect(acceptBtn?.hasAttribute('disabled')).toBe(true);
+
+    // 4. Resolve with empty/missing return -> baseline is NOT updated, mismatch warning stays
+    await act(async () => {
+      resolveRefresh?.([]);
+    });
+
+    expect(container.textContent).toContain('PR HEAD 已更新');
+    expect(container.textContent).toContain(`HEAD: ${sha1}`);
+    expect(acceptBtn?.hasAttribute('disabled')).toBe(true);
+
+    // 5. Click refresh again with successful return -> updates expectedHead to sha2
+    let resolveRefresh2: ((tasks: readonly HudTask[]) => void) | undefined;
+    onRefreshData.mockImplementationOnce(() => {
+      return new Promise<readonly HudTask[]>((resolve) => {
+        resolveRefresh2 = resolve;
+      });
+    });
+
+    const refreshBtn2 = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('刷新 HEAD'));
+    await act(async () => {
+      refreshBtn2?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('刷新中…');
+
+    await act(async () => {
+      resolveRefresh2?.([
+        { ...updatedTask, pr: { number: 126, draft: false, headSha: sha2 } },
+      ]);
+    });
+
+    // Mismatch warning resolved!
+    expect(container.textContent).not.toContain('PR HEAD 已更新');
+    expect(container.textContent).toContain(`HEAD: ${sha2}`);
+  });
+
+  it('pause control: truncated or unknown comments history disables toggle and displays unconfirmed notice', async () => {
+    const runningTaskWithTruncatedComments: HudTask = {
+      ...baseTask,
+      status: 'running',
+      commentsCompleteness: 'truncated',
+    };
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    live.push({ root, container });
+
+    await act(async () => {
+      root.render(
+        <TaskView
+          locale="zh-CN"
+          task={runningTaskWithTruncatedComments}
+          onBack={vi.fn()}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain('暂停状态未确认');
+    expect(container.textContent).toContain('评论未完整读取，禁止反向写入；请先刷新以获取完整记录。');
+    const toggleBtn = container.querySelector('[data-testid="pause-toggle-button"]');
+    expect(toggleBtn?.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('notification island: monitors multiple needs-you tasks and deduplicates desktop notifications', async () => {
+    const notificationMock = vi.fn();
+    const originalNotification = window.Notification;
+    Object.defineProperty(window, 'Notification', {
+      value: notificationMock,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(Notification, 'permission', {
+      value: 'granted',
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(document, 'hidden', {
+      value: true,
+      writable: true,
+      configurable: true,
+    });
+
+    try {
+      const taskA: HudTask = { ...baseTask, id: 'task-a', status: 'blocked' };
+      const taskB: HudTask = { ...baseTask, id: 'task-b', status: 'accept' };
+
+      const container = document.createElement('div');
+      document.body.append(container);
+      const root = createRoot(container);
+      live.push({ root, container });
+
+      const onNavigate = vi.fn();
+
+      await act(async () => {
+        root.render(
+          <TaskNotificationIsland
+            tasks={[taskA, taskB]}
+            currentTaskId="other-task"
+            locale="zh-CN"
+            onNavigate={onNavigate}
+          />
+        );
+      });
+
+      // Both tasks should have triggered desktop notifications independently
+      expect(notificationMock).toHaveBeenCalledTimes(2);
+
+      // UI island displays first item with +1 badge
+      expect(container.textContent).toContain('+1');
+      expect(container.textContent).toContain('查看');
+
+      // Click view navigates to taskA
+      const viewBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('查看'));
+      await act(async () => {
+        viewBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      expect(onNavigate).toHaveBeenCalledWith(taskA);
+    } finally {
+      Object.defineProperty(window, 'Notification', {
+        value: originalNotification,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(document, 'hidden', {
+        value: false,
+        writable: true,
+        configurable: true,
+      });
+    }
   });
 
 });

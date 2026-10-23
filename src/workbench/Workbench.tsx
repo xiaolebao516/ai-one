@@ -33,7 +33,6 @@ import { ResourcesView } from './views/ResourcesView';
 import { TaskView } from './views/TaskView';
 import { TaskNotificationIsland } from './drawer/TaskNotificationIsland';
 import { getTakeoverTaskId, setStoredTakeoverTaskId } from './workbenchStorage';
-import { isNeedsYou } from '../ui/taskHudModel';
 import { TasksView } from './views/TasksView';
 
 const NAV_ICON: Record<NavView, V2IconName> = { home: 'home', tasks: 'list', chat: 'message', flows: 'flow', resources: 'users' };
@@ -80,13 +79,6 @@ export function Workbench({ locale, onOpenClassic, onTakeoverAi, githubLoader, d
   const mode = resolveTheme(data.prefs.theme, useSystemDark());
   const current = resolveRoute(route, data.tasks);
 
-  const activeNeedsYou = useMemo(() => {
-    if (current.view === 'task') {
-      return data.tasks.find((t) => t.id !== current.taskId && isNeedsYou(t.status));
-    }
-    return data.tasks.find((t) => isNeedsYou(t.status));
-  }, [current, data.tasks]);
-
   // A task that is gone from a settled data set is gone: make the fallback the real route, so the
   // old task does not pop back up when the data source flips again. While loading, keep the route.
   const fellBack = route.view === 'task' && current.view !== 'task';
@@ -96,11 +88,11 @@ export function Workbench({ locale, onOpenClassic, onTakeoverAi, githubLoader, d
   const go = useCallback((next: WorkbenchRoute) => setRoute(next), []);
   const openTask = useCallback((task: HudTask) => setRoute({ view: 'task', taskId: task.id }), []);
 
-  const handleNavigateRootIsland = useCallback(() => {
-    if (activeNeedsYou) {
-      openTask(activeNeedsYou);
+  const handleNavigateNotification = useCallback((targetTask?: HudTask) => {
+    if (targetTask) {
+      openTask(targetTask);
     }
-  }, [activeNeedsYou, openTask]);
+  }, [openTask]);
 
   useHideProviderWebviews();
 
@@ -235,13 +227,12 @@ export function Workbench({ locale, onOpenClassic, onTakeoverAi, githubLoader, d
           fallbackFocus={mainRef}
         />
       ) : null}
-      {activeNeedsYou ? (
-        <TaskNotificationIsland
-          task={activeNeedsYou}
-          locale={locale}
-          onNavigate={handleNavigateRootIsland}
-        />
-      ) : null}
+      <TaskNotificationIsland
+        tasks={data.tasks}
+        currentTaskId={current.view === 'task' ? current.taskId : undefined}
+        locale={locale}
+        onNavigate={handleNavigateNotification}
+      />
     </V2Scope>
   );
 }

@@ -181,6 +181,16 @@ function makeTask(
     }
   }
   const issueRec = issue as unknown as Record<string, unknown> | undefined;
+  let commentsCompleteness: 'complete' | 'truncated' | 'unknown' = 'complete';
+  if (issueRec?.commentsTruncated) {
+    commentsCompleteness = 'truncated';
+  } else if (
+    Array.isArray(snapshot.errors) &&
+    snapshot.errors.some((e) => typeof e?.url === 'string' && issue && e.url.includes(`/issues/${issue.number}/comments`))
+  ) {
+    commentsCompleteness = 'unknown';
+  }
+
   const issueComments = (issueRec?.comments as Array<{ id?: string | number; user?: string; body?: string; createdAt?: string; observedMinutesAgo?: number }>) || [];
   if (Array.isArray(issueComments)) {
     for (const c of issueComments) {
@@ -272,6 +282,7 @@ function makeTask(
       ? { review: ((pr as unknown as Record<string, unknown>)?.review || (issue as unknown as Record<string, unknown>)?.review) as HudTask['review'] }
       : {}),
     evidence,
+    commentsCompleteness,
     ...(gap ? { gap } : {}),
   };
 }

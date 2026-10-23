@@ -111,6 +111,8 @@ export interface HudTask {
   ci?: HudCi;
   review?: { verdict: 'pass' | 'revise' | 'blocked' | 'none'; headSha?: string; by?: LText };
   evidence: HudEvidence[];
+  /** Comments history completeness: complete, truncated at pagination limit, or unknown on read errors. */
+  commentsCompleteness?: 'complete' | 'truncated' | 'unknown';
   /** Plain-language reason data is missing, shown instead of an invented value. */
   gap?: LText;
 }
