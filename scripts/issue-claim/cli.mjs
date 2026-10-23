@@ -74,7 +74,8 @@ function readClaim(issue, { cwd, remote }) {
   return { sha, agent, at, beat, generation, message };
 }
 
-export function claim(issue, agent, { cwd, remote = 'origin', now = new Date() } = {}) {
+export function claim(issue, agent, { cwd, remote = 'origin' } = {}) {
+  const now = new Date(); // clocks are not injectable: a faked timestamp would fake staleness
   // Same holder (same tool + session string) resuming: keep the existing claim instead of failing.
   const existing = readClaim(issue, { cwd, remote });
   if (existing) return existing.agent === agent ? { ok: true, sha: existing.sha, resumed: true } : { ok: false, holder: existing };
@@ -143,11 +144,12 @@ function advanceClaim(issue, expected, commit, { cwd, remote }) {
   throw new Error(`claim update failed: ${pushed.stderr || pushed.stdout}`);
 }
 
-export function heartbeat(issue, agent, { cwd, remote = 'origin', now = new Date() } = {}) {
+export function heartbeat(issue, agent, { cwd, remote = 'origin' } = {}) {
+  const now = new Date(); // not injectable, and never earlier than the last recorded sign of life
   const holder = readClaim(issue, { cwd, remote });
   if (!holder) return { ok: false, missing: true };
   if (holder.agent !== agent) return { ok: false, holder };
-  const commit = commitClaim(issue, { agent, at: holder.at, beat: now.toISOString(), generation: holder.generation }, holder.sha, { cwd });
+  const commit = commitClaim(issue, { agent, at: holder.at, beat: new Date(Math.max(now.getTime(), Date.parse(holder.beat ?? holder.at) || 0)).toISOString(), generation: holder.generation }, holder.sha, { cwd });
   return advanceClaim(issue, holder.sha, commit, { cwd, remote });
 }
 

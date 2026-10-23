@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
-import { EXIT, main, takeover } from '../cli.mjs';
+import { EXIT, heartbeat, main, takeover } from '../cli.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli.mjs');
 let root;
@@ -140,6 +140,9 @@ test('a live claim cannot be taken, and the window is not a takeover option', ()
   // Neither a shrunk window nor an injected future clock can make a live holder look stale.
   const shrunk = run(b, ['takeover', '92', '--agent', 'rescuer', '--stopped-evidence', 'x', '--suspect-after-min', '0.0001']);
   assert.equal(shrunk.code, EXIT.error);
+  // A heartbeat cannot be backdated through the exported API to make a live claim look stale.
+  assert.equal(heartbeat(92, 'busy', { cwd: a, now: new Date(Date.now() - 3 * 3600 * 1000) }).ok, true);
+  assert.equal(takeover(92, 'rescuer', 'x', { cwd: b }).ok, false);
   const future = takeover(92, 'rescuer', 'x', { cwd: b, now: new Date(Date.now() + 3600 * 1000) });
   assert.equal(future.ok, false);
   assert.match(run(b, ['show', '92']).out, /claimed by busy/);
