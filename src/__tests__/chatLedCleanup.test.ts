@@ -288,3 +288,20 @@ describe('chat-led cleanup execution', () => {
     expect(summarizeCleanup(results.filter((result) => result.outcome !== 'manual')).completed).toBe(true);
   });
 });
+
+describe('chat-led cleanup stops when progress cannot be saved', () => {
+  it('leaves everything after the failed checkpoint for manual cleanup and never touches it', async () => {
+    const cleaner = makeCleaner();
+    const run = makeRun([conversation(FIRST_URL), conversation(SECOND_URL)]);
+    const plan = planCleanup(run, [cleaner]);
+    const results = await executeCleanup(plan, [cleaner], {
+      onProgress: () => {
+        throw new Error('storage full');
+      },
+    });
+    expect(results.map((r) => r.outcome)).toEqual(['deleted', 'manual']);
+    expect(cleaner.deleteConversation).toHaveBeenCalledTimes(1);
+    expect(cleaner.deleteConversation).toHaveBeenCalledWith(FIRST_URL);
+    expect(results[1].note).toContain('progress could not be saved');
+  });
+});

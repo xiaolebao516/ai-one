@@ -9,7 +9,7 @@ import {
   startRun,
   stopRun,
 } from '../workflow/chatLed/machine';
-import { CHAT_LED_STORAGE_KEY, loadRuns, saveRun, type ChatLedStorage } from '../workflow/chatLed/store';
+import { CHAT_LED_STORAGE_KEY, loadRuns, saveRun, saveRunChecked, type ChatLedStorage } from '../workflow/chatLed/store';
 import type { ChatLedRun } from '../workflow/chatLed/types';
 
 function memoryStorage(): ChatLedStorage & { data: Map<string, string> } {
@@ -74,5 +74,37 @@ describe('cleanup progress is stored item by item', () => {
       JSON.stringify([{ ...stoppedRunWithTwoConversations(), phase: 'awaiting-user', stop: { type: 'round-limit', limit: 8 } }]),
     );
     expect(loadRuns(storage)[0].phase).toBe('stopped');
+  });
+});
+
+describe('persistence failures are visible and pending sessions recover', () => {
+  it('saveRunChecked reports a failed or missing write instead of pretending it was saved', () => {
+    const run = stoppedRunWithTwoConversations();
+    const failing: ChatLedStorage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('quota');
+      },
+    };
+    expect(saveRunChecked(failing, run, []).persisted).toBe(false);
+    expect(saveRunChecked(undefined, run, []).persisted).toBe(false);
+    expect(saveRunChecked(memoryStorage(), run, []).persisted).toBe(true);
+  });
+
+  it('a session creation that was pending when the app closed loads as a manual-only record', () => {
+    const storage = memoryStorage();
+    const base = stoppedRunWithTwoConversations();
+    const pending: ChatLedRun = {
+      ...base,
+      conversations: [],
+      sessionInitializations: [{ id: 'i1', provider: 'claude', status: 'pending', startedAt: 1, updatedAt: 1 }],
+    };
+    saveRun(storage, pending, []);
+    const [loaded] = loadRuns(storage);
+    expect(loaded.sessionInitializations[0].status).toBe('manual');
+    expect(loaded.conversations).toEqual([
+      expect.objectContaining({ provider: 'claude', url: '', registrationStatus: 'manual' }),
+    ]);
+    expect(isRunActive(loaded)).toBe(false);
   });
 });

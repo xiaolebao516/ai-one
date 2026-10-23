@@ -1,4 +1,4 @@
-import { interruptCleanup } from './machine';
+import { interruptCleanup, recoverPendingInitialization } from './machine';
 import type { ChatLedRun } from './types';
 
 /**
@@ -39,7 +39,7 @@ export function loadRuns(storage: ChatLedStorage | undefined): ChatLedRun[] {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(isRunLike).map((loaded) => {
-      const run = interruptCleanup(loaded, Date.now());
+      const run = interruptCleanup(recoverPendingInitialization(loaded, Date.now()), Date.now());
       return IN_FLIGHT.has(run.phase)
         ? {
             ...run,
@@ -54,6 +54,22 @@ export function loadRuns(storage: ChatLedStorage | undefined): ChatLedRun[] {
     });
   } catch {
     return [];
+  }
+}
+
+/** Like saveRun, but tells the caller whether the write really happened (false = not persisted). */
+export function saveRunChecked(
+  storage: ChatLedStorage | undefined,
+  run: ChatLedRun,
+  existing: readonly ChatLedRun[],
+): { runs: ChatLedRun[]; persisted: boolean } {
+  const runs = [run, ...existing.filter((item) => item.id !== run.id)].slice(0, MAX_STORED_RUNS);
+  if (!storage) return { runs, persisted: false };
+  try {
+    storage.setItem(CHAT_LED_STORAGE_KEY, JSON.stringify(runs));
+    return { runs, persisted: true };
+  } catch {
+    return { runs, persisted: false };
   }
 }
 

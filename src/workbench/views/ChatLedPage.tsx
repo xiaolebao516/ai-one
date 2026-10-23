@@ -10,7 +10,7 @@ import { createChatGptCleaner } from '../../workflow/chatLed/drivers/chatgpt';
 import { createRealChatLedEnv, prepareProviderPage } from '../../workflow/chatLed/env';
 import { exportRunMarkdown } from '../../workflow/chatLed/exportMarkdown';
 import { appendCleanupResult, beginCleanup, closeRun, finishCleanup, interruptCleanup, isRunActive, recordExport } from '../../workflow/chatLed/machine';
-import { loadRuns, saveRun } from '../../workflow/chatLed/store';
+import { loadRuns, saveRunChecked } from '../../workflow/chatLed/store';
 import type { ChatLedRun } from '../../workflow/chatLed/types';
 import { workbenchText } from '../workbenchText';
 import { ChatLedView } from './ChatLedView';
@@ -65,13 +65,16 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
   const [takeover, setTakeover] = useState<AIProvider | undefined>();
   const [cleanupBusy, setCleanupBusy] = useState(false);
   const controllers = useRef(new Map<string, ChatLedController>());
+  const persistedRef = useRef(true); // did the latest write really reach storage?
   const runsRef = useRef(runs);
   runsRef.current = runs;
 
   const persist = useCallback(
     (run: ChatLedRun) => {
-      runsRef.current = saveRun(storage, run, runsRef.current);
-      setRuns(runsRef.current);
+      const saved = saveRunChecked(storage, run, runsRef.current);
+      persistedRef.current = saved.persisted;
+      runsRef.current = saved.runs;
+      setRuns(saved.runs);
     },
     [storage],
   );
@@ -241,10 +244,21 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
     // The run is marked "cleanup running" and every confirmed item is stored right away, so a
     // reload in the middle never replays a deletion (see interruptCleanup).
     apply((run) => beginCleanup(run, Date.now()));
+    if (!persistedRef.current) {
+      // The "cleanup running" marker did not reach storage: a reload could replay deletions. Do nothing.
+      apply((run) => interruptCleanup(run, Date.now()));
+      setCleanupBusy(false);
+      setError(text.t('chatLedPersistFailed'));
+      return;
+    }
     try {
       await prepareProviderPage('chatgpt').catch(() => undefined);
       await executeCleanup(plan, cleaners, {
-        onProgress: (_index, result) => apply((run) => appendCleanupResult(run, result, Date.now())),
+        onProgress: (_index, result) => {
+          apply((run) => appendCleanupResult(run, result, Date.now()));
+          // Throwing stops the batch: a result that could not be saved must not be followed by more deletions.
+          if (!persistedRef.current) throw new Error('progress not persisted');
+        },
       });
       apply((run) => finishCleanup(run, Date.now()));
     } catch {

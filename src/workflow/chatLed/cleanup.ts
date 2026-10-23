@@ -237,6 +237,7 @@ export async function executeCleanup(
   plan: CleanupPlanItem[],
   cleaners: readonly ConversationCleaner[],
   hooks?: {
+    /** Persist the item result. Throwing means "could not save": the batch stops (fail closed). */
     onProgress?(i: number, r: CleanupItemResult): void;
   },
 ): Promise<CleanupItemResult[]> {
@@ -263,7 +264,14 @@ export async function executeCleanup(
     try {
       hooks?.onProgress?.(i, result);
     } catch {
-      // Progress observers must not interrupt cleanup.
+      // The checkpoint could not be saved. Going on would risk repeating an irreversible step
+      // after a reload, so stop here: everything not yet touched is left for manual cleanup.
+      for (let rest = i + 1; rest < plan.length; rest += 1) {
+        results.push(
+          resultFor(plan[rest], 'manual', 'Cleanup stopped because its progress could not be saved; check this conversation by hand.'),
+        );
+      }
+      break;
     }
   }
 

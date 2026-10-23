@@ -60,6 +60,32 @@ export function hasPendingInitialization(run: ChatLedRun): boolean {
   );
 }
 
+/**
+ * Loaded after the app closed while a session creation was still unresolved: nothing can finish it
+ * now, so it becomes a manual-only record (empty address) instead of locking the run forever or
+ * being cleaned up without confirmation.
+ */
+export function recoverPendingInitialization(run: ChatLedRun, now: number): ChatLedRun {
+  if (!hasPendingInitialization(run)) return run;
+  const pending = (run.sessionInitializations ?? []).filter((item) => item.status === 'pending');
+  const conversations = [...run.conversations];
+  for (const item of pending) {
+    if (conversations.some((c) => c.provider === item.provider && c.url === '')) continue;
+    conversations.push({ provider: item.provider, url: '', createdByAiOne: true, registrationStatus: 'manual', registeredAt: now });
+  }
+  return {
+    ...run,
+    initializationPending: false,
+    sessionInitializations: (run.sessionInitializations ?? []).map((item) =>
+      item.status === 'pending'
+        ? { ...item, status: 'manual' as const, updatedAt: now, note: 'The app closed before this session creation was confirmed; check it by hand.' }
+        : item,
+    ),
+    conversations,
+    updatedAt: now,
+  };
+}
+
 /** A run that is using, waiting to use, or still registering shared provider pages is active. */
 export function isRunActive(run: ChatLedRun): boolean {
   return (
