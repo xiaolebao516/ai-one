@@ -10,6 +10,7 @@ import {
   builtinStages,
   duplicateStage,
   resolveStage,
+  type FlowDef,
   type FlowsFile,
   type StageDef,
 } from '../stages/flowModel';
@@ -81,7 +82,7 @@ describe('flow editor draft helpers', () => {
   });
 
   it('maps Alt+Up and Alt+Down to the same move used by stage cards', () => {
-    const flow = builtinFlows()[0];
+    const flow: FlowDef = { id: 'flow.move', name: 'Move test', stages: [{ stageId: 'a' }, { stageId: 'b' }, { stageId: 'c' }], builtin: false };
     expect(stageMoveTarget(1, 'ArrowUp', true)).toBe(0);
     expect(stageMoveTarget(1, 'ArrowDown', true)).toBe(2);
     expect(stageMoveTarget(1, 'ArrowDown', false)).toBeNull();
