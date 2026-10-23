@@ -3,7 +3,6 @@ import type { Locale } from '../../i18n/resolve';
 import { Button, Card, Notice } from '../../ui/v2';
 import { workbenchText } from '../workbenchText';
 import type { AcceptanceState } from '../useUserAcceptance';
-import type { AcceptanceItem } from '../userAcceptance';
 
 export function UserAcceptanceSection({ locale, state, demo }: {
   locale: Locale; state: AcceptanceState; demo: boolean;
@@ -19,12 +18,12 @@ export function UserAcceptanceSection({ locale, state, demo }: {
   return (
     <section aria-labelledby="home-acceptances" className="rounded-v2-xl border-2 border-v2-you bg-v2-surface p-v2-lg">
       <h2 id="home-acceptances" className="font-v2-serif text-v2-lead font-bold text-v2-ink">
-        {text.t('acceptanceHeading', { n: visible.length })}
+        {text.t('acceptanceHeading', { n: state.loading ? '?' : state.partial ? `≥${visible.length}` : visible.length })}
       </h2>
       <p className="mt-v2-xs text-v2-meta text-v2-ink-2">{text.t('acceptanceHint')}</p>
       {state.loading ? <p role="status" className="mt-v2-sm">{text.t('acceptanceLoading')}</p> : null}
       {state.partial ? <Notice tone="unknown" className="mt-v2-sm" title={text.t('acceptancePartial')} /> : null}
-      {state.storageError ? <Notice tone="block" live="assertive" className="mt-v2-sm" title={text.t('acceptanceStorageFailed')} /> : null}
+      {state.storageError ? <Notice tone="block" live="assertive" className="mt-v2-sm" title={text.t(state.storageErrorPhase === 'after-write' ? 'acceptanceResultStorageFailed' : 'acceptanceStorageFailed')} /> : null}
       {pending.length ? (
         <Notice tone="unknown" live="polite" className="mt-v2-sm" title={text.t('acceptanceNotSynced')}>
           {pending.map((r) => <p key={r.key}>{r.repo} #{r.issue}: {r.title} — {r.sync === 'unconfirmed' ? text.t('acceptanceUncertain') : text.t('acceptanceUnsynced')}</p>)}

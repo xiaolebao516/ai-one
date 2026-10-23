@@ -52,9 +52,21 @@ export function parseAcceptanceSection(repo: string, issue: number, body: string
   const lines = body.split(/\r?\n/u);
   const chunks: string[] = [];
   let inside = false, depth = 0, current: string[] = [];
+  let fence: { marker: string; length: number } | undefined;
   const flush = () => { if (current.some((line) => line.trim())) chunks.push(current.join('\n')); current = []; };
   for (const line of lines) {
-    const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/u);
+    const delimiter = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/u);
+    if (fence) {
+      if (inside) current.push(line);
+      if (delimiter && delimiter[1][0] === fence.marker && delimiter[1].length >= fence.length && !delimiter[2].trim()) fence = undefined;
+      continue;
+    }
+    if (delimiter) {
+      fence = { marker: delimiter[1][0], length: delimiter[1].length };
+      if (inside) current.push(line);
+      continue;
+    }
+    const heading = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/u);
     if (heading) {
       if (inside && heading[1].length <= depth) { flush(); inside = false; }
       if (!inside && /^待用户验收\s*[:：]?$/u.test(heading[2].trim())) {
@@ -138,12 +150,13 @@ export function saveAcceptanceRecords(storage: AcceptanceStorage, records: Accep
 /** Only one existing #106 whitelisted comment action. Never mutate labels or PRs. */
 export async function sendAcceptanceComment(
   writer: AcceptanceWriter, item: AcceptanceItem, kind: 'approved' | 'feedback', feedback = '',
+  canSend: () => boolean = () => true,
 ): Promise<'confirmed' | 'failed' | 'unconfirmed'> {
   const text = kind === 'approved'
     ? `用户验收：没问题。\n验收项：${item.title.slice(0, 220)}`
     : `用户验收：有问题。\n验收项：${item.title.slice(0, 220)}\n反馈：${feedback.trim()}`;
   try {
-    if (!(await writer.status()).available) return 'failed';
+    if (!canSend() || !(await writer.status()).available || !canSend()) return 'failed';
     const result = await writer.comment({ repo: item.repo, issue: item.issue, text });
     if (result.status === 'confirmed' && result.code === 'ok'
       && result.steps.some((step) => step.step === 'comment' && step.state === 'confirmed')) return 'confirmed';

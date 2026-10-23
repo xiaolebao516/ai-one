@@ -12,6 +12,7 @@ import { HomeView } from '../workbench/views/HomeView';
 import { TaskView } from '../workbench/views/TaskView';
 import { TasksView } from '../workbench/views/TasksView';
 import { workbenchText } from '../workbench/workbenchText';
+import type { AcceptanceState } from '../workbench/useUserAcceptance';
 
 function visibleText(html: string): string {
   return html
@@ -43,6 +44,11 @@ describe('Workbench shell', () => {
       expect(ids).toContain(id);
     }
     expect(ids.filter((id) => id.startsWith('task-'))).toHaveLength(TASK_HUD_MOCK_TASKS.length);
+  });
+  it('retains the demo task model acceptance count', () => {
+    const html = renderToStaticMarkup(<Workbench locale="en" onOpenClassic={noop} />);
+    const count = TASK_HUD_MOCK_TASKS.filter((task) => task.status === 'accept').length;
+    expect(html).toContain(`aria-label="${count} acceptances"`);
   });
 });
 
@@ -80,6 +86,14 @@ describe('Overview', () => {
     const text = visibleText(renderToStaticMarkup(<HomeView locale="en" tasks={[running, unreadable]} health="complete" onOpenTask={noop} onShowTasks={noop} />));
     expect(text).toContain('1 more with an unreadable state');
     expect(text).not.toContain('nothing waiting for you');
+  });
+  it.each(['blocked', 'decide'] as const)('keeps independent %s work after the same Issue acceptance is acknowledged', (status) => {
+    const task = { ...TASK_HUD_MOCK_TASKS[0], repo: 'o/r', issue: 7, status, title: { en: 'Independent action', zh: '仍需处理' } };
+    const item = { key: 'o/r:7:test', repo: 'o/r', issue: 7, title: 'Check appearance' };
+    const acceptance: AcceptanceState = { items: [item], records: { [item.key]: { ...item, kind: 'approved', sync: 'confirmed' } },
+      loading: false, partial: false, errors: [], storageError: false, submit: async () => {} };
+    const html = renderToStaticMarkup(<HomeView locale="en" tasks={[task]} health="complete" acceptance={acceptance} onOpenTask={noop} onShowTasks={noop} />);
+    expect(visibleText(html)).toContain('Independent action');
   });
 });
 

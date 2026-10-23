@@ -40,6 +40,15 @@ describe('user acceptance parsing', () => {
     const fresh = parseAcceptanceSection(repo, 4, '## 待用户验收\n- 检查 B')[0];
     expect(old.key).not.toBe(fresh.key);
   });
+  it.each(['```', '~~~'])('keeps %s code blocks inside the real section without inventing headings or entries', (fence) => {
+    const body = `${fence}markdown\n## 待用户验收\n- 不是验收\n${fence}\n   ## 待用户验收\n- 检查示例\n${fence}text\n## 示例\n- 代码里的列表\n${fence}\n- 检查真实后续项\n   ## 其他\n- 不属于验收`;
+    const items = parseAcceptanceSection(repo, 4, body);
+    expect(items).toHaveLength(2);
+    expect(items[0].raw).toContain('## 示例');
+    expect(items[0].raw).toContain('- 代码里的列表');
+    expect(items[1].title).toBe('检查真实后续项');
+    expect(items.some((entry) => entry.raw?.includes('不是验收'))).toBe(false);
+  });
 });
 describe('fixed GitHub endpoint and whitelist', () => {
   it('reads old pages using only already whitelisted read routes', async () => {
@@ -60,7 +69,7 @@ describe('fixed GitHub endpoint and whitelist', () => {
     const comment = vi.fn(async () => ({ status: 'confirmed' as const, code: 'ok' as const,
       message: '已确认写入 GitHub', steps: [{ step: 'comment' as const, state: 'confirmed' as const }] }));
     let available = false;
-    const status = vi.fn(async () => ({ available, reason: available ? 'ok' as const : 'no_login' as const }));
+    const status = vi.fn(async () => ({ available, reason: available ? 'ok' as const : 'not_logged_in' as const }));
     expect(await sendAcceptanceComment({ status, comment }, item, 'approved')).toBe('failed');
     expect(comment).not.toHaveBeenCalled();
     available = true;

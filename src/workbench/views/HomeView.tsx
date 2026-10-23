@@ -34,13 +34,13 @@ export function HomeView({ locale, tasks, health, acceptance, channel, onOpenTas
   const text = workbenchText(locale);
   const lead = headline(tasks);
   const acceptanceIssues = acceptance ? acceptanceIssueKeys(acceptance) : new Set<string>();
-  const needsYou = needsYouTasks(tasks).filter((task) => !(task.issue && acceptanceIssues.has(task.repo.toLowerCase() + ':' + task.issue)));
+  const needsYou = needsYouTasks(tasks).filter((task) => !(task.status === 'accept' && task.issue && acceptanceIssues.has(task.repo.toLowerCase() + ':' + task.issue)));
   const moving = inProgressTasks(tasks);
   const acceptanceWaiting = acceptance ? pendingAcceptanceCount(acceptance) : 0;
   const countable = isCountable(health);
   const byState = categoryHealth(health, tasks);
   let title: string;
-  if (acceptanceWaiting > 0 && health !== 'demo') title = text.t('headlineAcceptanceWaiting', { n: acceptanceWaiting });
+  if (acceptanceWaiting > 0 && health !== 'demo') title = text.t('headlineAcceptanceWaiting', { n: countLabel(acceptanceWaiting, acceptance?.partial ? 'partial' : 'complete') });
   else if (health === 'loading') title = text.t('headlineLoading');
   else if (health === 'failed') title = text.t('headlineFailed');
   // A partial read never supports "nothing else": what was not read may hold work for the user.

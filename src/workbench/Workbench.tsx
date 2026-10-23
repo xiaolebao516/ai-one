@@ -28,7 +28,7 @@ import {
 } from './workbenchModel';
 import { workbenchText, type WorkbenchText } from './workbenchText';
 import { HomeView } from './views/HomeView';
-import { acceptanceIssueKeys, pendingAcceptanceCount } from './views/UserAcceptanceSection';
+import { pendingAcceptanceCount } from './views/UserAcceptanceSection';
 import { useUserAcceptance, type AcceptanceLoader, type AcceptanceState } from './useUserAcceptance';
 import type { AcceptanceWriter } from './userAcceptance';
 import { ChatLedPage } from './views/ChatLedPage';
@@ -289,12 +289,11 @@ function TitleBar({ text, tasks, health, acceptance, channel, onPalette, onShowT
   // The island shows counts by state, so unreadable task states make them "at least" too.
   const byState = categoryHealth(health, tasks);
   const count = (n: number) => countLabel(n, byState);
-  const keys = acceptanceIssueKeys(acceptance);
-  const decisions = tasks.filter((task) => (task.status === 'decide' || task.status === 'blocked') &&
-    !(task.issue && keys.has(task.repo.toLowerCase() + ':' + task.issue))).length;
-  const accepts = pendingAcceptanceCount(acceptance);
-  const acceptCount = acceptance.loading || health === 'loading' ? '?' :
-    countLabel(accepts, acceptance.partial ? 'partial' : health);
+  const decisions = tasks.filter((task) => task.status === 'decide' || task.status === 'blocked').length;
+  const accepts = health === 'demo' ? tasks.filter((task) => task.status === 'accept').length : pendingAcceptanceCount(acceptance);
+  // Acceptance has its own read; task-list failures do not make this independent count unknown.
+  const acceptCount = health !== 'demo' && acceptance.loading ? '?' :
+    countLabel(accepts, health !== 'demo' && acceptance.partial ? 'partial' : 'complete');
   const decisionLabel = text.t('islandDecision', { n: count(decisions) });
   const acceptLabel = text.t('islandAcceptance', { n: acceptCount });
   const islandLabel = text.t('islandAriaSplit', {
@@ -317,13 +316,14 @@ function TitleBar({ text, tasks, health, acceptance, channel, onPalette, onShowT
         </button>
       </div>
       <div className="flex h-7 items-center gap-v2-sm rounded-v2-pill bg-v2-island px-v2-sm text-v2-meta font-semibold text-v2-on-island" title={islandLabel}>
-        <button type="button" onClick={onShowTasks}
+        <button type="button" onClick={onShowTasks} aria-label={islandLabel}
           className="flex items-center gap-v2-sm rounded-v2-pill px-v2-xs focus-visible:outline focus-visible:outline-2">
           <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-v2-run" />
           {text.t('islandInProgress', { n: count(summary.inProgress) })}
           <span aria-hidden="true" className="h-3 w-px bg-v2-on-island opacity-30" />
           <span aria-hidden="true" className="h-1.5 w-1.5 rotate-45 bg-v2-you" />
           {decisionLabel}
+          <span className="sr-only">{text.t('islandNeedsYou', { n: count(decisions) })}</span>
         </button>
         <span aria-hidden="true" className="h-3 w-px bg-v2-on-island opacity-30" />
         <button type="button" onClick={onShowAcceptances} aria-label={acceptLabel}
