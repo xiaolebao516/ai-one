@@ -115,7 +115,78 @@ function buttonByText(container: ParentNode, value: string): HTMLButtonElement |
   return [...container.querySelectorAll('button')].find((button) => button.textContent?.trim() === value) as HTMLButtonElement | undefined;
 }
 
+async function editComposer(container: HTMLElement, value: string) {
+  const composer = container.querySelector<HTMLTextAreaElement>('#chat-composer')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(composer, value);
+    composer.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  return composer;
+}
+
+async function submitComposer(container: HTMLElement) {
+  await act(async () => {
+    container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  });
+}
+
+async function attachFile(container: HTMLElement, name: string, content = Promise.resolve(new TextEncoder().encode('file content').buffer)) {
+  const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+  const file = new File(['file content'], name, { type: 'text/plain' });
+  Object.defineProperty(file, 'arrayBuffer', { value: () => content });
+  await act(async () => {
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
 describe('ChatView', () => {
+  it.each(['same-session', 'new-session', 'switch-session'])('preserves later composer edits when an old send finishes: %s', async (scenario) => {
+    let finishSend!: (sent: boolean) => void;
+    const runtime = fakeRuntime({ sendMessage: vi.fn(() => new Promise<boolean>((resolve) => { finishSend = resolve; })) });
+    const { root, container } = await mount(runtime);
+    await editComposer(container, 'original sent draft');
+    await submitComposer(container);
+    expect(runtime.sendMessage).toHaveBeenCalledOnce();
+    if (scenario !== 'same-session') {
+      const next = createConversationSession({ id: 'session-B', title: 'Session B', mode: 'free', messages: [] });
+      if (scenario === 'new-session') await click(buttonByText(container, 'New chat'));
+      else await click(buttonByText(container, 'Test chat'));
+      await act(async () => root.render(
+        <I18nProvider language="en"><ChatView locale="en" runtime={{ ...runtime, activeSessionId: next.id, activeSession: next, sessions: [runtime.activeSession, next] }} onConvertToTask={() => {}} /></I18nProvider>,
+      ));
+    }
+    const composer = await editComposer(container, 'later unsent draft');
+    await attachFile(container, 'later.txt');
+    expect(container.textContent).toContain('later.txt');
+    await act(async () => finishSend(true));
+    expect(composer.value).toBe('later unsent draft');
+    expect(container.textContent).toContain('later.txt');
+  });
+
+  it.each([true, false])('only consumes unchanged composer contents after accepted send: %s', async (sent) => {
+    let finishSend!: (sent: boolean) => void;
+    const runtime = fakeRuntime({ sendMessage: vi.fn(() => new Promise<boolean>((resolve) => { finishSend = resolve; })) });
+    const { container } = await mount(runtime);
+    const composer = await editComposer(container, 'original draft');
+    await attachFile(container, 'original.txt');
+    await submitComposer(container);
+    await act(async () => finishSend(sent));
+    expect(composer.value).toBe(sent ? '' : 'original draft');
+    expect(container.textContent?.includes('original.txt')).toBe(!sent);
+  });
+
+  it('does not restore a file read started before a new conversation', async () => {
+    let finishRead!: (data: ArrayBuffer) => void;
+    const { container } = await mount(fakeRuntime());
+    await attachFile(container, 'old.txt', new Promise((resolve) => { finishRead = resolve; }));
+    await click(buttonByText(container, 'New chat'));
+    await attachFile(container, 'new.txt');
+    await act(async () => finishRead(new TextEncoder().encode('old content').buffer));
+    expect(container.textContent).toContain('new.txt');
+    expect(container.textContent).not.toContain('old.txt');
+  });
+
   it('renders completed, generating, not-sent, failed and timed-out card states', async () => {
     const runtime = fakeRuntime();
     const { root, container } = await mount(runtime);

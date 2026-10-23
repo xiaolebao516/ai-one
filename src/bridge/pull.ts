@@ -206,6 +206,7 @@ async function pullProviderInner(provider: AIProvider, options: { force?: boolea
     return;
   }
   let maxMid = 0;
+  let ackBoot: string | undefined;
   let sawDone = false;
   const providerBoot = activeBoot.get(provider);
   for (const message of batch) {
@@ -213,6 +214,7 @@ async function pullProviderInner(provider: AIProvider, options: { force?: boolea
     if (!message.bootId || typeof message.mid !== 'number' || !Number.isFinite(message.mid)) continue;
     if (providerBoot && message.bootId !== providerBoot) continue;
     maxMid = Math.max(maxMid, message.mid);
+    ackBoot = message.bootId;
     const previous = lastConsumed.get(provider);
     if (!previous || previous.bootId !== message.bootId) {
       lastConsumed.set(provider, { bootId: message.bootId, mid: 0 });
@@ -224,8 +226,10 @@ async function pullProviderInner(provider: AIProvider, options: { force?: boolea
     if (message.action === 'RESPONSE_DONE') sawDone = true;
     publish({ ...message, provider, transport: 'pull' });
   }
-  if (maxMid > 0 && ownsAwaiting(provider, context)) {
-    await host.provider.eval(provider, `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.ackBulk(${maxMid});`);
+  // A DONE subscriber can synchronously settle the waiter and change the awaiting context.
+  // ACK is immutable outbox bookkeeping, not permission to change that new waiting state.
+  if (maxMid > 0 && ackBoot) {
+    await host.provider.eval(provider, `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.bootId === ${JSON.stringify(ackBoot)} && window.__MAC_BRIDGE__.ackBulk(${maxMid});`);
   }
   if (sawDone && ownsAwaiting(provider, context)) setProviderAwaiting(provider, false);
 }

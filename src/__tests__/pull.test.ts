@@ -92,7 +92,7 @@ describe('pull transport', () => {
     await pullProvider(provider);
     cleanup();
     expect(messages.filter((msg) => msg.transport === 'pull').map((msg) => msg.mid)).toEqual([1, 2]);
-    expect(host.provider.eval).toHaveBeenCalledWith(provider, 'window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.ackBulk(2);');
+    expect(host.provider.eval).toHaveBeenCalledWith(provider, 'window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.bootId === "dedup" && window.__MAC_BRIDGE__.ackBulk(2);');
   });
 
   it('drops old-boot batches after title traffic establishes the active boot', async () => {
@@ -102,6 +102,17 @@ describe('pull transport', () => {
     await pullProvider(provider);
     cleanup();
     expect(messages.filter((msg) => msg.transport === 'pull').map((msg) => msg.bootId)).toEqual(['active']);
+  });
+
+  it('does not acknowledge entries in a replacement page when an old ACK executes late', async () => {
+    const ackNewPage = vi.fn();
+    vi.mocked(host.provider.evalWithCallback).mockResolvedValue(JSON.stringify([message(1, 'old-page', 'RESPONSE_DONE')]));
+    vi.mocked(host.provider.eval).mockImplementation(async (_provider, js) => {
+      new Function('window', js)({ __MAC_BRIDGE__: { bootId: 'new-page', ackBulk: ackNewPage } });
+    });
+    await pullProvider(provider);
+    expect(host.provider.eval).toHaveBeenCalledOnce();
+    expect(ackNewPage).not.toHaveBeenCalled();
   });
 
   it('splits navigation boot reset from retry high-water preservation', async () => {

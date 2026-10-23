@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type SetStateAction } from 'react';
 import { AI_PROVIDERS } from '../../../../shared/constants';
 import type { AIProvider } from '../../../../shared/types';
 import { t as translateKey } from '../../../i18n/t';
@@ -133,7 +133,19 @@ export function ChatView({ locale, runtime, onConvertToTask }: ChatViewProps) {
   const text = workbenchText(locale);
   const [activeTab, setActiveTab] = useState('compare');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraftValue] = useState('');
+  const composerRevision = useRef(0);
+  const composerSession = useRef(runtime.activeSessionId);
+  const attachmentRead = useRef<symbol | undefined>(undefined);
+  useLayoutEffect(() => {
+    composerSession.current = runtime.activeSessionId;
+    composerRevision.current += 1;
+    attachmentRead.current = undefined;
+  }, [runtime.activeSessionId]);
+  const setDraft = (value: SetStateAction<string>) => {
+    composerRevision.current += 1;
+    setDraftValue(value);
+  };
   const presetId = presetForSession(runtime);
   const [expanded, setExpanded] = useState<Set<AIProvider>>(() => new Set());
   const [forwardSource, setForwardSource] = useState<AIProvider>();
@@ -148,9 +160,15 @@ export function ChatView({ locale, runtime, onConvertToTask }: ChatViewProps) {
   const [renameDraft, setRenameDraft] = useState(runtime.activeSession.title);
   const [pendingDeleteId, setPendingDeleteId] = useState<string>();
   const [actionNotice, setActionNotice] = useState<string>();
-  const [attachments, setAttachments] = useState<AttachmentChip[]>([]);
+  const [attachments, setAttachmentValues] = useState<AttachmentChip[]>([]);
   const [attachmentError, setAttachmentError] = useState<string>();
   const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const setAttachments = (value: SetStateAction<AttachmentChip[]>) => {
+    composerRevision.current += 1;
+    attachmentRead.current = undefined;
+    setAttachmentBusy(false);
+    setAttachmentValues(value);
+  };
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentQuestion = lastUserQuestion(runtime.activeSession.messages);
   const hasBusy = runtime.busyProviders.length > 0 || runtime.replayRunning;
@@ -204,8 +222,10 @@ export function ChatView({ locale, runtime, onConvertToTask }: ChatViewProps) {
         : text.t('chatNoTarget'));
       return;
     }
+    const revision = composerRevision.current;
+    const sessionId = runtime.activeSessionId;
     const sent = await runtime.sendMessage(message, presetId === 'free' ? sendTargets : runtime.selectedTargets, presetId);
-    if (sent) {
+    if (sent && composerRevision.current === revision && composerSession.current === sessionId) {
       setDraft('');
       setAttachments([]);
       setAttachmentError(undefined);
@@ -220,14 +240,18 @@ export function ChatView({ locale, runtime, onConvertToTask }: ChatViewProps) {
 
   const readFiles = async (files: File[]) => {
     if (files.length === 0 || attachmentBusy) return;
+    const operation = Symbol('attachment-read');
+    attachmentRead.current = operation;
+    composerRevision.current += 1;
     setAttachmentBusy(true);
     setAttachmentError(undefined);
     try {
       const result = await appendFilesToAttachments(attachments, files, undefined, locale);
+      if (attachmentRead.current !== operation) return;
       setAttachments(result.chips);
       if (result.error) setAttachmentError(result.error.message);
     } finally {
-      setAttachmentBusy(false);
+      if (!attachmentRead.current || attachmentRead.current === operation) setAttachmentBusy(false);
     }
   };
 

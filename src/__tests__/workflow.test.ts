@@ -139,6 +139,20 @@ describe('workflow engine', () => {
     expect(isSendable({ ...state('chatgpt'), login: 'logged_out' })).toBe(false);
   });
 
+  it('acks a matching DONE even when its waiter synchronously clears the request context', async () => {
+    setResponseRequestIdFactory(() => 'request-ack');
+    const sending = sendAndWait('chatgpt', 'hello');
+    let outbox = [{ ...done('chatgpt'), bootId: 'ack-boot', mid: 1, payload: { text: 'final', requestId: 'request-ack' } }];
+    vi.mocked(host.provider.evalWithCallback).mockImplementation(async () => JSON.stringify(outbox));
+    vi.mocked(host.provider.eval).mockImplementation(async (_provider, js) => {
+      if (js.includes('ackBulk(1)')) outbox = [];
+    });
+    await pullProvider('chatgpt');
+    await expect(sending).resolves.toMatchObject({ response: 'final' });
+    expect(host.provider.eval).toHaveBeenCalledWith('chatgpt', expect.stringContaining('ackBulk(1)'));
+    expect(outbox).toEqual([]);
+  });
+
   it('resolves only authoritative RESPONSE_DONE, never pull chunks or title DONE', async () => {
     const promise = sendAndWait('chatgpt', 'hello');
     await Promise.resolve();
