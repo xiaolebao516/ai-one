@@ -641,7 +641,9 @@ export function useChatRuntime({
             setNotice({ tone: 'block', message: error instanceof Error ? error.message : String(error) });
           }
         }
-        for (const provider of freshened) pendingProviderResetsRef.current.delete(provider);
+        if (activeSessionIdRef.current === sessionId) {
+          for (const provider of freshened) pendingProviderResetsRef.current.delete(provider);
+        }
         if (resetFailures.size > 0) {
           setReplyStates((current) => {
             if (activeSessionIdRef.current !== sessionId) return current;
