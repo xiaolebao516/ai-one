@@ -1214,3 +1214,17 @@ test('release over an unreadable claim file refuses and writes no closure', asyn
   assert.ok(!fs.existsSync(path.join(h.home, 'slot-claims', 'slot-1.closed.json')));
   assert.match(h.log.err.join(' '), /cannot be read/);
 });
+
+test('a stale-heartbeat claim whose process is alive still blocks archive-on-release', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  h.deps.autoFinish = async () => { throw new Error('MUST NOT CALL'); };
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+  const file = path.join(h.home, 'slot-claims', 'slot-1.json');
+  const old = new Date(Date.now() - 10 * 60 * 1000);
+  fs.utimesSync(file, old, old);
+  h.deps.now = () => Date.now();
+  assert.equal(await h.run(archiveArgs), EXIT.ERROR);
+  assert.ok(fs.existsSync(file), 'the claim was not swept away');
+  assert.match(h.log.err.join(' '), /still active/);
+});

@@ -424,6 +424,15 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
     const show = (rows) => out(options.json ? JSON.stringify(rows, null, 2) : renderSlots(rows));
     // list/run/ensure/release all read or take claim state, so they sweep first; `add` only
     // registers, and a sweep there would report slots that are about to be created.
+    if (command === 'release' && options.requestId !== undefined) {
+      // Checked before the self-heal sweep: a claim whose heartbeat is stale (for example after the
+      // machine slept) but whose process is alive is still an active run, and the sweep would
+      // otherwise delete it and hide that.
+      const live = readClaim(deps.home, options.slot);
+      if (live && (deps.alive ?? processAlive)(live.pid)) {
+        throw new Error('The run holding this slot claim is still active; wait for it to finish before archiving. Nothing was released or archived');
+      }
+    }
     const sweepReport = ['list', 'run', 'ensure', 'release'].includes(command)
       ? sweepAndReport(loadConfig(deps.home), deps, err)
       : [];
