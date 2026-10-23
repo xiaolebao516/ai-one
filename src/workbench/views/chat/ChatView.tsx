@@ -498,7 +498,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
             {presetId === 'deliberation' ? (
               <Notice tone="unknown">{text.t('chatDeliberationNotice')}</Notice>
             ) : presetId !== 'free' ? (
-              <Notice tone="neutral">{text.t('chatSerialTargetHint')}</Notice>
+              <Notice tone="unknown">{text.t('chatSerialTargetHint')}</Notice>
             ) : null}
 
             <label htmlFor="chat-composer" className="sr-only">{text.t('chatInputPlaceholder')}</label>
