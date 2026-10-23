@@ -79,7 +79,7 @@ describe('useFlows local persistence', () => {
   it('creates a flow, adds stages, moves them, saves and reloads the same order', async () => {
     const fs = new MemoryFs();
     await mount(fs);
-    expect(current?.file?.flows).toHaveLength(3);
+    expect(current?.file?.flows).toHaveLength(builtinFlows().length);
 
     const flow: FlowDef = { id: 'flow.test', name: 'Test flow', stages: [], builtin: false };
     const first = customStage('stage.test.first', 'First');
