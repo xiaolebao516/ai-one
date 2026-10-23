@@ -16,6 +16,38 @@ describe('serializeResponseText with browser-parsed jsdom nodes', () => {
     expect(serializeResponseText(root)).toBe('Alpha & Beta\u00a0\u00a0Gamma delta <epsilon> #1');
   });
 
+  it('serialises ChatGPT wrapper code blocks (toolbar label + <code>, no <pre>) as fenced blocks', () => {
+    const root = document.createElement('div');
+    root.innerHTML =
+      '<p>Intro</p>' +
+      '<div data-markdown-copy="code-block"><div data-markdown-copy="exclude"><svg aria-hidden="true"></svg>' +
+      '<div class="truncate">ai-one-send</div><div><button aria-label="copy">c</button></div></div>' +
+      '<div><code><span><span>{"to":["claude"],"message":"hi"}</span></span></code></div></div>';
+
+    expect(serializeResponseText(root)).toBe('Intro\n\n```ai-one-send\n{"to":["claude"],"message":"hi"}\n```');
+  });
+
+  it('drops the toolbar label that layout-based text puts after (or before) the code of a wrapper block', () => {
+    const wrapperWithLayoutText = (layoutText: string) => {
+      const root = document.createElement('div');
+      root.innerHTML =
+        '<div data-markdown-copy="code-block"><div><code><span>{"to":["claude"],"message":"hi"}</span></code></div>' +
+        '<div data-markdown-copy="exclude"><div class="truncate">ai-one-send</div></div></div>';
+      // jsdom has no layout: stand in for the rendered text a real page returns for the code element.
+      Object.defineProperty(root.querySelector('code'), 'innerText', { value: layoutText });
+      return root;
+    };
+
+    expect(serializeResponseText(wrapperWithLayoutText('{"to":["claude"],"message":"hi"}\nai-one-send'))).toBe(
+      '```ai-one-send\n{"to":["claude"],"message":"hi"}\n```',
+    );
+    expect(serializeResponseText(wrapperWithLayoutText('ai-one-send\n{"to":["claude"],"message":"hi"}\n'))).toBe(
+      '```ai-one-send\n{"to":["claude"],"message":"hi"}\n```',
+    );
+    // A body that merely contains the label as its only line is left alone.
+    expect(serializeResponseText(wrapperWithLayoutText('ai-one-send\n'))).toBe('```ai-one-send\nai-one-send\n```');
+  });
+
   it('keeps semantic heading, bold and emphasis formatting', () => {
     const root = document.createElement('div');
     root.innerHTML =

@@ -57,6 +57,10 @@ function serializeNode(node: Node, context: SerializationContext): string {
   if (tag === 'BR') return '\n';
   if (tag === 'HR') return block('---');
   if (tag === 'PRE') return block(protectCodeBlock(element, context));
+  // ChatGPT's current code block is a wrapper (toolbar with the language label + <code>), not a <pre>.
+  if (attribute(element, 'data-markdown-copy') === 'code-block') {
+    return block(protectCodeBlock(element, context, wrapperCodeLanguage(element)));
+  }
   if (tag === 'TABLE') return block(tableToMarkdown(element));
   if (tag === 'UL' || tag === 'OL') return block(serializeList(element, tag === 'OL', context, 0));
   if (tag === 'BLOCKQUOTE') return block(serializeBlockquote(element, context));
@@ -212,15 +216,30 @@ function serializeTableCellChildren(element: Element): string {
   return output;
 }
 
-function protectCodeBlock(element: Element, context: SerializationContext): string {
+function protectCodeBlock(element: Element, context: SerializationContext, languageOverride = ''): string {
   const codeElement = firstDescendantByTag(element, 'CODE');
-  const code = preformattedText(codeElement ?? element).replace(/\r\n?/g, '\n');
-  const language = codeLanguage(codeElement ?? element);
+  const rawCode = preformattedText(codeElement ?? element).replace(/\r\n?/g, '\n');
+  const code = withoutToolbarLabel(rawCode, languageOverride);
+  const language = languageOverride || codeLanguage(codeElement ?? element);
   const longestFence = Math.max(0, ...Array.from(code.matchAll(/`+/g), (match) => match[0].length));
   const fence = '`'.repeat(Math.max(3, longestFence + 1));
   const blockText = `${fence}${language ? language : ''}\n${code}${code.endsWith('\n') ? '' : '\n'}${fence}`;
   const index = context.protectedBlocks.push(blockText) - 1;
   return protectedToken(index);
+}
+
+// Layout-based text (innerText) of a ChatGPT wrapper block can carry the toolbar's language label as
+// its own first or last line; inside a fence it would corrupt the code (a JSON directive stops being
+// JSON). The label is already used as the fence's info string, so drop it from the body.
+function withoutToolbarLabel(code: string, label: string): string {
+  if (!label) return code;
+  const lines = code.split('\n');
+  let start = 0;
+  let end = lines.length;
+  while (end > start && lines[end - 1].trim() === '') end -= 1;
+  if (end - start > 1 && lines[end - 1].trim() === label) end -= 1;
+  if (end - start > 1 && lines[start].trim() === label) start += 1;
+  return end === lines.length && start === 0 ? code : lines.slice(start, end).join('\n');
 }
 
 // A highlighter that gives every code line its own element leaves no newline character behind,
@@ -261,6 +280,24 @@ function safeHttpUrl(value: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+// The toolbar (data-markdown-copy="exclude") carries the fence's info string as a short label.
+function wrapperCodeLanguage(wrapper: Element): string {
+  const toolbar = directChildElements(wrapper).find((child) => attribute(child, 'data-markdown-copy') === 'exclude');
+  if (!toolbar) return '';
+  const label = firstLeafLabel(toolbar);
+  return /^[\w+-]+$/.test(label) ? label : '';
+}
+
+function firstLeafLabel(element: Element): string {
+  for (const child of directChildElements(element)) {
+    const text = (child.textContent ?? '').trim();
+    if (directChildElements(child).length === 0 && text) return text;
+    const nested = firstLeafLabel(child);
+    if (nested) return nested;
+  }
+  return '';
 }
 
 function codeLanguage(element: Element): string {

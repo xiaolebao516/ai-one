@@ -7,7 +7,7 @@ import { inProgressTasks, isInProgress, isNeedsYou, needsYouTasks, summarize } f
  * depend on data are testable without a DOM.
  */
 
-export const WORKBENCH_VIEWS = ['home', 'tasks', 'task', 'chat', 'flows', 'resources'] as const;
+export const WORKBENCH_VIEWS = ['home', 'tasks', 'task', 'chat', 'flows', 'resources', 'chatled'] as const;
 export type WorkbenchView = (typeof WORKBENCH_VIEWS)[number];
 
 /** Views reachable from the sidebar; `task` is reached by opening a task. */
@@ -28,7 +28,10 @@ export function isWorkbenchView(value: unknown): value is WorkbenchView {
 
 /** The sidebar entry a route belongs to: a task page lights up "Tasks". */
 export function navViewFor(route: WorkbenchRoute): NavView {
-  return route.view === 'task' ? 'tasks' : route.view;
+  if (route.view === 'task') return 'tasks';
+  // Chat-led (#113) is reached from the command palette until the overview composer (L4) opens it.
+  if (route.view === 'chatled') return 'chat';
+  return route.view;
 }
 
 /** A task route whose task is gone (data source switched, refresh) falls back to the task list. */
