@@ -228,7 +228,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
   const convertToTask = () => {
     if (!currentQuestion) return;
     onConvertToTask({
-      text: buildTaskPrefill(currentQuestion, replySummaries(runtime.replyStates), includeSummaries, text.t('chatSummaryHeading')) ,
+      text: buildTaskPrefill(currentQuestion, replySummaries(runtime.replyStates), includeSummaries, text.t('chatSummaryHeading')),
     });
   };
 
