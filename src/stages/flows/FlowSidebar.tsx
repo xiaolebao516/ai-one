@@ -2,7 +2,7 @@ import type { FlowDef, FlowsFile, StageDef } from '../../stages/flowModel';
 import type { StageSelection } from '../../stages/flowEditor';
 import type { Locale } from '../../i18n/resolve';
 import { Badge, Button, Card, Select, cx } from '../../ui/v2';
-import type { FlowsText } from '../views/flowsText';
+import type { FlowsText } from '../../workbench/views/flowsText';
 
 interface FlowSidebarProps {
   file: FlowsFile;
