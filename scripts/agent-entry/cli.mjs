@@ -35,7 +35,8 @@ export function parseMeta(body = '') {
     recommended: field(body, 'Recommended Agent'),
     backup: field(body, 'Backup Agent'),
     dependsOn: field(body, 'Depends on'),
-    coordinator: registeredCoordinator(field(body, 'Current Coordinator / claim') ?? field(body, '调度 agent') ?? field(body, 'Current Coordinator')),
+    // Any one of the coordinator lines naming someone counts: a "待认领" in one must not hide another.
+    coordinator: ['Current Coordinator / claim', '调度 agent', 'Current Coordinator'].map((name) => registeredCoordinator(field(body, name))).find(Boolean),
     readyWhen: field(body, 'Ready when'),
     planned: /Stage[:：]\s*(PLANNED|READY)\b/i.test(body),
   };
@@ -55,7 +56,7 @@ export function prLinks(prs) {
   for (const pr of prs) {
     const found = new Set();
     for (const match of pr.title.matchAll(/#(\d+)/g)) found.add(Number(match[1]));
-    for (const match of (pr.body ?? '').matchAll(/(?:closes|fixes|resolves|spec:?)\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi)) found.add(Number(match[1]));
+    for (const match of (pr.body ?? '').matchAll(/(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?|spec)\s*:?\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi)) found.add(Number(match[1]));
     // GitHub's own Development links, which need no keyword in the text.
     for (const ref of pr.closingIssuesReferences ?? []) found.add(Number(ref.number));
     for (const issue of found) linked.set(issue, [...(linked.get(issue) ?? []), pr.number]);

@@ -135,3 +135,13 @@ test('loadState fails closed when the open PR list may be truncated', () => {
   const ok = loadState({ cwd: '.', fetchJson: (args) => (args[0] === 'pr' ? [] : []), claims: () => [] });
   assert.deepEqual(ok, { issues: [], prs: [], claims: [] });
 });
+
+test('a placeholder coordinator line does not hide a registered one in another line', () => {
+  const body = ['- Priority: P0', '- Current Coordinator / claim: 待认领', '- 调度 agent：Codex / session-1'].join('\n');
+  assert.equal(parseMeta(body).coordinator, 'Codex / session-1');
+  assert.equal(buildBoard({ issues: [issue(20, '[Task] x', body)], claims: [], prs: [] })[0].pickable, false);
+});
+
+test('PR links accept colon forms such as "Closes: #42"', () => {
+  assert.deepEqual([...prLinks([{ number: 1, title: 'x', body: 'Closes: #42\nFixed xiaolebao516/ai-one#43\nSpec: #44' }]).keys()].sort(), [42, 43, 44]);
+});
