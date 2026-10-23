@@ -433,7 +433,11 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
         throw new Error('The run holding this slot claim is still active; wait for it to finish before archiving. Nothing was released or archived');
       }
     }
-    const sweepReport = ['list', 'run', 'ensure', 'release'].includes(command)
+    // An archiving release must not run the sweep: it deletes claims with a stale heartbeat even when their
+    // process is alive, which would hide another slot's active run from the archive's conflict check.
+    // The archive ignores claims whose process is dead by itself.
+    const archivingRelease = command === 'release' && options.requestId !== undefined;
+    const sweepReport = ['list', 'run', 'ensure', 'release'].includes(command) && !archivingRelease
       ? sweepAndReport(loadConfig(deps.home), deps, err)
       : [];
     if (command === 'list') {

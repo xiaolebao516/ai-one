@@ -261,3 +261,17 @@ test('a skip that lands after the pre-lock check still stops finish; skip report
     await assert.rejects(skip({ task: 94, threadUrl: A }, { home }), /in progress/);
   });
 });
+
+test('a live process on another slot with a stale heartbeat still blocks archiving the same thread', async () => {
+  const home = temp();
+  addSlots(home, 1);
+  const other = claimSlot(home, 2, { meta: { task: '97', threadUrl: A } });
+  const file = path.join(home, 'slot-claims', 'slot-2.json');
+  const old = new Date(Date.now() - 10 * 60 * 1000);
+  fs.utimesSync(file, old, old);
+  try {
+    await assert.rejects(finish(input(), { home, verify: () => true, archive: async () => {
+      throw new Error('MUST NOT CALL'); } }), /active claim on this thread/);
+    assert.ok(fs.existsSync(file), 'the claim was not removed');
+  } finally { other.release(); }
+});

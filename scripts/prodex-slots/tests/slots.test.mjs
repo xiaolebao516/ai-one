@@ -1228,3 +1228,15 @@ test('a stale-heartbeat claim whose process is alive still blocks archive-on-rel
   assert.ok(fs.existsSync(file), 'the claim was not swept away');
   assert.match(h.log.err.join(' '), /still active/);
 });
+
+test('an archiving release does not sweep other slots, so a stale-heartbeat live claim survives it', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  h.deps.autoFinish = async () => 0;
+  claimSlot(h.home, 2, { pid: 222, alive: () => true, meta: { task: '72', threadUrl: THREAD } });
+  const file = path.join(h.home, 'slot-claims', 'slot-2.json');
+  const old = new Date(Date.now() - 10 * 60 * 1000);
+  fs.utimesSync(file, old, old);
+  assert.equal(await h.run(archiveArgs), EXIT.OK);
+  assert.ok(fs.existsSync(file), 'the other slot claim was not swept away');
+});
