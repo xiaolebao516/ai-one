@@ -102,7 +102,7 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
     if (action.kind === 'create-add-stage') {
       const flow = source.flows.find((item) => item.id === action.flowId);
       if (!flow || flow.builtin) return;
-      const stage = newStage(context.locale, source);
+      const stage = createStageDefinition(context.locale, source);
       const index = Math.max(0, Math.min(action.index, flow.stages.length));
       const nextFlow = addStageToFlow(flow, stage.id, index);
       const next = {
