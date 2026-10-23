@@ -530,7 +530,7 @@ const ZH: Record<Key, string> = {
   chatSerialTargetHint: '辩论和咨询使用预设的角色分配；目标芯片只对自由提问生效。',
   chatPreparingSession: '正在准备新的 AI 对话…',
   chatSessionResetFailed: '以下 AI 无法开启新的对话：{providers}。',
-  chatNoQuestion: '当前对话还没有可转换的用户问题。'
+  chatNoQuestion: '当前对话还没有可转换的用户问题。',
   chatNoResponseYet: '暂时还没有回复。',
   flowsTitle: '阶段与流程',
   flowsBody: '可复用的阶段（/grill、/plan、/build…）和保存的流程。先做讨论阶段。',
