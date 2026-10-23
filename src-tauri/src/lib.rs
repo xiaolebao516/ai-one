@@ -1,6 +1,7 @@
 mod adapters;
 mod bridge;
 mod github_readonly;
+mod github_write;
 mod dispatch_readonly;
 mod session_checkpoint;
 mod settings;
@@ -57,6 +58,12 @@ pub fn run() {
             session_checkpoint::session_checkpoint_clear,
             github_readonly::github_readonly_get,
             github_readonly::github_readonly_associations,
+            github_write::github_write_status,
+            github_write::github_write_create_issue,
+            github_write::github_write_comment,
+            github_write::github_write_set_pause,
+            github_write::github_write_accept,
+            github_write::github_write_request_changes,
             dispatch_readonly::dispatch_readonly_snapshot
         ])
         .run(tauri::generate_context!())

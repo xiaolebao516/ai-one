@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-github-write-status"
+description = "Enables the github_write_status command without any pre-configured scope."
+commands.allow = ["github_write_status"]
+
+[[permission]]
+identifier = "deny-github-write-status"
+description = "Denies the github_write_status command without any pre-configured scope."
+commands.deny = ["github_write_status"]

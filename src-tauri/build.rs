@@ -30,6 +30,12 @@ fn main() {
             "session_checkpoint_clear",
             "github_readonly_get",
             "github_readonly_associations",
+            "github_write_status",
+            "github_write_create_issue",
+            "github_write_comment",
+            "github_write_set_pause",
+            "github_write_accept",
+            "github_write_request_changes",
             "dispatch_readonly_snapshot",
         ]),
     ))
