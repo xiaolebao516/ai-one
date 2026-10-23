@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
-import { EXIT, main } from '../cli.mjs';
+import { EXIT, main, takeover } from '../cli.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli.mjs');
 let root;
@@ -121,29 +121,46 @@ test('heartbeat keeps the claim alive; only the holder can beat', () => {
   assert.equal(run(a, ['release', '90', '--agent', 'holder']).code, EXIT.ok);
 });
 
-test('a silent claim becomes SUSPECT_STALE but is never taken without conditions', () => {
+// Plants a claim whose last sign of life is long past, as an agent that died without releasing.
+function plantStaleClaim(dir, issue, agent) {
+  const tree = git(dir, 'mktree');
+  const old = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'x', GIT_AUTHOR_EMAIL: 'x@x.invalid', GIT_COMMITTER_NAME: 'x', GIT_COMMITTER_EMAIL: 'x@x.invalid' };
+  const made = spawnSync('git', ['commit-tree', tree, '-m', `claim #${issue}\n\nagent: ${agent}\nat: ${old}\n`], { cwd: dir, encoding: 'utf8', env });
+  assert.equal(made.status, 0, made.stderr);
+  git(dir, 'push', '--quiet', 'origin', `${made.stdout.trim()}:refs/heads/claim/${issue}`);
+}
+
+test('a live claim cannot be taken, and the window is not a takeover option', () => {
   const [a, b] = clones;
-  assert.equal(run(a, ['claim', '92', '--agent', 'quota-dead']).code, EXIT.ok);
-  // Fresh claim: takeover refused (HANDOFF_BLOCKED), claim unchanged.
+  assert.equal(run(a, ['claim', '92', '--agent', 'busy']).code, EXIT.ok);
   const early = run(b, ['takeover', '92', '--agent', 'rescuer', '--stopped-evidence', 'killed pid 1']);
   assert.equal(early.code, EXIT.held);
   assert.match(early.err, /HANDOFF_BLOCKED/);
-  // Window shrunk so the claim reads as silent.
-  assert.match(run(b, ['inspect', '92', '--suspect-after-min', '0.0001']).out, /SUSPECT_STALE .*not safe to take automatically/);
-  // Evidence is mandatory even when stale.
-  assert.equal(run(b, ['takeover', '92', '--agent', 'rescuer', '--suspect-after-min', '0.0001']).code, EXIT.error);
-  assert.match(run(b, ['show', '92']).out, /claimed by quota-dead/);
+  // --suspect-after-min is accepted but ignored by takeover, so it cannot make a live holder look stale.
+  const shrunk = run(b, ['takeover', '92', '--agent', 'rescuer', '--stopped-evidence', 'x', '--suspect-after-min', '0.0001']);
+  assert.equal(shrunk.code, EXIT.held);
+  assert.match(run(b, ['show', '92']).out, /claimed by busy/);
+  assert.match(run(b, ['inspect', '92', '--suspect-after-min', '0.0001']).out, /^SUSPECT_STALE .*not safe to take automatically/);
+  assert.equal(run(a, ['release', '92', '--agent', 'busy']).code, EXIT.ok);
 });
 
-test('takeover of a stale claim bumps the generation and fences the old holder', async () => {
+test('takeover of a stale claim needs evidence, records it, bumps the generation and fences the old holder', () => {
   const [a, b] = clones;
-  assert.equal(run(a, ['claim', '93', '--agent', 'old']).code, EXIT.ok);
-  await new Promise((resolve) => setTimeout(resolve, 80));
-  const taken = run(b, ['takeover', '93', '--agent', 'new', '--stopped-evidence', 'process killed, confirmed by user', '--suspect-after-min', '0.0001']);
+  plantStaleClaim(a, 93, 'old');
+  assert.match(run(b, ['inspect', '93']).out, /^SUSPECT_STALE/);
+  assert.equal(run(b, ['takeover', '93', '--agent', 'new']).code, EXIT.error);
+  assert.equal(run(b, ['takeover', '93', '--agent', 'new', '--stopped-evidence', '   ']).code, EXIT.error);
+  assert.throws(() => takeover(93, 'new', undefined, { cwd: b }), /evidence/);
+  assert.match(run(b, ['show', '93']).out, /claimed by old/);
+  const taken = run(b, ['takeover', '93', '--agent', 'new', '--stopped-evidence', 'process killed, confirmed by user']);
   assert.equal(taken.code, EXIT.ok, taken.err);
   assert.match(taken.out, /generation 2/);
+  git(b, 'fetch', '--quiet', 'origin', 'refs/heads/claim/93');
+  const message = git(b, 'log', '-1', '--format=%B', 'FETCH_HEAD');
+  assert.match(message, /took-over-from: old/);
+  assert.match(message, /process killed, confirmed by user/);
   assert.match(run(b, ['inspect', '93']).out, /^ACTIVE #93 claimed by new .* gen 2/);
-  // The old process wakes up: its heartbeat and release are refused, the new claim survives.
   assert.equal(run(a, ['heartbeat', '93', '--agent', 'old']).code, EXIT.held);
   assert.equal(run(a, ['release', '93', '--agent', 'old']).code, EXIT.held);
   assert.equal(run(b, ['heartbeat', '93', '--agent', 'new']).code, EXIT.ok);
@@ -152,23 +169,17 @@ test('takeover of a stale claim bumps the generation and fences the old holder',
 
 test('two rescuers racing for a stale claim: exactly one wins', async () => {
   const [a, b, c] = clones;
-  assert.equal(run(a, ['claim', '94', '--agent', 'old']).code, EXIT.ok);
-  await new Promise((resolve) => setTimeout(resolve, 80));
+  plantStaleClaim(a, 94, 'old');
   const codes = await Promise.all(
     [b, c].map(
       (dir, index) =>
         new Promise((resolve) => {
-          const child = spawn(
-            process.execPath,
-            [CLI, 'takeover', '94', '--agent', `rescuer-${index}`, '--stopped-evidence', 'confirmed', '--suspect-after-min', '0.0001'],
-            { cwd: dir, stdio: 'ignore' },
-          );
+          const child = spawn(process.execPath, [CLI, 'takeover', '94', '--agent', `rescuer-${index}`, '--stopped-evidence', 'confirmed'], { cwd: dir, stdio: 'ignore' });
           child.on('exit', resolve);
         }),
     ),
   );
   assert.equal(codes.filter((code) => code === EXIT.ok).length, 1);
   assert.equal(codes.filter((code) => code === EXIT.held).length, 1);
-  assert.match(run(a, ['show', '94']).out, /claimed by rescuer-/);
   assert.match(run(a, ['show', '94']).out, /^#94 claimed by rescuer-\d/);
 });

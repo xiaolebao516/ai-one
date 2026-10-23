@@ -24,7 +24,7 @@ const USAGE = `usage:
   node scripts/issue-claim/cli.mjs show [<N>]
   node scripts/issue-claim/cli.mjs release <N> --agent "<tool / session>"
   node scripts/issue-claim/cli.mjs heartbeat <N> --agent "<tool / session>"
-  node scripts/issue-claim/cli.mjs inspect [<N>] [--suspect-after-min 30]
+  node scripts/issue-claim/cli.mjs inspect [<N>] [--suspect-after-min 30]   (inspect only; takeover always uses the default window)
   node scripts/issue-claim/cli.mjs takeover <N> --agent "<new tool / session>" --stopped-evidence "<how the old writer is known to have stopped>"
 options: --remote <name> (default origin)`;
 
@@ -122,9 +122,10 @@ export function release(issue, agent, { cwd, remote = 'origin' } = {}) {
 // fences the old writer's pushes to the feature branch.
 export const DEFAULT_SUSPECT_AFTER_MIN = 30;
 
-function commitClaim(issue, { agent, at, beat, generation }, parent, { cwd }) {
+function commitClaim(issue, { agent, at, beat, generation, takeoverFrom, evidence }, parent, { cwd }) {
   const emptyTree = git(['mktree'], { cwd, input: '' }).stdout;
-  const message = `claim #${issue}\n\nagent: ${agent}\nat: ${at}\n${beat ? `beat: ${beat}\n` : ''}generation: ${generation}\n`;
+  const handover = takeoverFrom ? `took-over-from: ${takeoverFrom}\nstopped-evidence (stated by the new holder, not verified): ${evidence}\n` : '';
+  const message = `claim #${issue}\n\nagent: ${agent}\nat: ${at}\n${beat ? `beat: ${beat}\n` : ''}generation: ${generation}\n${handover}`;
   const args = ['commit-tree', emptyTree, ...(parent ? ['-p', parent] : []), '-m', message];
   return git(args, { cwd, env: CLAIM_IDENTITY }).stdout;
 }
@@ -167,16 +168,19 @@ export function assess(holder, { now = new Date(), suspectAfterMin = DEFAULT_SUS
  * write gateway the old process could still push, so this is for a coordinator or user who has
  * actually stopped it. The swap is a compare-and-swap on the exact old claim commit.
  */
-export function takeover(issue, agent, evidence, { cwd, remote = 'origin', now = new Date(), suspectAfterMin } = {}) {
+export function takeover(issue, agent, evidence, { cwd, remote = 'origin', now = new Date() } = {}) {
+  const statedEvidence = String(evidence ?? '').replace(/\s+/g, ' ').trim();
+  if (!statedEvidence) throw new Error('takeover needs non-empty stopped evidence');
   const holder = readClaim(issue, { cwd, remote });
   if (!holder) return { ok: false, missing: true };
   if (holder.agent === agent) return { ok: true, sha: holder.sha, resumed: true };
-  const verdict = assess(holder, { now, suspectAfterMin });
+  // The window is deliberately not a caller option: shrinking it would make a live holder look stale.
+  const verdict = assess(holder, { now });
   if (verdict.state !== 'SUSPECT_STALE') return { ok: false, holder, verdict };
   const stamp = now.toISOString();
-  const commit = commitClaim(issue, { agent, at: stamp, beat: stamp, generation: holder.generation + 1 }, holder.sha, { cwd });
+  const commit = commitClaim(issue, { agent, at: stamp, beat: stamp, generation: holder.generation + 1, takeoverFrom: holder.agent, evidence: statedEvidence }, holder.sha, { cwd });
   const result = advanceClaim(issue, holder.sha, commit, { cwd, remote });
-  return result.ok ? { ...result, previous: holder, evidence } : result;
+  return result.ok ? { ...result, previous: holder, evidence: statedEvidence } : result;
 }
 
 export function list({ cwd, remote = 'origin' } = {}) {
@@ -241,7 +245,7 @@ export function main(argv, { cwd = process.cwd(), out = console.log, err = conso
         err('takeover needs --stopped-evidence "<how the old writer is known to have stopped>"');
         return EXIT.error;
       }
-      const result = takeover(issue, agent, options.stoppedEvidence, { cwd, remote, suspectAfterMin });
+      const result = takeover(issue, agent, options.stoppedEvidence, { cwd, remote });
       if (result.ok) {
         out(
           result.resumed
