@@ -289,7 +289,7 @@ export function useChatRuntime({
     void Promise.resolve().then(() => {
       if (!disposed) setDesktopAvailable(desktop);
     });
-    if (!desktop) return () => { desktopAvailableRef.current = false; };
+    if (!desktop) return () => { disposed = true; desktopAvailableRef.current = false; };
 
     const handleBridgeMessage = (message: BridgeMessage) => {
       if (message.action === 'STATUS_REPORT' && message.provider) {
