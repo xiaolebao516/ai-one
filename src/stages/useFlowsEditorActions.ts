@@ -252,11 +252,15 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
 
   const changeFlowName = (name: string) => {
     if (!context.file || !context.selectedFlow) return;
+    const isChinese = context.locale.toLowerCase().startsWith('zh');
     context.flows.updateFile((current) => ({
       ...current,
-      flows: current.flows.map((flow) => flow.id === context.selectedFlow?.id
-        ? { ...flow, name, nameEn: flow.nameEn && name !== flow.name ? undefined : flow.nameEn }
-        : flow),
+      flows: current.flows.map((flow) => {
+        if (flow.id !== context.selectedFlow?.id) return flow;
+        return isChinese
+          ? { ...flow, name, nameEn: flow.nameEn && name !== flow.name ? undefined : flow.nameEn }
+          : { ...flow, nameEn: name };
+      }),
     }));
     context.setFeedback(undefined);
   };
