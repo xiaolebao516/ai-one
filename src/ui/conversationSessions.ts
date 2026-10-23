@@ -1,4 +1,5 @@
-import type { ChatMode, WorkflowPresetId } from '../../shared/types';
+import { ALL_AI_PROVIDERS } from '../../shared/constants';
+import type { AIProvider, ChatMode, WorkflowPresetId } from '../../shared/types';
 import { createUniqueSuffix } from './uniqueId';
 
 export const CONVERSATION_SESSIONS_STORAGE_KEY = 'multi-ai-chat:conversation-sessions:v1';
@@ -15,6 +16,8 @@ export interface ConversationSessionMessage {
   provider?: string;
   authorLabel?: string;
   modeRole?: string;
+  /** Marks relay prompts and replies without changing the meaning of role/provider/content. */
+  forwardedFrom?: AIProvider;
   final?: boolean;
   truncated?: boolean;
 }
@@ -165,6 +168,9 @@ export function normalizeConversationSessionMessage(value: unknown): Conversatio
   if (provider) message.provider = provider;
   if (authorLabel) message.authorLabel = authorLabel;
   if (modeRole) message.modeRole = modeRole;
+  if (typeof value.forwardedFrom === 'string' && (ALL_AI_PROVIDERS as readonly string[]).includes(value.forwardedFrom)) {
+    message.forwardedFrom = value.forwardedFrom as AIProvider;
+  }
   if (typeof value.final === 'boolean') message.final = value.final;
   if (typeof value.truncated === 'boolean') message.truncated = value.truncated;
   return message;
@@ -233,6 +239,7 @@ function conversationMessageEquals(left: ConversationSessionMessage, right: Conv
     left.provider === right.provider &&
     left.authorLabel === right.authorLabel &&
     left.modeRole === right.modeRole &&
+    left.forwardedFrom === right.forwardedFrom &&
     left.final === right.final &&
     left.truncated === right.truncated
   );
