@@ -9,7 +9,7 @@ export interface TaskAcceptanceActionsProps {
   locale: Locale;
   expectedHeadSha?: string;
   currentHeadSha?: string;
-  onRefreshHead?: () => Promise<void> | void;
+  onRefreshHead?: () => Promise<string | undefined> | Promise<void> | void;
   onAccepted?: () => void;
   onRequestChangesSent?: () => void;
 }
@@ -69,9 +69,9 @@ export function TaskAcceptanceActions({
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await onRefreshHead?.();
-      if (liveHead) {
-        setExpectedHead(liveHead);
+      const newlyRead = await onRefreshHead?.();
+      if (typeof newlyRead === 'string' && newlyRead) {
+        setExpectedHead(newlyRead);
       }
     } finally {
       setRefreshing(false);

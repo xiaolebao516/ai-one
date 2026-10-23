@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Locale } from '../../i18n/resolve';
 import { isNeedsYou, pickText, type HudTask } from '../../ui/taskHudModel';
 import { taskHudText } from '../../ui/taskHudText';
@@ -14,21 +14,27 @@ export function TaskNotificationIsland({ task, locale, onNavigate }: TaskNotific
   const isZh = locale.startsWith('zh');
   const hud = taskHudText(locale);
   const [dismissed, setDismissed] = useState(false);
+  const onNavigateRef = useRef(onNavigate);
+  onNavigateRef.current = onNavigate;
+  const notifiedKeyRef = useRef<string>('');
 
   const needsAction = isNeedsYou(task.status);
 
-  // Reset dismissed state if task status changes to another needsYou
+  // Reset dismissed state if task ID or status changes to another needsYou
   useEffect(() => {
     setDismissed(false);
-  }, [task.status]);
+  }, [task.id, task.status]);
 
   // When window is in background / hidden, trigger desktop notification with category and action routing
   useEffect(() => {
     if (!needsAction || dismissed) return;
 
+    const key = `${task.id}:${task.status}`;
+
     const triggerNotification = () => {
       if (typeof document === 'undefined' || !document.hidden) return;
       if (typeof window === 'undefined' || !('Notification' in window)) return;
+      if (notifiedKeyRef.current === key) return;
 
       const category = task.status === 'blocked'
         ? (isZh ? '【阻塞】' : '[Blocked]')
@@ -43,10 +49,11 @@ export function TaskNotificationIsland({ task, locale, onNavigate }: TaskNotific
 
       const show = () => {
         try {
+          notifiedKeyRef.current = key;
           const n = new Notification(title, { body });
           n.onclick = () => {
             window.focus();
-            onNavigate?.();
+            onNavigateRef.current?.();
           };
         } catch { /* ignore */ }
       };
@@ -65,7 +72,7 @@ export function TaskNotificationIsland({ task, locale, onNavigate }: TaskNotific
     return () => {
       document.removeEventListener('visibilitychange', triggerNotification);
     };
-  }, [needsAction, dismissed, task.status, task.repo, task.title, locale, isZh, onNavigate]);
+  }, [needsAction, dismissed, task.id, task.status, task.repo, task.title, locale, isZh]);
 
   if (!needsAction || dismissed) return null;
 

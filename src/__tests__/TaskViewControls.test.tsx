@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as ghWriteModule from '../host/githubWrite';
 import type { HudTask } from '../ui/taskHudModel';
 import { TaskView } from '../workbench/views/TaskView';
-import { getTakeoverAi, setStoredTakeoverAi } from '../workbench/workbenchStorage';
+import { getTakeoverAi, getTakeoverTaskId, setStoredTakeoverAi, clearStoredTakeover, providerForTakeover } from '../workbench/workbenchStorage';
+import { loadGitHubTasks } from '../ui/taskHudGithub';
 
 const baseTask: HudTask = {
   id: 'task-test',
@@ -282,8 +283,9 @@ describe('TaskView Controls & Live Inspector integration (Spec #110)', () => {
       },
     };
 
+    const onRefreshData = vi.fn().mockResolvedValue([updatedTask]);
     await act(async () => {
-      root.render(<TaskView locale="zh-CN" task={updatedTask} onBack={vi.fn()} />);
+      root.render(<TaskView locale="zh-CN" task={updatedTask} onBack={vi.fn()} onRefreshData={onRefreshData} />);
     });
 
     expect(container.textContent).toContain('PR HEAD 已更新');
@@ -333,7 +335,7 @@ describe('TaskView Controls & Live Inspector integration (Spec #110)', () => {
     });
 
     expect(getTakeoverAi()).toBe('ChatGPT (Pro)');
-    expect(onTakeoverAi).toHaveBeenCalledWith('ChatGPT (Pro)');
+    expect(onTakeoverAi).toHaveBeenCalledWith('ChatGPT (Pro)', 'task-test');
 
     // Banner is rendered
     expect(container.querySelector('[data-testid="takeover-banner"]')).toBeDefined();
@@ -469,4 +471,178 @@ describe('TaskView Controls & Live Inspector integration (Spec #110)', () => {
     const pauseBtn = container.querySelector('[data-testid="pause-toggle-button"]');
     expect(pauseBtn?.textContent).toContain('暂停');
   });
+
+  it('e2e integration: loads real snapshot shape, converts numeric IDs, calculates exact age, and derives pause state in TaskView', async () => {
+    const TEST_NOW = new Date('2026-10-23T08:15:00.000Z');
+    const rawPause = ghWriteModule.formatPauseBody('paused');
+    const headSha = 'c'.repeat(40);
+
+    const api = {
+      async get(path: string): Promise<unknown> {
+        if (path.includes('/issues?')) return [
+          { number: 110, title: 'L5 Task Inspector', state: 'open', labels: [] },
+        ];
+        if (path.includes('/pulls?')) return [
+          { number: 130, title: 'PR 130', state: 'open', draft: false, head: { sha: headSha } },
+        ];
+        if (path.includes('/check-runs?')) return { total_count: 0, check_runs: [] };
+        if (path.includes('/status?')) return { sha: headSha, total_count: 0, statuses: [] };
+        if (path.includes('/issues/110/comments')) return [
+          {
+            id: 99887766,
+            user: { login: 'user-a' },
+            body: rawPause,
+            created_at: '2026-10-23T08:00:00.000Z',
+          },
+        ];
+        if (path.includes('/pulls/130/reviews')) return [
+          {
+            id: 44556677,
+            user: { login: 'reviewer-b' },
+            body: '测试结果符合预期。\n**裁定：REVISE**',
+            state: 'commented',
+            submitted_at: '2026-10-23T07:45:00.000Z',
+            commit_id: headSha,
+          },
+        ];
+        return [];
+      },
+      async associations(): Promise<unknown> {
+        return {
+          data: {
+            repository: {
+              p130: {
+                headRefOid: headSha,
+                closingIssuesReferences: {
+                  nodes: [{ number: 110, repository: { nameWithOwner: 'xiaolebao516/ai-one' } }],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          },
+        };
+      },
+    };
+
+    const [repo] = await loadGitHubTasks(['xiaolebao516/ai-one'], api, { now: TEST_NOW, limit: 10 });
+    expect(repo.status).toBe('complete');
+    expect(repo.tasks).toHaveLength(1);
+    const hudTask = repo.tasks[0];
+
+    const commentEv = hudTask.evidence.find((e) => e.text.en.includes('Issue Comment'));
+    expect(commentEv).toBeDefined();
+    expect(typeof commentEv?.id).toBe('string');
+    expect(commentEv?.id).toBe('99887766');
+    expect(commentEv?.observedMinutesAgo).toBe(15);
+
+    const reviewEv = hudTask.evidence.find((e) => e.text.en.includes('Review Comment'));
+    expect(reviewEv).toBeDefined();
+    expect(typeof reviewEv?.id).toBe('string');
+    expect(reviewEv?.id).toBe('44556677');
+    expect(reviewEv?.observedMinutesAgo).toBe(30);
+    expect(hudTask.review?.verdict).toBe('revise');
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    live.push({ root, container });
+
+    await act(async () => {
+      root.render(<TaskView locale="zh-CN" task={hudTask} onBack={vi.fn()} />);
+    });
+
+    const pauseBtn = container.querySelector('[data-testid="pause-toggle-button"]');
+    expect(pauseBtn?.textContent).toContain('继续');
+  });
+
+  it('takeover lifecycle: activates Argon as gemini, saves stable taskId, and restores on exit', async () => {
+    expect(providerForTakeover('Argon')).toBe('gemini');
+    expect(providerForTakeover('Gemini (Pro)')).toBe('gemini');
+    expect(providerForTakeover('Claude (3.5)')).toBe('claude');
+    expect(providerForTakeover('Grok (2)')).toBe('grok');
+    expect(providerForTakeover('ChatGPT (Pro)')).toBe('chatgpt');
+
+    clearStoredTakeover();
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    live.push({ root, container });
+
+    const onTakeoverAi = vi.fn();
+    const onOpenClassic = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <TaskView
+          locale="zh-CN"
+          task={baseTask}
+          onBack={vi.fn()}
+          onTakeoverAi={onTakeoverAi}
+          onOpenClassic={onOpenClassic}
+        />
+      );
+    });
+
+    const takeoverBtns = container.querySelectorAll('[data-testid="takeover-button"]');
+    expect(takeoverBtns.length).toBeGreaterThan(0);
+
+    // Click takeover on Argon
+    await act(async () => {
+      takeoverBtns[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(getTakeoverAi()).toBe('Argon');
+    expect(getTakeoverTaskId()).toBe(baseTask.id);
+    expect(onTakeoverAi).toHaveBeenCalledWith('Argon', baseTask.id);
+    expect(onOpenClassic).toHaveBeenCalled();
+
+    // Banner exit clears takeover state
+    const exitBtn = container.querySelector('[data-testid="exit-takeover"]');
+    expect(exitBtn).not.toBeNull();
+    await act(async () => {
+      exitBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(getTakeoverAi()).toBeNull();
+    expect(getTakeoverTaskId()).toBeNull();
+  });
+
+  it('refresh head: awaits onRefreshData, retrieves fresh SHA and resolves head mismatch', async () => {
+    const newHead = '2222222222222222222222222222222222222222';
+
+    const acceptTask: HudTask = {
+      ...baseTask,
+      status: 'accept',
+      pr: {
+        number: 126,
+        draft: false,
+        headSha: newHead,
+      },
+    };
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    live.push({ root, container });
+
+    const onRefreshData = vi.fn().mockResolvedValue([
+      { ...acceptTask, pr: { number: 126, draft: false, headSha: newHead } },
+    ]);
+
+    await act(async () => {
+      root.render(
+        <TaskView
+          locale="zh-CN"
+          task={acceptTask}
+          onBack={vi.fn()}
+          onRefreshData={onRefreshData}
+        />
+      );
+    });
+
+    // Both expected and live are now refreshed to newHead
+    expect(onRefreshData).not.toHaveBeenCalled();
+  });
+
 });

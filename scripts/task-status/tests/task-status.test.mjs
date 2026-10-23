@@ -9,7 +9,7 @@ const other = 'b'.repeat(40);
 const issue = { number: 1, title: 'Task', state: 'open', labels: [] };
 const pr = { number: 2, title: 'Closes #1 PASS', state: 'open', draft: false, head: { sha } };
 const check = { name: 'test', head_sha: sha, status: 'completed', conclusion: 'success' };
-function fixture({ issues = [issue], prs = [pr], checks = [check], statuses = [], fail = '', refs = [], graph, checkCount = checks.length, statusCount = statuses.length, statusSha = sha } = {}) {
+function fixture({ issues = [issue], prs = [pr], checks = [check], statuses = [], fail = '', refs = [], graph, checkCount = checks.length, statusCount = statuses.length, statusSha = sha, comments = [], reviews = [] } = {}) {
   const calls = [];
   return {
     calls,
@@ -20,6 +20,8 @@ function fixture({ issues = [issue], prs = [pr], checks = [check], statuses = []
       if (path.includes('/pulls?')) return prs;
       if (path.includes('/check-runs?')) return { total_count: checkCount, check_runs: checks };
       if (path.includes('/status?')) return { sha: statusSha, total_count: statusCount, statuses };
+      if (path.includes('/comments')) return typeof comments === 'function' ? comments(path) : comments;
+      if (path.includes('/reviews')) return typeof reviews === 'function' ? reviews(path) : reviews;
       throw new Error(`Unexpected endpoint ${path}`);
     },
     async associations() {
@@ -35,7 +37,7 @@ test('no PRs is a complete snapshot, not CI success; PR pseudo-issues filtered',
   assert.equal(s.status, 'complete');
   assert.equal(s.issues.length, 1);
   assert.equal(s.pullRequests.length, 0);
-  assert.equal(client.calls.length, 2);
+  assert.equal(client.calls.length, 3);
   assert.deepEqual(Object.values(s.runtime), ['unknown', 'unknown', 'unknown', 'unknown']);
 });
 test('Draft + green checks never implies acceptance; all evidence tied to exact HEAD', async () => {
@@ -45,7 +47,7 @@ test('Draft + green checks never implies acceptance; all evidence tied to exact 
   assert.equal(p.ci.conclusion, 'success');
   assert.equal(p.possibleHumanAcceptance.value, false);
   assert.equal(p.ci.headSha, sha);
-  assert.ok(client.calls.slice(2).every((path) => path.includes(`/commits/${sha}/`)));
+  assert.ok(client.calls.filter((path) => path.includes('/commits/')).every((path) => path.includes(`/commits/${sha}/`)));
   assert.equal(p.ci.checks[0].headSha, sha);
   assert.match(renderText(s), /Draft/);
 });
@@ -229,4 +231,74 @@ test('real CLI subprocess uses gh adapter for text and JSON (fake gh, no account
     assert.match(text.stdout, /loaded 1 issues, 0 PRs/);
     assert.match(text.stdout, /not an atomic snapshot/);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('review verdict resolution parses explicit verdict even when text mentions PASS', async () => {
+  const blockedReview = {
+    id: 101,
+    user: 'reviewer',
+    body: '当前 HEAD 不能 PASS。静态审查发现多项 P1 问题。\n**裁定：BLOCKED**',
+    state: 'commented',
+    commit_id: sha,
+  };
+  const s = await collect(fixture({ reviews: [blockedReview] }));
+  assert.equal(s.pullRequests[0].review.verdict, 'blocked');
+
+  const reviseReview = {
+    id: 102,
+    user: 'reviewer',
+    body: '本次改动不能直接 PASS，需要修改。\n**裁定：REVISE**',
+    state: 'commented',
+    commit_id: sha,
+  };
+  const s2 = await collect(fixture({ reviews: [reviseReview] }));
+  assert.equal(s2.pullRequests[0].review.verdict, 'revise');
+
+  const passReview = {
+    id: 103,
+    user: 'reviewer',
+    body: '所有测试通过。\n**裁定：PASS**',
+    state: 'commented',
+    commit_id: sha,
+  };
+  const s3 = await collect(fixture({ reviews: [passReview] }));
+  assert.equal(s3.pullRequests[0].review.verdict, 'pass');
+});
+
+test('comments 500-cap truncation records error and marks snapshot partial', async () => {
+  const pageItems = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, body: 'comment', user: 'u' }));
+  const s = await collect(fixture({ comments: () => pageItems }));
+  assert.equal(s.status, 'partial');
+  assert.equal(s.issues[0].commentsTruncated, true);
+  assert.equal(s.issues[0].comments.length, 500);
+  assert.ok(s.errors.some((e) => e.message.includes('Comments truncated at 500 items')));
+});
+
+test('reviews 500-cap truncation records error and marks snapshot partial', async () => {
+  const pageItems = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, body: 'review', user: 'u', state: 'commented' }));
+  const s = await collect(fixture({ reviews: () => pageItems }));
+  assert.equal(s.status, 'partial');
+  assert.equal(s.pullRequests[0].reviewsTruncated, true);
+  assert.equal(s.pullRequests[0].reviews.length, 500);
+  assert.ok(s.errors.some((e) => e.message.includes('Reviews truncated at 500 items')));
+});
+
+test('non-array comments or reviews response records error and marks snapshot partial', async () => {
+  const s1 = await collect(fixture({ comments: { not: 'an array' } }));
+  assert.equal(s1.status, 'partial');
+  assert.ok(s1.errors.some((e) => e.message.includes('Non-array response for comments')));
+
+  const s2 = await collect(fixture({ reviews: { not: 'an array' } }));
+  assert.equal(s2.status, 'partial');
+  assert.ok(s2.errors.some((e) => e.message.includes('Non-array response for reviews')));
+});
+
+test('query exceptions including Unexpected query are never ignored and mark partial', async () => {
+  const s1 = await collect(fixture({ comments: () => { throw new Error('Unexpected query'); } }));
+  assert.equal(s1.status, 'partial');
+  assert.ok(s1.errors.some((e) => e.message.includes('Unexpected query')));
+
+  const s2 = await collect(fixture({ reviews: () => { throw new Error('Unexpected query'); } }));
+  assert.equal(s2.status, 'partial');
+  assert.ok(s2.errors.some((e) => e.message.includes('Unexpected query')));
 });

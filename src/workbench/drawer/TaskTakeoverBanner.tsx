@@ -23,7 +23,7 @@ export function TaskTakeoverBanner({ participantName, locale, onExit }: TaskTake
             : `You are manually operating the ${participantName} web page. ai-one does not read page content.`}
         </span>
       </div>
-      <Button size="sm" variant="secondary" onClick={onExit}>
+      <Button data-testid="exit-takeover" size="sm" variant="secondary" onClick={onExit}>
         {isZh ? '回到任务' : 'Back to task'}
       </Button>
     </div>

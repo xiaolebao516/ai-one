@@ -235,7 +235,15 @@ describe('Spec #50 v1: snapshot quality and repository isolation', () => {
         if (path.includes('repos/bad/repo/')) throw new Error('GitHub query failed; check gh auth status, repository access, network and API rate limits.');
         return [];
       },
-      async associations(): Promise<unknown> { return { data: { repository: {} } }; },
+      async associations(): Promise<unknown> {
+        return {
+          data: {
+            repository: {
+              p42: { headRefOid: 'a'.repeat(40), closingIssuesReferences: { nodes: [], pageInfo: { hasNextPage: false } } },
+            },
+          },
+        };
+      },
     };
     const loaded = await loadGitHubTasks(['bad/repo', 'acme/demo'], api, { now: NOW, limit: 2 });
     expect(loaded.map((result) => result.status)).toEqual(['error', 'complete']);
@@ -257,9 +265,21 @@ describe('Spec #50 v1: snapshot quality and repository isolation', () => {
           { number: 10, title: 'Issue 10', state: 'open' },
         ];
         if (path.includes('/pulls?')) throw new Error('GitHub query failed; check gh auth status, repository access, network and API rate limits.');
+        if (path.includes('/comments')) return [];
         throw new Error('Unexpected query');
       },
-      async associations(): Promise<unknown> { return { data: { repository: {} } }; },
+      async associations(): Promise<unknown> {
+        return {
+          data: {
+            repository: {
+              p42: {
+                headRefOid: 'a'.repeat(40),
+                closingIssuesReferences: { nodes: [], pageInfo: { hasNextPage: false } },
+              },
+            },
+          },
+        };
+      },
     };
     const [repo] = await loadGitHubTasks(['acme/demo'], api, { now: NOW, limit: 2 });
     expect(repo.status).toBe('partial');
@@ -317,18 +337,19 @@ describe('Spec #50 v1: snapshot quality and repository isolation', () => {
     ]);
   });
   it('reads comments across multiple pages up to limit and maps numeric IDs and timestamps', async () => {
+    const TEST_NOW = new Date('2026-10-23T08:15:00.000Z');
     const page1Comments = Array.from({ length: 100 }, (_, idx) => ({
       id: idx + 1,
       user: { login: 'user1' },
       body: `comment ${idx + 1}`,
-      created_at: '2026-10-23T07:00:00Z',
+      created_at: '2026-10-23T07:15:00.000Z',
     }));
     const page2Comments = [
       {
         id: 101,
         user: { login: 'user2' },
         body: '用户已暂停',
-        created_at: '2026-10-23T08:00:00Z',
+        created_at: '2026-10-23T08:00:00.000Z',
       },
     ];
 
@@ -345,7 +366,7 @@ describe('Spec #50 v1: snapshot quality and repository isolation', () => {
       async associations(): Promise<unknown> { return { data: { repository: {} } }; },
     };
 
-    const [repo] = await loadGitHubTasks(['acme/demo'], api, { now: NOW, limit: 10 });
+    const [repo] = await loadGitHubTasks(['acme/demo'], api, { now: TEST_NOW, limit: 10 });
     expect(repo.status).toBe('complete');
     expect(repo.tasks).toHaveLength(1);
     const task = repo.tasks[0];
@@ -353,7 +374,8 @@ describe('Spec #50 v1: snapshot quality and repository isolation', () => {
     expect(commentEv).toHaveLength(101);
     expect(typeof commentEv[100].id).toBe('string');
     expect(commentEv[100].id).toBe('101');
-    expect(typeof commentEv[100].observedMinutesAgo).toBe('number');
+    expect(commentEv[100].observedMinutesAgo).toBe(15);
+    expect(commentEv[0].observedMinutesAgo).toBe(60);
   });
 
   it('marks snapshot partial when comments fetch fails with a real error', async () => {
@@ -372,5 +394,100 @@ describe('Spec #50 v1: snapshot quality and repository isolation', () => {
     const [repo] = await loadGitHubTasks(['acme/demo'], api, { now: NOW, limit: 10 });
     expect(repo.status).toBe('partial');
     expect(repo.errors.some((e) => e.message.includes('API Rate Limit'))).toBe(true);
+  });
+
+  it('pages PR reviews, normalizes numeric IDs to string, and calculates exact age in minutes', async () => {
+    const TEST_NOW = new Date('2026-10-23T08:15:00.000Z');
+    const page1Reviews = Array.from({ length: 100 }, (_, idx) => ({
+      id: idx + 1,
+      user: { login: 'rev1' },
+      body: `review ${idx + 1}`,
+      state: 'commented',
+      submitted_at: '2026-10-23T07:15:00.000Z',
+    }));
+    const page2Reviews = [
+      {
+        id: 101,
+        user: { login: 'rev2' },
+        body: '**裁定：REVISE**',
+        state: 'commented',
+        submitted_at: '2026-10-23T07:45:00.000Z',
+      },
+    ];
+
+    const api = {
+      async get(path: string): Promise<unknown> {
+        if (path.includes('/issues?')) return [];
+        if (path.includes('/pulls?')) return [
+          { number: 42, title: 'PR 42', state: 'open', draft: false, head: { sha: 'a'.repeat(40) } },
+        ];
+        const headSha = 'a'.repeat(40);
+        if (path.includes('/check-runs?')) return { total_count: 0, check_runs: [] };
+        if (path.includes('/status?')) return { sha: headSha, total_count: 0, statuses: [] };
+        if (path.includes('/pulls/42/reviews?per_page=100&page=1')) return page1Reviews;
+        if (path.includes('/pulls/42/reviews?per_page=100&page=2')) return page2Reviews;
+        return [];
+      },
+      async associations(): Promise<unknown> {
+        return {
+          data: {
+            repository: {
+              p42: {
+                headRefOid: 'a'.repeat(40),
+                closingIssuesReferences: { nodes: [], pageInfo: { hasNextPage: false } },
+              },
+            },
+          },
+        };
+      },
+    };
+
+    const [repo] = await loadGitHubTasks(['acme/demo'], api, { now: TEST_NOW, limit: 10 });
+    expect(repo.status).toBe('complete');
+    expect(repo.tasks).toHaveLength(1);
+    const task = repo.tasks[0];
+    const reviewEv = task.evidence.filter((e) => e.text.en.includes('Review Comment'));
+    expect(reviewEv).toHaveLength(101);
+    expect(typeof reviewEv[100].id).toBe('string');
+    expect(reviewEv[100].id).toBe('101');
+    expect(reviewEv[100].observedMinutesAgo).toBe(30);
+    expect(reviewEv[0].observedMinutesAgo).toBe(60);
+    expect(task.review?.verdict).toBe('revise');
+  });
+
+  it('marks snapshot partial when PR reviews fetch fails or returns non-array', async () => {
+    const failApi = {
+      async get(path: string): Promise<unknown> {
+        if (path.includes('/issues?')) return [];
+        if (path.includes('/pulls?')) return [
+          { number: 42, title: 'PR 42', state: 'open', draft: false, head: { sha: 'a'.repeat(40) } },
+        ];
+        if (path.includes('/check-runs?') || path.includes('/status?')) return { total_count: 0, check_runs: [], statuses: [] };
+        if (path.includes('/pulls/42/reviews')) throw new Error('Reviews endpoint network timeout');
+        return [];
+      },
+      async associations(): Promise<unknown> { return { data: { repository: {} } }; },
+    };
+
+    const [failRepo] = await loadGitHubTasks(['acme/demo'], failApi, { now: NOW, limit: 10 });
+    expect(failRepo.status).toBe('partial');
+    expect(failRepo.errors.some((e) => e.message.includes('Reviews endpoint network timeout'))).toBe(true);
+
+    const nonArrayApi = {
+      async get(path: string): Promise<unknown> {
+        if (path.includes('/issues?')) return [];
+        if (path.includes('/pulls?')) return [
+          { number: 42, title: 'PR 42', state: 'open', draft: false, head: { sha: 'a'.repeat(40) } },
+        ];
+        if (path.includes('/check-runs?') || path.includes('/status?')) return { total_count: 0, check_runs: [], statuses: [] };
+        if (path.includes('/pulls/42/reviews')) return { message: 'Not an array' };
+        return [];
+      },
+      async associations(): Promise<unknown> { return { data: { repository: {} } }; },
+    };
+
+    const [nonArrayRepo] = await loadGitHubTasks(['acme/demo'], nonArrayApi, { now: NOW, limit: 10 });
+    expect(nonArrayRepo.status).toBe('partial');
+    expect(nonArrayRepo.errors.some((e) => e.message.includes('Non-array response for reviews'))).toBe(true);
   });
 });

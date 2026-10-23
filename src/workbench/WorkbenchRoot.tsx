@@ -1,6 +1,6 @@
 import { useI18n } from '../i18n/context';
 import { Workbench } from './Workbench';
-import { setStoredTakeoverAi, switchUiRoot } from './workbenchStorage';
+import { setStoredTakeoverAi, setStoredTakeoverTaskId, switchUiRoot } from './workbenchStorage';
 
 /** Default UI root: the workbench in the app's language, with a way to the classic chat UI. */
 export function WorkbenchRoot() {
@@ -9,8 +9,9 @@ export function WorkbenchRoot() {
     <Workbench
       locale={locale}
       onOpenClassic={() => switchUiRoot('classic')}
-      onTakeoverAi={(name: string) => {
+      onTakeoverAi={(name: string, taskId?: string) => {
         setStoredTakeoverAi(name);
+        if (taskId) setStoredTakeoverTaskId(taskId);
         switchUiRoot('classic');
       }}
     />

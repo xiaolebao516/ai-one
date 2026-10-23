@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { ALL_AI_PROVIDERS } from '../../shared/constants';
 import { host } from '../host';
 import type { Locale } from '../i18n/resolve';
@@ -32,6 +32,7 @@ import { PlannedView } from './views/PlannedView';
 import { ResourcesView } from './views/ResourcesView';
 import { TaskView } from './views/TaskView';
 import { TaskNotificationIsland } from './drawer/TaskNotificationIsland';
+import { getTakeoverTaskId, setStoredTakeoverTaskId } from './workbenchStorage';
 import { isNeedsYou } from '../ui/taskHudModel';
 import { TasksView } from './views/TasksView';
 
@@ -57,20 +58,49 @@ export function Workbench({ locale, onOpenClassic, onTakeoverAi, githubLoader, d
   const data = useWorkbenchData(githubLoader);
   const dispatch = useDispatchData({ source: data.prefs.source, repoPath: data.prefs.dispatchRepo, loader: dispatchLoader, isDesktop });
   const channel = channelView(dispatch);
-  const [route, setRoute] = useState<WorkbenchRoute>(HOME_ROUTE);
+  const [route, setRoute] = useState<WorkbenchRoute>(() => {
+    const takeoverTaskId = getTakeoverTaskId();
+    if (takeoverTaskId) {
+      setStoredTakeoverTaskId(null);
+      return { view: 'task', taskId: takeoverTaskId };
+    }
+    return HOME_ROUTE;
+  });
+
+  useEffect(() => {
+    const takeoverTaskId = getTakeoverTaskId();
+    if (takeoverTaskId) {
+      setStoredTakeoverTaskId(null);
+      setRoute({ view: 'task', taskId: takeoverTaskId });
+    }
+  }, []);
+
   const [paletteOpen, setPaletteOpen] = useState(false);
   const mainRef = useRef<HTMLElement | null>(null);
   const mode = resolveTheme(data.prefs.theme, useSystemDark());
   const current = resolveRoute(route, data.tasks);
-  const activeNeedsYou = data.tasks.find((t) => isNeedsYou(t.status));
+
+  const activeNeedsYou = useMemo(() => {
+    if (current.view === 'task') {
+      return data.tasks.find((t) => t.id !== current.taskId && isNeedsYou(t.status));
+    }
+    return data.tasks.find((t) => isNeedsYou(t.status));
+  }, [current, data.tasks]);
+
   // A task that is gone from a settled data set is gone: make the fallback the real route, so the
   // old task does not pop back up when the data source flips again. While loading, keep the route.
   const fellBack = route.view === 'task' && current.view !== 'task';
   useEffect(() => {
     if (fellBack && data.health !== 'loading') setRoute({ view: 'tasks' });
   }, [fellBack, data.health]);
-  const go = (next: WorkbenchRoute) => setRoute(next);
-  const openTask = (task: HudTask) => go({ view: 'task', taskId: task.id });
+  const go = useCallback((next: WorkbenchRoute) => setRoute(next), []);
+  const openTask = useCallback((task: HudTask) => setRoute({ view: 'task', taskId: task.id }), []);
+
+  const handleNavigateRootIsland = useCallback(() => {
+    if (activeNeedsYou) {
+      openTask(activeNeedsYou);
+    }
+  }, [activeNeedsYou, openTask]);
 
   useHideProviderWebviews();
 
@@ -209,7 +239,7 @@ export function Workbench({ locale, onOpenClassic, onTakeoverAi, githubLoader, d
         <TaskNotificationIsland
           task={activeNeedsYou}
           locale={locale}
-          onNavigate={() => openTask(activeNeedsYou)}
+          onNavigate={handleNavigateRootIsland}
         />
       ) : null}
     </V2Scope>

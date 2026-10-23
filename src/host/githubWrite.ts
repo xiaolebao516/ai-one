@@ -265,6 +265,34 @@ function normalizeResult(value: unknown): GithubWriteResult {
   if (value.commentUrl !== undefined && typeof value.commentUrl !== 'string') return unconfirmedResult();
   if (value.currentHead !== undefined && !validSha(value.currentHead)) return unconfirmedResult();
 
+  const steps = value.steps as GithubWriteStep[];
+  const hasConfirmed = steps.some((step) => step.state === 'confirmed');
+  const hasFailed = steps.some((step) => step.state === 'failed');
+
+  // A confirmed result must have non-empty, all-confirmed steps.
+  if (value.status === 'confirmed' && (steps.length === 0 || !steps.every((step) => step.state === 'confirmed'))) {
+    return unconfirmedResult();
+  }
+  if (value.status === 'partial' && !(hasConfirmed && hasFailed)) return unconfirmedResult();
+  if (value.status === 'failed' && hasConfirmed) return unconfirmedResult();
+  // Any unknown step means the write may have happened: only an unconfirmed total is honest.
+  if (steps.some((step) => step.state === 'unconfirmed') && value.status !== 'unconfirmed') return unconfirmedResult();
+  // An explicit "unconfirmed" code can only travel with an unconfirmed total (never read as failed).
+  if (value.code === 'unconfirmed' && value.status !== 'unconfirmed') return unconfirmedResult();
+  // sub_issue_failed means: the issue was created and confirmed, only the parent link failed.
+  if (
+    value.code === 'sub_issue_failed'
+    && !(
+      value.status === 'partial'
+      && steps.some((step) => step.step === 'create_issue' && step.state === 'confirmed')
+      && steps.some((step) => step.step === 'sub_issue' && step.state === 'failed')
+    )
+  ) {
+    return unconfirmedResult();
+  }
+  // The success wording is reserved for confirmed results.
+  if ((value.message === MESSAGES.ok) !== (value.status === 'confirmed')) return unconfirmedResult();
+
   return {
     status: value.status as GithubWriteResult['status'],
     code: value.code as GithubWriteCode,

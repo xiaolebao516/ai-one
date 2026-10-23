@@ -120,3 +120,33 @@ export function setStoredTakeoverAi(name: string | null, storage: StorageLike | 
     } catch { /* ignore */ }
   }
 }
+
+export const TAKEOVER_TASK_ID_KEY = "ai-one.takeover.taskId";
+
+export function getTakeoverTaskId(storage: StorageLike | undefined = defaultStorage()): string | null {
+  return read(TAKEOVER_TASK_ID_KEY, storage);
+}
+
+export function setStoredTakeoverTaskId(taskId: string | null, storage: StorageLike | undefined = defaultStorage()): void {
+  if (taskId) {
+    write(TAKEOVER_TASK_ID_KEY, taskId, storage);
+  } else {
+    try {
+      (storage as StorageLike & { removeItem?: (k: string) => void })?.removeItem?.(TAKEOVER_TASK_ID_KEY);
+    } catch { /* ignore */ }
+  }
+}
+
+export function clearStoredTakeover(storage: StorageLike | undefined = defaultStorage()): void {
+  setStoredTakeoverAi(null, storage);
+  setStoredTakeoverTaskId(null, storage);
+}
+
+export function providerForTakeover(ai: string): 'chatgpt' | 'claude' | 'gemini' | 'grok' | 'meta' {
+  const norm = ai.toLowerCase();
+  if (/claude/i.test(norm)) return 'claude';
+  if (/gemini|argon/i.test(norm)) return 'gemini';
+  if (/grok/i.test(norm)) return 'grok';
+  if (/meta/i.test(norm)) return 'meta';
+  return 'chatgpt';
+}

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import type { DispatchSnapshot } from '../../dispatch/types';
 import type { Locale } from '../../i18n/resolve';
 import {
@@ -20,7 +20,7 @@ import { TaskNotificationIsland } from '../drawer/TaskNotificationIsland';
 import { TaskPauseControl, type PauseState } from '../drawer/TaskPauseControl';
 import { TaskTakeoverBanner } from '../drawer/TaskTakeoverBanner';
 import { derivePauseState, formatCommentBody, formatPauseBody } from '../../host/githubWrite';
-import { getTakeoverAi, setStoredTakeoverAi } from '../workbenchStorage';
+import { clearStoredTakeover, getTakeoverAi, setStoredTakeoverAi, setStoredTakeoverTaskId } from '../workbenchStorage';
 import { StageStrip, TaskStatus } from '../TaskBits';
 import { workbenchText } from '../workbenchText';
 
@@ -30,8 +30,8 @@ export interface TaskViewProps {
   onBack: () => void;
   dispatchSnapshot?: DispatchSnapshot | null;
   onOpenClassic?: () => void;
-  onTakeoverAi?: (aiName: string) => void;
-  onRefreshData?: () => Promise<void> | void;
+  onTakeoverAi?: (aiName: string, taskId?: string) => void;
+  onRefreshData?: () => Promise<readonly HudTask[]> | Promise<void> | void;
   onNavigateTask?: (task: HudTask) => void;
 }
 
@@ -49,7 +49,7 @@ export function TaskView({
   task,
   onBack,
   dispatchSnapshot,
-  onOpenClassic: _onOpenClassic,
+  onOpenClassic,
   onTakeoverAi,
   onRefreshData,
   onNavigateTask,
@@ -74,8 +74,18 @@ export function TaskView({
   const handleTakeover = (name: string) => {
     setTakeoverAi(name);
     setStoredTakeoverAi(name);
-    onTakeoverAi?.(name);
+    setStoredTakeoverTaskId(task.id);
+    onTakeoverAi?.(name, task.id);
+    onOpenClassic?.();
   };
+
+  const handleNavigateCurrentTask = useCallback(() => {
+    if (onNavigateTask) {
+      onNavigateTask(task);
+    } else if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [onNavigateTask, task]);
 
   const initialPauseState: PauseState = useMemo(() => {
     type PauseEntry = { body: string; time: number };
@@ -127,7 +137,7 @@ export function TaskView({
             locale={locale}
             onExit={() => {
               setTakeoverAi(null);
-              setStoredTakeoverAi(null);
+              clearStoredTakeover();
             }}
           />
         ) : null}
@@ -138,7 +148,7 @@ export function TaskView({
               size="sm"
               variant="ghost"
               onClick={() => {
-                setStoredTakeoverAi(null);
+                clearStoredTakeover();
                 onBack();
               }}
               icon={<Icon name="arrowLeft" size={14} />}
@@ -214,8 +224,15 @@ export function TaskView({
                     expectedHeadSha={reviewedHead}
                     currentHeadSha={task.pr?.headSha || ''}
                     onRefreshHead={async () => {
-                      await onRefreshData?.();
-                      if (task.pr?.headSha) setReviewedHead(task.pr.headSha);
+                      if (onRefreshData) {
+                        const updatedTasks = (await onRefreshData()) as HudTask[] | undefined;
+                        const updated = updatedTasks?.find?.((t) => t.id === task.id);
+                        if (updated?.pr?.headSha) {
+                          setReviewedHead(updated.pr.headSha);
+                          return updated.pr.headSha;
+                        }
+                      }
+                      return undefined;
                     }}
                   />
                 ) : null}
@@ -363,6 +380,7 @@ export function TaskView({
                 </div>
                 {member.type === 'web' ? (
                   <Button
+                    data-testid="takeover-button"
                     size="sm"
                     variant="ghost"
                     onClick={() => handleTakeover(member.name)}
@@ -391,13 +409,7 @@ export function TaskView({
       <TaskNotificationIsland
         task={task}
         locale={locale}
-        onNavigate={() => {
-          if (onNavigateTask) {
-            onNavigateTask(task);
-          } else if (typeof window !== 'undefined') {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }
-        }}
+        onNavigate={handleNavigateCurrentTask}
       />
     </div>
   );

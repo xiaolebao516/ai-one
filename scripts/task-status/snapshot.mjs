@@ -1,3 +1,31 @@
+export function extractReviewVerdict(body, state) {
+  const normState = typeof state === 'string' ? state.toLowerCase() : '';
+  if (normState === 'approved') return 'pass';
+  if (normState === 'changes_requested') return 'revise';
+  if (!body || typeof body !== 'string') return 'none';
+
+  const markerMatch = body.match(/(?:\*\*|##\s*)?(?:裁定|verdict)[：:\s*]*\s*(PASS|REVISE|BLOCKED)\b/i);
+  if (markerMatch) {
+    const v = markerMatch[1].toUpperCase();
+    if (v === 'PASS') return 'pass';
+    if (v === 'REVISE') return 'revise';
+    if (v === 'BLOCKED') return 'blocked';
+  }
+
+  if (/\*\*裁定：BLOCKED\*\*/i.test(body)) return 'blocked';
+  if (/\*\*裁定：REVISE\*\*/i.test(body)) return 'revise';
+  if (/\*\*裁定：PASS\*\*/i.test(body)) return 'pass';
+
+  const lines = body.split(/\r?\n/).map((l) => l.trim().replace(/^\*+|\*+$/g, '').trim());
+  for (const line of lines) {
+    if (/^BLOCKED$/i.test(line)) return 'blocked';
+    if (/^REVISE$/i.test(line)) return 'revise';
+    if (/^PASS$/i.test(line)) return 'pass';
+  }
+
+  return 'none';
+}
+
 export function validateOptions({ repo, page = 1, limit = 10 }) {
   if (typeof repo !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/.test(repo)) {
     throw new Error('--repo must be an owner/repository on github.com.');
@@ -65,16 +93,34 @@ export async function collectSnapshot(options, client, now = () => new Date().to
         if (Array.isArray(commentsData)) {
           allComments.push(...commentsData);
           if (commentsData.length < 100) break;
+          if (page === 5) {
+            truncated = true;
+            snapshot.errors.push({
+              url: `https://api.github.com/${prefix}/issues/${i.number}/comments?page=${page}`,
+              observedAt: now(),
+              message: 'Comments truncated at 500 items (page 5 limit reached)',
+            });
+            snapshot.status = 'partial';
+            break;
+          }
           page++;
         } else {
           truncated = true;
+          snapshot.errors.push({
+            url: `https://api.github.com/${prefix}/issues/${i.number}/comments?page=${page}`,
+            observedAt: now(),
+            message: 'Non-array response for comments',
+          });
+          snapshot.status = 'partial';
           break;
         }
       } catch (err) {
-        if (err?.message !== 'Unexpected query') {
-          snapshot.errors.push({ url: `https://api.github.com/${prefix}/issues/${i.number}/comments?page=${page}`, observedAt: now(), message: err?.message || 'Failed to read comments' });
-          snapshot.status = 'partial';
-        }
+        snapshot.errors.push({
+          url: `https://api.github.com/${prefix}/issues/${i.number}/comments?page=${page}`,
+          observedAt: now(),
+          message: err?.message || 'Failed to read comments',
+        });
+        snapshot.status = 'partial';
         truncated = true;
         break;
       }
@@ -85,7 +131,7 @@ export async function collectSnapshot(options, client, now = () => new Date().to
       body: typeof c.body === 'string' ? c.body : '',
       createdAt: c.created_at,
     }));
-    if (truncated && page > 5) {
+    if (truncated) {
       i.commentsTruncated = true;
     }
   }
@@ -109,16 +155,34 @@ export async function collectSnapshot(options, client, now = () => new Date().to
         if (Array.isArray(reviewsData)) {
           allReviews.push(...reviewsData);
           if (reviewsData.length < 100) break;
+          if (rPage === 5) {
+            rTruncated = true;
+            snapshot.errors.push({
+              url: `https://api.github.com/${prefix}/pulls/${p.number}/reviews?page=${rPage}`,
+              observedAt: now(),
+              message: 'Reviews truncated at 500 items (page 5 limit reached)',
+            });
+            snapshot.status = 'partial';
+            break;
+          }
           rPage++;
         } else {
           rTruncated = true;
+          snapshot.errors.push({
+            url: `https://api.github.com/${prefix}/pulls/${p.number}/reviews?page=${rPage}`,
+            observedAt: now(),
+            message: 'Non-array response for reviews',
+          });
+          snapshot.status = 'partial';
           break;
         }
       } catch (err) {
-        if (err?.message !== 'Unexpected query') {
-          snapshot.errors.push({ url: `https://api.github.com/${prefix}/pulls/${p.number}/reviews?page=${rPage}`, observedAt: now(), message: err?.message || 'Failed to read reviews' });
-          snapshot.status = 'partial';
-        }
+        snapshot.errors.push({
+          url: `https://api.github.com/${prefix}/pulls/${p.number}/reviews?page=${rPage}`,
+          observedAt: now(),
+          message: err?.message || 'Failed to read reviews',
+        });
+        snapshot.status = 'partial';
         rTruncated = true;
         break;
       }
@@ -132,12 +196,9 @@ export async function collectSnapshot(options, client, now = () => new Date().to
       commitId: r.commit_id,
     }));
     let prReview = undefined;
-    const formal = [...reviews].reverse().find((r) => ['approved', 'changes_requested'].includes(r.state) || r.body.includes('**裁定：PASS**') || r.body.includes('**裁定：REVISE**') || r.body.includes('**裁定：BLOCKED**'));
+    const formal = [...reviews].reverse().find((r) => extractReviewVerdict(r.body, r.state) !== 'none');
     if (formal) {
-      let verdict = 'none';
-      if (formal.state === 'approved' || formal.body.includes('PASS')) verdict = 'pass';
-      else if (formal.state === 'changes_requested' || formal.body.includes('REVISE')) verdict = 'revise';
-      else if (formal.body.includes('BLOCKED')) verdict = 'blocked';
+      const verdict = extractReviewVerdict(formal.body, formal.state);
       prReview = {
         verdict,
         headSha: formal.commitId || sha,

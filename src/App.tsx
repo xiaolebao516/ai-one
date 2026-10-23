@@ -118,7 +118,7 @@ import {
   type FreeTargetSelection,
 } from './ui/targets';
 import { useOverlayGuard } from './ui/useOverlayGuard';
-import { getTakeoverAi, setStoredTakeoverAi, switchUiRoot } from './workbench/workbenchStorage';
+import { getTakeoverAi, providerForTakeover, setStoredTakeoverAi, switchUiRoot } from './workbench/workbenchStorage';
 import { TaskHud } from './ui/TaskHud';
 import { TaskHudEntry } from './ui/TaskHudEntry';
 import { buildMarkdown, exportFilename, matchingSnapshotForConversation } from './ui/exportMarkdown';
@@ -281,21 +281,13 @@ function isGeneratedImageResponse(content: string): boolean {
   return /^\[Image generated(?::[^\]]+)?\]$/.test(content.trim());
 }
 
+
 export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void } = {}) {
   const { locale, t: translate, setLanguage } = useI18n();
   useEffect(() => {
     void Promise.resolve()
       .then(() => host.dev.log('[MAC_AGENT] READY control-pane'))
       .catch(() => undefined);
-    const ai = getTakeoverAi();
-    if (ai) {
-      setTakeoverAi(ai);
-      let target: AIProvider = 'chatgpt';
-      if (/claude/i.test(ai)) target = 'claude';
-      else if (/gemini/i.test(ai)) target = 'gemini';
-      else if (/grok/i.test(ai)) target = 'grok';
-      setScrollFocusedProvider(target);
-    }
   }, []);
   const initialConversation = useMemo(initialConversationState, []);
   const [states, setStates] = useState<Record<AIProvider, ProviderState>>(() =>
@@ -1269,6 +1261,16 @@ export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void 
     },
     [markManualFocusControl, setCenterSurfaceMode],
   );
+
+  useEffect(() => {
+    const ai = getTakeoverAi();
+    if (ai) {
+      setTakeoverAi(ai);
+      const target = providerForTakeover(ai);
+      setScrollFocusedProvider(target);
+      void forceProviderNativeCenter(target);
+    }
+  }, [forceProviderNativeCenter]);
 
   const changeProviderPresentationManually = useCallback(
     async (provider: AIProvider, state: WebviewPresentationState) => {

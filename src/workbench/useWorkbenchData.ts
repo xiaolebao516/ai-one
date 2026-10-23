@@ -103,7 +103,7 @@ export interface WorkbenchData {
   addRepo: (input: string) => AddRepoResult;
   removeRepo: (repo: string) => void;
   setDispatchRepo: (input: string) => 'saved' | 'cleared' | 'invalid';
-  refresh: () => void;
+  refresh: () => Promise<readonly HudTask[]>;
 }
 
 export type GitHubLoader = (repos: readonly string[]) => Promise<GitHubRepoTasks[]>;
@@ -113,7 +113,6 @@ const readGitHub: GitHubLoader = (repos) => loadGitHubTasks(repos, host.github, 
 export function useWorkbenchData(load: GitHubLoader = readGitHub): WorkbenchData {
   const [prefs, setPrefs] = useState<WorkbenchPrefs>(() => loadPrefs());
   const [github, setGithub] = useState<GitHubReadState>({ loading: false, results: [] });
-  const [refreshToken, setRefreshToken] = useState(0);
   const requestRef = useRef(0);
 
   const update = useCallback((patch: Partial<WorkbenchPrefs>) => {
@@ -152,13 +151,41 @@ export function useWorkbenchData(load: GitHubLoader = readGitHub): WorkbenchData
     return () => {
       requestRef.current += 1;
     };
-  }, [load, prefs.source, reposKey, refreshToken]);
+  }, [load, prefs.source, reposKey]);
 
   const health = dataHealth(prefs.source, github, reposKey);
   // Same repositories: the last snapshot stays visible while it refreshes (health says it is not
   // current). Different repositories: nothing is shown until they are read.
   const tasks =
     prefs.source === 'demo' ? TASK_HUD_MOCK_TASKS : github.reposKey === reposKey ? github.results.flatMap((result) => result.tasks) : [];
+
+  const refresh = useCallback(async (): Promise<readonly HudTask[]> => {
+    if (prefs.source !== 'github') return TASK_HUD_MOCK_TASKS;
+    const request = ++requestRef.current;
+    setGithub((current) => ({ ...current, loading: true }));
+    const repos = reposKey.split('\n').filter(Boolean);
+    try {
+      const results = await load(repos);
+      if (request === requestRef.current) {
+        setGithub({ loading: false, reposKey, results });
+      }
+      return results.flatMap((r) => r.tasks);
+    } catch {
+      const observedAt = new Date().toISOString();
+      const results: GitHubRepoTasks[] = repos.map((repo) => ({
+        repo,
+        tasks: [],
+        status: 'error' as const,
+        errors: [{ url: '', observedAt, message: 'GitHub snapshot could not be collected.' }],
+        pagination: {},
+        observedAt,
+      }));
+      if (request === requestRef.current) {
+        setGithub({ loading: false, reposKey, results });
+      }
+      return [];
+    }
+  }, [load, prefs.source, reposKey]);
 
   return {
     prefs,
@@ -191,6 +218,6 @@ export function useWorkbenchData(load: GitHubLoader = readGitHub): WorkbenchData
       update({ dispatchRepo: repo });
       return 'saved';
     },
-    refresh: () => setRefreshToken((token) => token + 1),
+    refresh,
   };
 }
