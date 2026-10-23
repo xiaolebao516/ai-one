@@ -136,7 +136,7 @@ export function applyCoordinatorReply(
       to: provider,
       message: parsed.message,
       messageChars: parsed.message.length,
-      status: 'queued',
+      status: 'queued' as const,
     }));
     return {
       run: {
@@ -198,6 +198,7 @@ export function updateForward(
     to: current.to,
     message: current.message,
     messageChars: current.messageChars,
+    status: patch.status ?? current.status,
   };
   const forwards = run.forwards.slice();
   forwards[index] = updated;
