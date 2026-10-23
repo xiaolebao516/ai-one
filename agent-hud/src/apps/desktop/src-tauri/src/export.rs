@@ -216,6 +216,29 @@ mod tests {
     }
 
     #[test]
+    fn a_running_heartbeat_loop_cannot_overwrite_the_final_status() {
+        // The heartbeat thread writes as fast as it can while stop() races it.
+        // Whatever the interleaving, the last word is `running: false`.
+        for _ in 0..20 {
+            let directory = tempfile_dir();
+            let status = Arc::new(Status::new());
+            let beating = {
+                let (status, directory) = (Arc::clone(&status), directory.clone());
+                std::thread::spawn(move || while status.beat(&directory) {})
+            };
+            std::thread::sleep(Duration::from_millis(5));
+            status.stop(&directory);
+            beating.join().unwrap();
+            let text = std::fs::read_to_string(directory.join(STATUS_FILE)).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&text).unwrap()["running"],
+                false
+            );
+            let _ = std::fs::remove_dir_all(&directory);
+        }
+    }
+
+    #[test]
     fn a_heartbeat_after_stop_cannot_overwrite_the_final_status() {
         let directory = tempfile_dir();
         let status = Status::new();
