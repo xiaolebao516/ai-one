@@ -5,7 +5,7 @@ import type { FlowsEditorController } from '../useFlowsEditor';
 import { CompactFlowSelectors, FlowSidebar } from './FlowSidebar';
 import { FlowStageList } from './FlowStageList';
 import { StageEditor } from './StageEditor';
-import { Card, Button, Notice } from '../../ui/v2';
+import { Card, Button, Notice, cx } from '../../ui/v2';
 import type { FlowsText } from '../../workbench/views/flowsText';
 
 interface FlowWorkspaceProps {
@@ -142,33 +142,40 @@ export function FlowWorkspace({ editor, locale, text, fs }: FlowWorkspaceProps) 
               <Card><p className="text-v2-meta text-v2-ink-3">{text.t('noFlows')}</p></Card>
             )}
 
-            {selectedStage ? (
-              <aside className="min-w-0 max-[1319px]:absolute max-[1319px]:right-0 max-[1319px]:top-0 max-[1319px]:z-20 max-[1319px]:w-[min(440px,48vw)] max-[1319px]:max-h-[calc(100vh-10rem)] max-[1319px]:overflow-y-auto max-[1319px]:shadow-v2-float" aria-label={text.t('stageDetails')}>
-                <StageEditor
-                  file={file}
-                  locale={locale}
-                  text={text}
-                  selection={editor.selection}
-                  stage={selectedStage}
-                  draft={editor.draft}
-                  selectedFlow={selectedFlow}
-                  usageFlows={editor.usageFlows}
-                  readOnly={editor.status === 'error'}
-                  scopePrompt={editor.scopePrompt}
-                  scopeCanFlow={editor.scopeCanFlow}
-                  deleteConfirm={editor.deleteStageConfirm}
-                  disabled={editor.mutationsDisabled}
-                  onChange={editor.changeStageDraft}
-                  onCopy={editor.copyStage}
-                  onRemoveFromFlow={editor.removeStageFromFlow}
-                  onRequestDelete={editor.requestDeleteStage}
-                  onConfirmDelete={editor.confirmDeleteStage}
-                  onCancelDelete={editor.cancelDeleteStage}
-                  onChooseScope={editor.chooseScope}
-                  onCancelScope={editor.cancelScope}
-                />
-              </aside>
-            ) : null}
+            <aside
+              className={cx(
+                'min-w-0 transition-[transform,opacity] duration-200 ease-out max-[1319px]:absolute max-[1319px]:right-0 max-[1319px]:top-0 max-[1319px]:z-20 max-[1319px]:w-[min(440px,48vw)] max-[1319px]:max-h-[calc(100vh-10rem)] max-[1319px]:overflow-y-auto max-[1319px]:shadow-v2-float',
+                selectedStage
+                  ? 'max-[1319px]:translate-x-0 max-[1319px]:opacity-100'
+                  : 'max-[1319px]:pointer-events-none max-[1319px]:translate-x-full max-[1319px]:opacity-0 min-[1320px]:hidden',
+              )}
+              aria-label={text.t('stageDetails')}
+              aria-hidden={!selectedStage}
+            >
+              <StageEditor
+                file={file}
+                locale={locale}
+                text={text}
+                selection={editor.selection}
+                stage={selectedStage}
+                draft={editor.draft}
+                selectedFlow={selectedFlow}
+                usageFlows={editor.usageFlows}
+                readOnly={editor.status === 'error'}
+                scopePrompt={editor.scopePrompt}
+                scopeCanFlow={editor.scopeCanFlow}
+                deleteConfirm={editor.deleteStageConfirm}
+                disabled={editor.mutationsDisabled}
+                onChange={editor.changeStageDraft}
+                onCopy={editor.copyStage}
+                onRemoveFromFlow={editor.removeStageFromFlow}
+                onRequestDelete={editor.requestDeleteStage}
+                onConfirmDelete={editor.confirmDeleteStage}
+                onCancelDelete={editor.cancelDeleteStage}
+                onChooseScope={editor.chooseScope}
+                onCancelScope={editor.cancelScope}
+              />
+            </aside>
           </div>
         </>
       ) : null}
