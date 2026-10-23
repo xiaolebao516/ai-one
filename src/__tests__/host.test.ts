@@ -82,6 +82,17 @@ describe('host snapshot bindings', () => {
     expect(String(invokeMock.mock.calls.at(-1)?.[1]?.js)).not.toContain('SEND_MESSAGE');
   });
 
+  it('delivers the chat response token to the injected page dispatch', async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    await host.provider.send('grok', 'question', 'request-token');
+    const dispatch = vi.fn();
+    const script = invokeMock.mock.calls.at(-1)?.[1]?.js as string;
+    new Function('window', script)({ __MAC_BRIDGE__: { dispatch } });
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'SEND_MESSAGE', payload: { text: 'question', requestId: 'request-token' },
+    }));
+  });
+
   it('starts a fresh provider conversation through the dedicated host command', async () => {
     invokeMock.mockResolvedValueOnce(undefined);
 

@@ -111,6 +111,9 @@ export function createProviderWebTabController(
   let container: HTMLElement | null = null;
   let observer: ResizeObserver | null = null;
   let pollTimer: number | null = null;
+  let parkRetryTimer: number | null = null;
+  let parkQueuedVersion: number | null = null;
+  let parkedVersion: number | null = null;
   let resolutionQuery: MediaQueryList | null = null;
   let focusUnlisten: (() => void) | null = null;
   let focusEventVersion = 0;
@@ -144,32 +147,50 @@ export function createProviderWebTabController(
     },
   });
 
+  const cancelParkRetry = () => {
+    if (parkRetryTimer !== null) browserWindow.clearTimeout(parkRetryTimer);
+    parkRetryTimer = null;
+  };
+
   const queuePark = (version: number) => {
+    if (parkQueuedVersion === version || parkedVersion === version) return;
+    parkQueuedVersion = version;
+    const stillWantsPark = () => isCurrentProviderIntent(provider, version) && desiredVisible !== true;
     void enqueueProviderCommand(provider, async () => {
-      const stillWantsPark = () => isCurrentProviderIntent(provider, version) && desiredVisible !== true;
-      if (!stillWantsPark()) return;
-
+      if (!stillWantsPark()) return false;
       try {
         await providerHost.provider.park(provider, HIDDEN_PROVIDER_LOAD_BOUNDS);
-        return;
+        return true;
       } catch {
-        // If setting offscreen bounds/show fails, hide is the safety fallback for native overlays.
+        // If offscreen parking fails, hide immediately before retrying park.
       }
-
-      if (!stillWantsPark()) return;
+      if (!stillWantsPark()) return false;
       try {
         await providerHost.provider.hide(provider);
       } catch {
-        // Retry park below; if that fails too, make one final hide attempt.
+        // A later attempt must remain possible even when every fallback rejects.
       }
-
-      if (!stillWantsPark()) return;
+      if (!stillWantsPark()) return false;
       try {
         await providerHost.provider.park(provider, HIDDEN_PROVIDER_LOAD_BOUNDS);
-        return;
       } catch {
-        if (!stillWantsPark()) return;
+        if (!stillWantsPark()) return false;
         await providerHost.provider.hide(provider);
+      }
+      return true;
+    }).then((confirmed) => {
+      if (parkQueuedVersion === version) parkQueuedVersion = null;
+      if (!stillWantsPark()) return;
+      if (confirmed) {
+        parkedVersion = version;
+        cancelParkRetry();
+      } else if (parkRetryTimer === null) {
+        // Also runs after tab deactivation/unmount: the final native hide still needs to succeed.
+        // A newer controller's intent makes this retry inert, so it cannot hide a reopened tab.
+        parkRetryTimer = browserWindow.setTimeout(() => {
+          parkRetryTimer = null;
+          if (stillWantsPark()) queuePark(version);
+        }, 1000);
       }
     });
   };
@@ -212,6 +233,7 @@ export function createProviderWebTabController(
       rect !== null;
 
     if (desiredVisible !== shouldBeVisible) {
+      cancelParkRetry();
       desiredVisible = shouldBeVisible;
       intentVersion = nextProviderIntent(provider);
       boundsSync.reset();
@@ -225,6 +247,7 @@ export function createProviderWebTabController(
     }
 
     if (shouldBeVisible) boundsSync.schedule();
+    else queuePark(intentVersion);
   };
 
   const handleLayoutChange = () => {
@@ -365,6 +388,7 @@ export function createProviderWebTabController(
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    cancelParkRetry();
 
     if (pollTimer !== null) {
       browserWindow.clearInterval(pollTimer);

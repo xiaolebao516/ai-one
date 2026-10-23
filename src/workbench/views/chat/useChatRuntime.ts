@@ -254,6 +254,7 @@ export function useChatRuntime({
   const busyStartedAtRef = useRef(new Map<AIProvider, number>());
   const runSessionByProviderRef = useRef(new Map<AIProvider, string>());
   const runIdByProviderRef = useRef(new Map<AIProvider, string>());
+  const responseRequestIdsRef = useRef(new Map<AIProvider, string>());
   const forwardedFromByProviderRef = useRef(new Map<AIProvider, AIProvider>());
   const requestByProviderRef = useRef(new Map<AIProvider, ProviderRequest>());
   const successfulByRunRef = useRef(new Map<string, Set<AIProvider>>());
@@ -396,9 +397,12 @@ export function useChatRuntime({
       if (!isProvider(provider)) return;
       const runId = runIdByProviderRef.current.get(provider);
       const sessionId = runSessionByProviderRef.current.get(provider);
-      // Bridge messages carry no run id; accept them only while this runtime owns this provider
-      // for an explicit session in a live local run. Replay and unrelated events are ignored.
+      // Accept responses only for a live local run and its current page request. A timed-out,
+      // skipped, replayed, or previous-turn response cannot change the current transcript.
       if (!runId || !sessionId || activeWorkflowRunRef.current !== runId) return;
+      const expectedRequestId = responseRequestIdsRef.current.get(provider);
+      const payload = message.payload as { requestId?: unknown } | undefined;
+      if (!expectedRequestId || !payload || typeof payload !== 'object' || payload.requestId !== expectedRequestId) return;
       let active = activeResponsesRef.current.get(provider);
       if (!active) {
         active = createActiveProviderResponse(provider);
@@ -445,6 +449,7 @@ export function useChatRuntime({
       }
 
       if (!isFinal) return;
+      responseRequestIdsRef.current.delete(provider);
       if (runId) {
         const successful = successfulByRunRef.current.get(runId) ?? new Set<AIProvider>();
         if (status === 'completed') successful.add(provider);
@@ -507,6 +512,7 @@ export function useChatRuntime({
         skipAllowed: event.skipAllowed !== false,
         ...(event.failureKind ? { failureKind: event.failureKind } : {}),
       };
+      responseRequestIdsRef.current.delete(provider);
       pendingTimeoutActionsRef.current.set(provider, pending);
       setTimeoutActions((current) => ({ ...current, [provider]: pending }));
       setNow(Date.now());
@@ -567,6 +573,7 @@ export function useChatRuntime({
     for (const provider of providers) {
       clearTimeoutAction(provider, runId);
       if (runIdByProviderRef.current.get(provider) !== runId) continue;
+      responseRequestIdsRef.current.delete(provider);
       busyProvidersRef.current.delete(provider);
       busyStartedAtRef.current.delete(provider);
       runIdByProviderRef.current.delete(provider);
@@ -857,6 +864,11 @@ export function useChatRuntime({
       }
 
       const result = await executeWorkflow({
+        createResponseRequestId: (provider) => {
+          const id = createConversationMessageId('chat-request');
+          if (runIdByProviderRef.current.get(provider) === runId) responseRequestIdsRef.current.set(provider, id);
+          return id;
+        },
         text,
         context,
         mode,

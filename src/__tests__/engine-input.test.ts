@@ -150,6 +150,22 @@ describe('injected engine input hardening', () => {
     });
   });
 
+  it('echoes an opted-in request id in final replies and send errors', async () => {
+    vi.useFakeTimers();
+    const env = createEnv({ inputKind: 'textarea' });
+    const handler = await installEngine(env);
+    dispatchAdapter(handler, { timing: { doneDelayMs: 10, chunkDebounceMs: 0, statusIntervalMs: 1_000_000, backupPollMs: 10 } });
+    handler({ v: 1, action: 'SEND_MESSAGE', provider: 'grok', payload: { text: 'question', requestId: 'current-request' } });
+    await flushMicrotasks();
+    env.responses = [new FakeElement(env.document, 'div', 'current answer')];
+    await vi.advanceTimersByTimeAsync(20);
+    expect(env.emitted).toContainEqual({ v: 1, action: 'RESPONSE_DONE', provider: 'grok', payload: { text: 'current answer', requestId: 'current-request' } });
+    env.cloudflareChallenge = true;
+    handler({ v: 1, action: 'SEND_MESSAGE', provider: 'grok', payload: { text: 'another question', requestId: 'next-request' } });
+    await flushMicrotasks();
+    expect(env.emitted).toContainEqual({ v: 1, action: 'RESPONSE_DONE', provider: 'grok', payload: { text: '[Error: grok security challenge is active]', requestId: 'next-request' } });
+  });
+
   it('emits one challenge error for two queued SEND_MESSAGE commands', async () => {
     vi.useFakeTimers();
     const env = createEnv({ inputKind: 'textarea' });

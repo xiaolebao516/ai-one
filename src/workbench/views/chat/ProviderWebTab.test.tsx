@@ -56,6 +56,8 @@ function fakeBrowserWindow() {
       return nextFrameId;
     },
     cancelAnimationFrame: (id: number) => frames.delete(id),
+    setTimeout: window.setTimeout.bind(window),
+    clearTimeout: window.clearTimeout.bind(window),
     setInterval: window.setInterval.bind(window),
     clearInterval: window.clearInterval.bind(window),
     matchMedia: vi.fn(() => media),
@@ -248,6 +250,68 @@ describe('ProviderWebTab', () => {
     await controller.whenIdle();
     expect(calls[calls.length - 1]).toBe('park');
     expect(host.provider.park).toHaveBeenCalledWith('chatgpt', HIDDEN_PROVIDER_LOAD_BOUNDS);
+  });
+
+  it('retries on a later layout tick after every park/hide fallback fails', async () => {
+    const { host } = makeHost();
+    host.provider.park = vi.fn().mockRejectedValue(new Error('host temporarily unavailable'));
+    host.provider.hide = vi.fn().mockRejectedValue(new Error('host temporarily unavailable'));
+    const fakeWindow = fakeBrowserWindow();
+    const element = document.createElement('div');
+    element.getBoundingClientRect = () => rect(0, 0, 320, 240);
+    const controller = createProviderWebTabController({
+      provider: 'chatgpt', host, window: fakeWindow.browserWindow, document,
+      getCurrentWindow: async () => createFocusApi(),
+    });
+    controller.setState({ active: true, overlayCount: 1 });
+    controller.start(element);
+    await controller.whenIdle();
+    expect(host.provider.park).toHaveBeenCalledTimes(2);
+    vi.mocked(host.provider.park).mockResolvedValue(undefined);
+    document.dispatchEvent(new Event('scroll'));
+    await controller.whenIdle();
+    expect(host.provider.park).toHaveBeenCalledTimes(3);
+    document.dispatchEvent(new Event('scroll'));
+    await controller.whenIdle();
+    expect(host.provider.park).toHaveBeenCalledTimes(3);
+    controller.dispose();
+    await controller.whenIdle();
+  });
+
+  it('retries failed final cleanup without an active tab and cancels stale retries', async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost();
+    host.provider.park = vi.fn().mockRejectedValue(new Error('host unavailable'));
+    host.provider.hide = vi.fn().mockRejectedValue(new Error('host unavailable'));
+    const fakeWindow = fakeBrowserWindow();
+    const element = document.createElement('div');
+    element.getBoundingClientRect = () => rect(0, 0, 320, 240);
+    const controller = createProviderWebTabController({ provider: 'chatgpt', host, window: fakeWindow.browserWindow, document, getCurrentWindow: async () => createFocusApi() });
+    try {
+      controller.start(element);
+      await controller.whenIdle();
+      expect(host.provider.park).toHaveBeenCalledTimes(2);
+      vi.mocked(host.provider.park).mockResolvedValue(undefined);
+      await vi.advanceTimersByTimeAsync(1000);
+      await controller.whenIdle();
+      expect(host.provider.park).toHaveBeenCalledTimes(3);
+
+      controller.setState({ active: true, overlayCount: 0 });
+      await controller.whenIdle();
+      vi.mocked(host.provider.park).mockRejectedValue(new Error('host unavailable'));
+      controller.setState({ active: true, overlayCount: 1 });
+      await controller.whenIdle();
+      const failedCalls = vi.mocked(host.provider.park).mock.calls.length;
+      controller.setState({ active: true, overlayCount: 0 });
+      await controller.whenIdle();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(host.provider.park).toHaveBeenCalledTimes(failedCalls);
+    } finally {
+      vi.mocked(host.provider.park).mockResolvedValue(undefined);
+      controller.dispose();
+      await controller.whenIdle();
+      vi.useRealTimers();
+    }
   });
 
   it('falls back to hide and retries when park rejects', async () => {

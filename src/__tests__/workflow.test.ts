@@ -28,7 +28,7 @@ import { sendAndWait } from '../workflow/sendAndWait';
 import { flushSessionCheckpointForTests, resetSessionCheckpointForTests } from '../workflow/sessionCheckpoint';
 import { getLastSnapshot, resetSnapshotRecorderForTests } from '../workflow/snapshot/recorder';
 import { runStep, SEND_REJECTION_RETRY_DELAY_MS } from '../workflow/stepRunner';
-import { getActiveTurn, reserveTurn, resetWorkflowStateForTests, SKIP_RESPONSE } from '../workflow/state';
+import { getActiveTurn, reserveTurn, resetWorkflowStateForTests, setResponseRequestIdFactory, SKIP_RESPONSE } from '../workflow/state';
 import {
   chooseStepTimeoutAction,
   onStepTimeoutEvent,
@@ -155,6 +155,32 @@ describe('workflow engine', () => {
 
     publishBridgeMessage(done('chatgpt', 'real final', 'pull'));
     await expect(promise).resolves.toEqual({ response: 'real final', turn: 1 });
+  });
+
+  it('passes the chat request token to the page and rejects stale completions after retry', async () => {
+    let nextRequest = 0;
+    setResponseRequestIdFactory(() => `request-${++nextRequest}`);
+    const result = runStep('chatgpt', 'question');
+    await Promise.resolve();
+    expect(host.provider.send).toHaveBeenLastCalledWith('chatgpt', 'question', 'request-1');
+    await vi.advanceTimersByTimeAsync(STEP_TIMEOUT_MS);
+    vi.mocked(host.provider.send).mockImplementationOnce(async (provider, _text, requestId) => {
+      expect(requestId).toBe('request-2');
+      publishBridgeMessage({ ...done(provider), payload: { text: 'stale', requestId: 'request-1' } });
+      expect(hasWaiter(provider, getActiveTurn(provider)!)).toBe(true);
+      publishBridgeMessage({ ...done(provider), payload: { text: 'retried answer', requestId } });
+    });
+    expect(chooseStepTimeoutAction('retry')).toBe(true);
+    await expect(result).resolves.toMatchObject({ response: 'retried answer' });
+  });
+
+  it('enables request correlation through the public chat workflow entry point', async () => {
+    vi.mocked(host.provider.send).mockImplementationOnce(async (provider, _text, requestId) => {
+      expect(requestId).toBe('chat-request');
+      publishBridgeMessage({ ...done(provider), payload: { text: 'answer', requestId } });
+    });
+    await expect(runWorkflow({ text: 'question', mode: 'free', targets: ['chatgpt'], createResponseRequestId: () => 'chat-request' }))
+      .resolves.toEqual({ ok: true });
   });
 
   it('registers the waiter before sending so a synchronous DONE from send resolves', async () => {

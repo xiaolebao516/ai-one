@@ -2,6 +2,7 @@ import { POLL_PULL_MS } from '../../shared/constants';
 import type { AIProvider, BridgeMessage } from '../../shared/types';
 import { host } from '../host';
 import { publishBridgeMessage } from './bus';
+import { getResponseRequestId } from '../workflow/state';
 
 export const DONE_WATCHDOG_MS = 5000;
 export const AWAITING_MAX_MS = 10 * 60 * 1000;
@@ -212,6 +213,7 @@ function synthesizeDone(provider: AIProvider, payload: string): Promise<void> {
   const existing = synthesizeInflight.get(provider);
   if (existing) return existing.promise;
   const epoch = awaitingEpoch.get(provider);
+  const requestId = getResponseRequestId(provider);
   const token = Symbol(provider);
   const operation = Promise.resolve()
     .then(() => host.provider.stop(provider))
@@ -223,7 +225,7 @@ function synthesizeDone(provider: AIProvider, payload: string): Promise<void> {
         v: 1,
         action: 'RESPONSE_DONE',
         provider,
-        payload,
+        payload: requestId ? { text: payload, requestId } : payload,
         transport: 'local',
       });
     })

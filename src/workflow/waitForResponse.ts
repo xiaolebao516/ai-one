@@ -11,6 +11,7 @@ export const STEP_ABSOLUTE_TIMEOUT_MS = AWAITING_ABSOLUTE_MAX_MS;
 interface Waiter {
   provider: AIProvider;
   turn: number;
+  requestId?: string;
   resolve: (value: string) => void;
   reject: (reason: Error) => void;
   settled: boolean;
@@ -39,15 +40,22 @@ export function ensureWorkflowBusSubscription(): void {
 
 function handleBridgeMessage(message: BridgeMessage): void {
   if (!message.provider) return;
-  if (reportsProviderActivity(message)) rearmProviderTimers(message.provider);
+  if (reportsProviderActivity(message)) rearmProviderTimers(message.provider, message);
   if (message.action !== 'RESPONSE_DONE') return;
   if (message.transport !== 'pull' && message.transport !== 'local') return;
   for (const waiter of [...waiters.values()]) {
-    if (waiter.provider !== message.provider) continue;
+    if (waiter.provider !== message.provider || !matchesRequest(waiter, message)) continue;
     if (isTruncatedPayload(message.payload)) settle(waiter, 'reject', new ProviderResponseTruncatedError(waiter.provider));
     else settle(waiter, 'resolve', payloadText(message.payload));
     return;
   }
+}
+
+function matchesRequest(waiter: Waiter, message: BridgeMessage): boolean {
+  if (!waiter.requestId) return true;
+  const payload = message.payload;
+  return Boolean(payload && typeof payload === 'object' &&
+    (payload as { requestId?: unknown }).requestId === waiter.requestId);
 }
 
 function isTruncatedPayload(payload: unknown): boolean {
@@ -63,7 +71,7 @@ function payloadText(payload: unknown): string {
   return JSON.stringify(payload ?? '');
 }
 
-export function waitForResponse(provider: AIProvider, turn: number): Promise<string> {
+export function waitForResponse(provider: AIProvider, turn: number, requestId?: string): Promise<string> {
   ensureWorkflowBusSubscription();
   rejectExistingProviderWaiters(provider, new Error('superseded by a newer send'));
   return new Promise((resolve, reject) => {
@@ -71,6 +79,7 @@ export function waitForResponse(provider: AIProvider, turn: number): Promise<str
     const waiter: Waiter = {
       provider,
       turn,
+      requestId,
       resolve,
       reject,
       settled: false,
@@ -105,10 +114,11 @@ function armTimeout(waiter: Waiter): void {
   waiter.timer = globalThis.setTimeout(() => armTimeout(waiter), remaining);
 }
 
-function rearmProviderTimers(provider: AIProvider): void {
+function rearmProviderTimers(provider: AIProvider, message: BridgeMessage): void {
   const now = Date.now();
   for (const waiter of waiters.values()) {
     if (waiter.provider !== provider || waiter.settled) continue;
+    if (message.action === 'RESPONSE_CHUNK' && !matchesRequest(waiter, message)) continue;
     waiter.lastActivityAt = now;
     if (waiter.timer !== undefined) globalThis.clearTimeout(waiter.timer);
     armTimeout(waiter);

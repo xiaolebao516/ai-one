@@ -317,6 +317,7 @@ class InactiveSendOperationError extends Error {
   let activeResponseGeneration = 0;
   let nextSendOperation = 0;
   let activeSendOperation: number | undefined;
+  let activeResponseRequestId: string | undefined;
   let draftStaging = false;
   let lastResponseText = '';
   let lastCompletionActivityAt = 0;
@@ -430,10 +431,10 @@ class InactiveSendOperationError extends Error {
       return;
     }
     if (message.action === 'SEND_MESSAGE' && (!adapter || !message.provider || message.provider === adapter.provider)) {
-      const sendOperation = beginSendOperation(message.provider);
+      const payload = message.payload as { text?: string; requestId?: string } | undefined;
+      const sendOperation = beginSendOperation(message.provider, typeof payload?.requestId === 'string' ? payload.requestId : undefined);
       if (sendOperation === undefined) return;
       if (abortAutomationForChallenge(message.provider, true, 'send', sendOperation)) return;
-      const payload = message.payload as { text?: string } | undefined;
       if (stopRequiresReload) {
         const provider = message.provider ?? adapter?.provider;
         doneWithError(`${provider} send rejected: stop failed; reload provider page before retrying`, provider, sendOperation);
@@ -615,6 +616,7 @@ class InactiveSendOperationError extends Error {
       // page-side generation too, or beginSendOperation() rejects every later Retry until reload.
       cancelResponseWait();
       activeSendOperation = undefined;
+      activeResponseRequestId = undefined;
       draftStaging = false;
       stopUnconfirmed = true;
       if (!result.clicked) stopRequiresReload = true;
@@ -695,13 +697,14 @@ class InactiveSendOperationError extends Error {
     return true;
   }
 
-  function beginSendOperation(providerHint?: AIProvider): number | undefined {
+  function beginSendOperation(providerHint?: AIProvider, requestId?: string): number | undefined {
     if (activeSendOperation !== undefined || draftStaging || waitingForResponse) {
       logEngine(`${providerHint ?? adapter?.provider ?? 'provider'} send rejected: response in flight`);
       return undefined;
     }
     nextSendOperation += 1;
     activeSendOperation = nextSendOperation;
+    activeResponseRequestId = requestId;
     return nextSendOperation;
   }
 
@@ -710,6 +713,7 @@ class InactiveSendOperationError extends Error {
       logEngine(`${providerHint ?? adapter?.provider ?? 'provider'} fill rejected: response in flight`);
       return false;
     }
+    activeResponseRequestId = undefined;
     draftStaging = true;
     return true;
   }
@@ -728,6 +732,7 @@ class InactiveSendOperationError extends Error {
     void Promise.resolve().then(() => {
       if (activeSendOperation === sendOperation && !waitingForResponse) {
         activeSendOperation = undefined;
+        activeResponseRequestId = undefined;
       }
     });
   }
@@ -1963,8 +1968,16 @@ class InactiveSendOperationError extends Error {
     const payload = finalResponseText(lastResponseText, getLatestResponseText());
     const sendOperation = activeSendOperation;
     cancelResponseWait();
-    bridge.emit({ v: 1, action: 'RESPONSE_DONE', provider: adapter.provider, payload });
+    bridge.emit({ v: 1, action: 'RESPONSE_DONE', provider: adapter.provider, payload: correlatedResponsePayload(payload) });
     if (sendOperation !== undefined) releaseSendOperation(sendOperation);
+  }
+
+  function correlatedResponsePayload(payload: unknown): unknown {
+    if (!activeResponseRequestId) return payload;
+    const content = payload && typeof payload === 'object'
+      ? payload as Record<string, unknown>
+      : { text: typeof payload === 'string' ? payload : JSON.stringify(payload ?? '') };
+    return { ...content, requestId: activeResponseRequestId };
   }
 
   function cancelResponseWait() {
@@ -1991,7 +2004,7 @@ class InactiveSendOperationError extends Error {
       return;
     }
     cancelResponseWait();
-    bridge.emit({ v: 1, action: 'RESPONSE_DONE', provider, payload: `[Error: ${reason}]` });
+    bridge.emit({ v: 1, action: 'RESPONSE_DONE', provider, payload: correlatedResponsePayload(`[Error: ${reason}]`) });
     if (sendOperation !== undefined) releaseSendOperation(sendOperation);
   }
 
@@ -2037,7 +2050,7 @@ class InactiveSendOperationError extends Error {
       const now = Date.now();
       if (now - lastChunkTime >= timing('chunkDebounceMs', 500)) {
         lastChunkTime = now;
-        if (adapter) bridge.emit({ v: 1, action: 'RESPONSE_CHUNK', provider: adapter.provider, payload: currentText });
+        if (adapter) bridge.emit({ v: 1, action: 'RESPONSE_CHUNK', provider: adapter.provider, payload: correlatedResponsePayload(currentText) });
       }
       if (responseTimeout !== undefined) window.clearTimeout(responseTimeout);
       const expectedGeneration = activeResponseGeneration;
@@ -2065,7 +2078,7 @@ class InactiveSendOperationError extends Error {
       lastResponseText = currentText;
       lastCompletionActivityAt = Date.now();
       resetChatGptTerminalGate();
-      if (adapter) bridge.emit({ v: 1, action: 'RESPONSE_CHUNK', provider: adapter.provider, payload: currentText });
+      if (adapter) bridge.emit({ v: 1, action: 'RESPONSE_CHUNK', provider: adapter.provider, payload: correlatedResponsePayload(currentText) });
       if (responseTimeout !== undefined) window.clearTimeout(responseTimeout);
       const expectedGeneration = activeResponseGeneration;
       responseTimeout = window.setTimeout(

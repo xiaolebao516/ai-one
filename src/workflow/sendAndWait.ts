@@ -4,7 +4,7 @@ import { host } from '../host';
 import { eventFromProviderSend } from '../diagnostics/eventLog';
 import { recordEventLog } from '../diagnostics/eventLogStore';
 import { clearInFlight, markInFlight } from './cancel';
-import { activateTurn, reserveTurn } from './state';
+import { activateTurn, createResponseRequestId, reserveTurn } from './state';
 import { rejectWaiter, waitForResponse } from './waitForResponse';
 
 export function reserveProviderTurn(provider: AIProvider): number {
@@ -13,13 +13,15 @@ export function reserveProviderTurn(provider: AIProvider): number {
 
 export async function sendAndWait(provider: AIProvider, text: string, reservedTurn?: number): Promise<{ response: string; turn: number }> {
   const turn = reservedTurn ?? reserveTurn(provider);
-  const responsePromise = waitForResponse(provider, turn);
+  const requestId = createResponseRequestId(provider);
+  const responsePromise = waitForResponse(provider, turn, requestId);
   activateTurn(provider, turn);
   setProviderAwaiting(provider, true);
   markInFlight(provider);
   try {
     recordEventLog(eventFromProviderSend(provider, text));
-    await host.provider.send(provider, text);
+    if (requestId) await host.provider.send(provider, text, requestId);
+    else await host.provider.send(provider, text);
   } catch (error) {
     rejectWaiter(provider, turn, error instanceof Error ? error : new Error(String(error)));
     clearInFlight(provider);

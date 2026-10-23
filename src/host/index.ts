@@ -94,7 +94,7 @@ export const host = {
     eval: (provider: AIProvider, js: string): Promise<void> => invoke('provider_eval', { provider, js }),
     evalWithCallback: (provider: AIProvider, js: string): Promise<string> =>
       invoke('provider_eval_with_callback', { provider, js }),
-    send: (provider: AIProvider, text: string): Promise<void> => {
+    send: (provider: AIProvider, text: string, requestId?: string): Promise<void> => {
       if (providersWithUnconfirmedStop.has(provider)) {
         return Promise.reject(new Error(`${provider} send rejected: stop failed; reload provider page before retrying`));
       }
@@ -104,7 +104,7 @@ export const host = {
           v: 1,
           action: 'SEND_MESSAGE',
           provider,
-          payload: { text },
+          payload: { text, ...(requestId ? { requestId } : {}) },
         })});`,
       });
     },

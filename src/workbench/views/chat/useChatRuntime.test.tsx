@@ -8,7 +8,7 @@ import {
   CONVERSATION_SESSIONS_STORAGE_KEY,
   createConversationSession,
 } from '../../../ui/conversationSessions';
-import type { RunWorkflowResult } from '../../../workflow';
+import type { RunWorkflowParams, RunWorkflowResult } from '../../../workflow';
 import { awaitStepTimeoutAction, resetStepTimeoutForTests, type StepTimeoutAction } from '../../../workflow/stepTimeout';
 import { recordEventLog } from '../../../diagnostics/eventLogStore';
 import { useChatRuntime, type ChatRuntime, type ChatRuntimeHost, type ChatRuntimeOptions } from './useChatRuntime';
@@ -156,7 +156,11 @@ describe('useChatRuntime workflow ownership', () => {
 
   it('writes bridge responses only while a local run explicitly owns the provider and session', async () => {
     const pendingRun = deferred<RunWorkflowResult>();
-    const runner = vi.fn(() => pendingRun.promise);
+    let requestId = '';
+    const runner = vi.fn((params: RunWorkflowParams) => {
+      requestId = params.createResponseRequestId!('chatgpt');
+      return pendingRun.promise;
+    });
     await mount(runner);
     let sending!: Promise<boolean>;
     await act(async () => {
@@ -169,7 +173,7 @@ describe('useChatRuntime workflow ownership', () => {
       v: 1,
       action: 'RESPONSE_DONE',
       provider: 'chatgpt',
-      payload: 'local response',
+      payload: { text: 'local response', requestId },
       transport: 'pull',
     } as BridgeMessage;
     await act(async () => {
@@ -213,6 +217,51 @@ describe('useChatRuntime workflow ownership', () => {
     pendingRun.resolve({ ok: true });
     await act(async () => { await sending; });
     expect(currentRuntime?.busyProviders).not.toContain('chatgpt');
+  });
+
+  it('keeps timeout recovery visible and ignores skipped or previous-request completions', async () => {
+    let requestId = '';
+    let pendingRun = deferred<RunWorkflowResult>();
+    const runner = vi.fn((params: RunWorkflowParams) => {
+      requestId = params.createResponseRequestId!('chatgpt');
+      return pendingRun.promise;
+    });
+    await mount(runner);
+    let sending!: Promise<boolean>;
+    await act(async () => { sending = currentRuntime!.sendMessage('first', ['chatgpt'], 'free'); });
+    await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(1));
+    const oldRequestId = requestId;
+    let recovery!: Promise<StepTimeoutAction>;
+    await act(async () => { recovery = awaitStepTimeoutAction('chatgpt'); });
+    const emitDone = async (id: string, text: string) => {
+      await act(async () => {
+        for (const listener of mocks.bridgeListeners) listener({
+          v: 1, action: 'RESPONSE_DONE', provider: 'chatgpt', transport: 'pull',
+          payload: { text, requestId: id },
+        });
+      });
+    };
+    await emitDone(oldRequestId, 'late before choice');
+    expect(currentRuntime?.replyStates.chatgpt?.status).toBe('timedOut');
+    expect(currentRuntime?.timeoutActions.chatgpt).toBeDefined();
+    await act(async () => currentRuntime!.skipProvider('chatgpt'));
+    await expect(recovery).resolves.toBe('skip');
+    await emitDone(oldRequestId, 'late after skip');
+    expect(currentRuntime?.replyStates.chatgpt?.status).toBe('notSent');
+    expect(currentRuntime?.activeSession.messages.filter((message) => message.role === 'ai')).toEqual([]);
+    pendingRun.resolve({ ok: true });
+    await act(async () => { await sending; });
+
+    pendingRun = deferred<RunWorkflowResult>();
+    await act(async () => { sending = currentRuntime!.sendMessage('second', ['chatgpt'], 'free'); });
+    await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(2));
+    expect(requestId).not.toBe(oldRequestId);
+    await emitDone(oldRequestId, 'late during next request');
+    expect(currentRuntime?.replyStates.chatgpt?.status).toBe('generating');
+    await emitDone(requestId, 'current response');
+    expect(currentRuntime?.replyStates.chatgpt).toMatchObject({ status: 'completed', content: 'current response' });
+    pendingRun.resolve({ ok: true });
+    await act(async () => { await sending; });
   });
 
   it('keeps dirty session data pending after a write failure and retries until saved', async () => {

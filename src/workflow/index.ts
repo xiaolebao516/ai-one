@@ -17,8 +17,10 @@ import type { SnapshotRedactionTier } from './snapshot/types';
 import { tearDownWaiters } from './teardown';
 import { cancelPendingStepTimeoutAction } from './stepTimeout';
 import { startDeliberationAuditTrace } from '../dev/deliberationPromptTrace';
+import { setResponseRequestIdFactory } from './state';
 
 export interface RunWorkflowParams {
+  createResponseRequestId?: (provider: AIProvider) => string;
   text: string;
   context?: string;
   mode: ChatMode;
@@ -65,8 +67,10 @@ async function runPreparedWorkflow({
   snapshotPersistence,
   snapshotRedactionTier,
   responseLanguagePolicy,
+  createResponseRequestId,
 }: RunWorkflowParams): Promise<RunWorkflowResult> {
   setStopNoticeLocale(locale);
+  setResponseRequestIdFactory(createResponseRequestId);
   const snapshotOptions = {
     enabled: snapshotPersistence,
     tier: snapshotRedactionTier,
@@ -139,6 +143,7 @@ async function runPreparedWorkflow({
     return { ok: true };
   } finally {
     promptTrace?.stop();
+    setResponseRequestIdFactory(undefined);
   }
 }
 
