@@ -296,7 +296,7 @@ describe('CoordinationSettingsView mounted interactive tests', () => {
     expect(writeSpy).not.toHaveBeenCalled();
   });
 
-  it('catches read / quarantine rejection, displays error notice, and blocks saveback', async () => {
+  it('catches read Promise rejection, displays error notice, and disables all controls', async () => {
     const writeSpy = vi.fn();
     const rejectingFs = {
       read: vi.fn().mockRejectedValue(new Error('EACCES: permission denied, read coordination.json')),
@@ -312,20 +312,100 @@ describe('CoordinationSettingsView mounted interactive tests', () => {
       await new Promise((r) => setTimeout(r, 10));
     });
 
-    // Error notice must be displayed
+    // Error notice and failure badge must be displayed
     expect(container.textContent).toContain(
       '加载本机设置失败：EACCES: permission denied, read coordination.json。为避免覆盖已有设置，当前已禁用保存。',
     );
     expect(container.textContent).toContain('加载失败');
 
-    // Controls must remain disabled
+    // 1. Select disabled
     const select = container.querySelector('#rework-limit-select') as HTMLSelectElement;
     expect(select.disabled).toBe(true);
 
-    // Any attempt to update must be blocked and write must never be called
+    // 2. All AI preference inputs disabled
+    const inputs = container.querySelectorAll('input[aria-label$="偏好标注"]');
+    expect(inputs.length).toBeGreaterThan(0);
+    inputs.forEach((input) => {
+      expect((input as HTMLInputElement).disabled).toBe(true);
+    });
+
+    // 3. All SegmentedControl radio buttons disabled
+    const radioButtons = container.querySelectorAll('button[role="radio"]');
+    expect(radioButtons.length).toBeGreaterThan(0);
+    radioButtons.forEach((btn) => {
+      expect((btn as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    // 4. Reset button disabled
+    const resetBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('恢复默认设置'),
+    ) as HTMLButtonElement;
+    expect(resetBtn.disabled).toBe(true);
+
+    // Any attempt to update via select, input, or reset must be blocked and write never called
     await act(async () => {
       select.value = '8';
       select.dispatchEvent(new Event('change', { bubbles: true }));
+      resetBtn.click();
+    });
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
+  it('catches quarantine Promise rejection when isolating corrupt file, displays error notice, and disables all controls', async () => {
+    const writeSpy = vi.fn();
+    const failingQuarantineFs = {
+      read: vi.fn().mockResolvedValue({
+        status: 'ok',
+        text: '{ corrupt json content that fails schema and requires quarantine ...',
+        backup: null,
+      }),
+      write: writeSpy,
+      quarantine: vi.fn().mockRejectedValue(new Error('EPERM: cannot isolate corrupt file to .bak')),
+      exportFile: vi.fn().mockResolvedValue(null),
+    };
+
+    const { container } = await mount(<CoordinationSettingsView fs={failingQuarantineFs} />);
+
+    // Allow async loadCoordination and quarantine rejection to resolve
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    // Error notice and failure badge must be displayed
+    expect(container.textContent).toContain(
+      '加载本机设置失败：EPERM: cannot isolate corrupt file to .bak。为避免覆盖已有设置，当前已禁用保存。',
+    );
+    expect(container.textContent).toContain('加载失败');
+
+    // 1. Select disabled
+    const select = container.querySelector('#rework-limit-select') as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+
+    // 2. All AI preference inputs disabled
+    const inputs = container.querySelectorAll('input[aria-label$="偏好标注"]');
+    expect(inputs.length).toBeGreaterThan(0);
+    inputs.forEach((input) => {
+      expect((input as HTMLInputElement).disabled).toBe(true);
+    });
+
+    // 3. All SegmentedControl radio buttons disabled
+    const radioButtons = container.querySelectorAll('button[role="radio"]');
+    expect(radioButtons.length).toBeGreaterThan(0);
+    radioButtons.forEach((btn) => {
+      expect((btn as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    // 4. Reset button disabled
+    const resetBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('恢复默认设置'),
+    ) as HTMLButtonElement;
+    expect(resetBtn.disabled).toBe(true);
+
+    // Attempting updates must be strictly blocked and write must never be called
+    await act(async () => {
+      select.value = '9';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      resetBtn.click();
     });
     expect(writeSpy).not.toHaveBeenCalled();
   });
