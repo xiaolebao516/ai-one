@@ -34,6 +34,7 @@ describe('only one run may be active', () => {
     const base = createRun({ id: 'r', goal: 'g', available: ['claude'], now: 1 });
     expect(isRunActive(base)).toBe(true);
     expect(isRunActive(startRun(base, 2))).toBe(true);
+    expect(isRunActive({ ...startRun(base, 2), phase: 'awaiting-user', stop: { type: 'round-limit', limit: 8 } })).toBe(true);
     expect(isRunActive(stopRun(startRun(base, 2), 3))).toBe(false);
   });
 });

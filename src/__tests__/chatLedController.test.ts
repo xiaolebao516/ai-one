@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AIProvider } from '../../shared/types';
-import { ChatLedController, type ChatLedEnv } from '../workflow/chatLed/controller';
+import {
+  CHAT_LED_INIT_SETTLE_TIMEOUT_MS,
+  ChatLedController,
+  type ChatLedEnv,
+} from '../workflow/chatLed/controller';
 
 const SEND = (to: string[], message: string) => '```ai-one-send\n' + JSON.stringify({ to, message }) + '\n```';
 const DONE = (summary: string) => '```ai-one-done\n' + JSON.stringify({ summary }) + '\n```';
@@ -20,12 +24,17 @@ function makeEnv(script: Script, sendable: AIProvider[] = ['chatgpt', 'claude', 
     gemini: [...(script.gemini ?? [])],
   };
   let clock = 1000;
+  let sessionSequence = 0;
+  const urls = new Map<AIProvider, string>();
   const env: ChatLedEnv = {
     now: () => (clock += 1),
     sendableProviders: async () => sendable,
     prepare: vi.fn(async () => undefined),
     newSession: vi.fn(async (provider: AIProvider) => {
       events.push(`new:${provider}`);
+      const url = `https://example.test/${provider}/c/new-${++sessionSequence}`;
+      urls.set(provider, url);
+      return { url };
     }),
     send: vi.fn(async (provider: AIProvider, text: string) => {
       events.push(`send:${provider}`);
@@ -36,7 +45,9 @@ function makeEnv(script: Script, sendable: AIProvider[] = ['chatgpt', 'claude', 
       return next;
     }),
     stop: vi.fn(async () => undefined),
-    readConversationUrl: vi.fn(async (provider: AIProvider) => `https://example.test/${provider}/c/123`),
+    readConversationUrl: vi.fn(async (provider: AIProvider) =>
+      urls.get(provider) ?? `https://example.test/${provider}/c/existing`,
+    ),
   };
   return { env, calls, events };
 }
@@ -51,6 +62,79 @@ async function create(env: ChatLedEnv, roundLimit?: number) {
 }
 
 describe('ChatLedController', () => {
+  it('prepares coordinator and candidates before querying sendability on a cold start', async () => {
+    const ready = new Set<AIProvider>();
+    const { env, calls } = makeEnv({ chatgpt: [DONE('ready')] }, []);
+    env.initialize = vi.fn(async () => undefined);
+    env.sendableProviders = vi.fn(async () => [...ready]);
+    const prepare = vi.fn(async (provider: AIProvider) => {
+      ready.add(provider);
+    });
+    env.prepare = prepare;
+    const controller = await create(env);
+    expect(env.initialize).not.toHaveBeenCalled();
+    expect(env.sendableProviders).not.toHaveBeenCalled();
+    await controller.start();
+    expect(prepare.mock.calls.map(([provider]) => provider)).toEqual(['chatgpt', 'claude', 'gemini']);
+    expect(env.initialize).toHaveBeenCalledTimes(1);
+    expect(env.sendableProviders).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(1);
+    expect(controller.getRun().phase).toBe('finished');
+    expect(controller.getRun().available).toEqual(['claude', 'gemini']);
+  });
+
+  it('surfaces bridge initialization failure instead of staying idle', async () => {
+    const { env } = makeEnv({ chatgpt: [DONE('unused')] });
+    env.initialize = vi.fn(async () => {
+      throw new Error('bridge subscription failed');
+    });
+    const controller = await create(env);
+    await controller.start();
+    expect(controller.getRun().phase).toBe('awaiting-user');
+    expect(controller.getRun().stop).toMatchObject({
+      type: 'provider-failure',
+      provider: 'chatgpt',
+      error: 'bridge subscription failed',
+    });
+  });
+
+  it('fails visibly when no candidate target is confirmed ready', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [DONE('unused')] });
+    env.sendableProviders = vi.fn(async () => ['chatgpt']);
+    const controller = await create(env);
+    await controller.start();
+    expect(controller.getRun().phase).toBe('awaiting-user');
+    expect(controller.getRun().stop).toMatchObject({ type: 'provider-failure', provider: 'chatgpt' });
+    const stop = controller.getRun().stop;
+    expect(stop?.type).toBe('provider-failure');
+    if (stop?.type === 'provider-failure') expect(stop.error).toContain('No candidate target AI');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('stops during startup prepare and never sends after a delayed prepare returns', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [DONE('unused')] });
+    let finishPrepare: () => void = () => undefined;
+    env.prepare = vi.fn(() => new Promise<void>((resolve) => { finishPrepare = resolve; }));
+    const controller = await create(env);
+    const started = controller.start();
+    await vi.waitFor(() => expect(env.prepare).toHaveBeenCalledWith('chatgpt'));
+
+    vi.useFakeTimers();
+    try {
+      const stopping = controller.stop();
+      expect(controller.getRun().phase).toBe('stopped');
+      expect(env.stop).toHaveBeenCalledWith('chatgpt');
+      await vi.advanceTimersByTimeAsync(CHAT_LED_INIT_SETTLE_TIMEOUT_MS);
+      await stopping;
+      finishPrepare();
+      await started;
+      expect(calls).toHaveLength(0);
+      expect(controller.getRun().phase).toBe('stopped');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('runs coordinator -> forward -> feedback -> done and registers only conversations it created', async () => {
     const { env, calls, events } = makeEnv({
       chatgpt: [SEND(['claude'], 'please review X'), DONE('all good')],
@@ -177,7 +261,7 @@ describe('ChatLedController', () => {
     expect(run.conversations.map((c) => c.provider).sort()).toEqual(['chatgpt', 'claude']);
   });
 
-  it('does not send when stop arrives while newSession is still pending, and keeps that session known', async () => {
+  it('does not send when stop arrives while newSession is pending and records an uncertain attempt for manual check', async () => {
     const { env, calls } = makeEnv({ chatgpt: [DONE('never')] });
     let finishSession: () => void = () => undefined;
     env.newSession = vi.fn(
@@ -195,7 +279,12 @@ describe('ChatLedController', () => {
     await finished;
     expect(calls).toHaveLength(0);
     expect(controller.getRun().phase).toBe('stopped');
-    expect(controller.getRun().conversations.map((c) => c.provider)).toEqual(['chatgpt']);
+    expect(controller.getRun().conversations).toContainEqual(expect.objectContaining({
+      provider: 'chatgpt',
+      url: '',
+      registrationStatus: 'manual',
+    }));
+    expect(controller.getRun().sessionInitializations[0]).toMatchObject({ status: 'manual' });
   });
 
   it('does not send while paused during prepare; resumes afterwards', async () => {
@@ -235,6 +324,170 @@ describe('ChatLedController', () => {
     expect(env.stop).toHaveBeenCalledWith('chatgpt');
   });
 
+  it('treats a provider error sentinel as a failed forward, not a successful reply', async () => {
+    const { env, calls } = makeEnv({
+      chatgpt: [SEND(['claude'], 'review this'), DONE('done')],
+      claude: ['[Error: synthetic send rejection]'],
+    });
+    const controller = await create(env);
+    await controller.start();
+    const forward = controller.getRun().forwards[0];
+    expect(controller.getRun().phase).toBe('finished');
+    expect(forward).toMatchObject({ status: 'failed' });
+    expect(forward?.reply).toBeUndefined();
+    expect(forward?.error).toContain('synthetic send rejection');
+    expect(calls[2]?.provider).toBe('chatgpt');
+    expect(calls[2]?.text).toContain('转发失败');
+  });
+
+  it('records a manual session when newSession has a side effect but then rejects', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [DONE('unused')] });
+    env.newSession = vi.fn(async (provider: AIProvider) => {
+      env.readConversationUrl = vi.fn(async (p: AIProvider) =>
+        `https://example.test/${p}/c/${p === provider ? 'new-after-side-effect' : 'existing'}`,
+      );
+      throw new Error('newSession failed after creating the page');
+    });
+    const controller = await create(env);
+    await controller.start();
+    expect(controller.getRun().phase).toBe('awaiting-user');
+    expect(controller.getRun().stop).toMatchObject({ type: 'provider-failure', provider: 'chatgpt' });
+    expect(controller.getRun().conversations).toContainEqual(expect.objectContaining({
+      provider: 'chatgpt',
+      url: '',
+      registrationStatus: 'manual',
+    }));
+    expect(controller.getRun().sessionInitializations[0]).toMatchObject({ status: 'manual' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('records a manual creation when post-session readiness fails', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [DONE('unused')] });
+    let coordinatorPrepareCalls = 0;
+    env.prepare = vi.fn(async (provider: AIProvider) => {
+      if (provider === 'chatgpt') {
+        coordinatorPrepareCalls += 1;
+        if (coordinatorPrepareCalls === 3) throw new Error('session page is not ready');
+      }
+    });
+    const controller = await create(env);
+    await controller.start();
+    expect(controller.getRun().phase).toBe('awaiting-user');
+    expect(controller.getRun().stop).toMatchObject({
+      type: 'provider-failure',
+      provider: 'chatgpt',
+      error: 'session page is not ready',
+    });
+    expect(controller.getRun().conversations).toContainEqual(expect.objectContaining({
+      provider: 'chatgpt',
+      registrationStatus: 'manual',
+      url: '',
+    }));
+    expect(controller.getRun().sessionInitializations[0]).toMatchObject({ status: 'manual' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses to register a post-creation URL that differs from the captured session URL', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [DONE('unused')] });
+    let reads = 0;
+    env.readConversationUrl = vi.fn(async () => {
+      reads += 1;
+      return reads === 1
+        ? 'https://example.test/chatgpt/c/old'
+        : 'https://example.test/chatgpt/c/USERS-OWN-CHAT';
+    });
+    env.newSession = vi.fn(async () => ({ url: 'https://example.test/chatgpt/c/created-by-run' }));
+    const controller = await create(env);
+    await controller.start();
+    expect(controller.getRun().phase).toBe('awaiting-user');
+    expect(controller.getRun().conversations).toContainEqual(expect.objectContaining({
+      provider: 'chatgpt',
+      url: '',
+      registrationStatus: 'manual',
+    }));
+    expect(controller.getRun().conversations.some((conversation) => conversation.url.includes('USERS-OWN-CHAT'))).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('pausing during newSession registers the new URL but holds the send until resume', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [DONE('ok')] });
+    let finishSession: () => void = () => undefined;
+    let reads = 0;
+    env.readConversationUrl = vi.fn(async (provider: AIProvider) => {
+      if (provider !== 'chatgpt') return `https://example.test/${provider}/c/existing`;
+      reads += 1;
+      return reads === 1 ? 'https://example.test/chatgpt/c/old' : 'https://example.test/chatgpt/c/new';
+    });
+    env.newSession = vi.fn(() => new Promise<void>((resolve) => { finishSession = resolve; }));
+    const controller = await create(env);
+    const finished = controller.start();
+    await vi.waitFor(() => expect(env.newSession).toHaveBeenCalled());
+    controller.pause();
+    finishSession();
+    await vi.waitFor(() => expect(controller.getRun().sessionInitializations[0]?.status).toBe('registered'));
+    expect(calls).toHaveLength(0);
+    controller.resume();
+    await finished;
+    expect(calls).toHaveLength(1);
+    expect(controller.getRun().phase).toBe('finished');
+  });
+
+  it('keeps a manual record when session creation resolves after Stop has timed out', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [DONE('unused')] });
+    let finishSession: () => void = () => undefined;
+    env.newSession = vi.fn(() => new Promise<void>((resolve) => { finishSession = resolve; }));
+    const controller = await create(env);
+    const finished = controller.start();
+    await vi.waitFor(() => expect(env.newSession).toHaveBeenCalled());
+
+    vi.useFakeTimers();
+    try {
+      const stopping = controller.stop();
+      await vi.advanceTimersByTimeAsync(CHAT_LED_INIT_SETTLE_TIMEOUT_MS);
+      await stopping;
+      expect(controller.getRun().phase).toBe('stopped');
+      expect(controller.hasPendingSessions()).toBe(false);
+      expect(controller.getRun().sessionInitializations[0]).toMatchObject({ status: 'manual' });
+      expect(controller.getRun().conversations).toContainEqual(expect.objectContaining({
+        provider: 'chatgpt',
+        url: '',
+        registrationStatus: 'manual',
+      }));
+
+      finishSession();
+      await finished;
+      await Promise.resolve();
+      expect(controller.getRun().conversations.some((conversation) => conversation.url.includes('existing'))).toBe(false);
+      expect(calls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('markClosed refuses to close while a session registration is pending', async () => {
+    const { env } = makeEnv({ chatgpt: [DONE('unused')] });
+    let finishSession: () => void = () => undefined;
+    let reads = 0;
+    env.readConversationUrl = vi.fn(async (provider: AIProvider) => {
+      if (provider !== 'chatgpt') return `https://example.test/${provider}/c/existing`;
+      reads += 1;
+      return reads === 1 ? 'https://example.test/chatgpt/c/old' : 'https://example.test/chatgpt/c/new';
+    });
+    env.newSession = vi.fn(() => new Promise<void>((resolve) => { finishSession = resolve; }));
+    const controller = await create(env);
+    const finished = controller.start();
+    await vi.waitFor(() => expect(env.newSession).toHaveBeenCalled());
+    const stopping = controller.stop();
+    controller.markClosed(true);
+    expect(controller.getRun().closed).toBeUndefined();
+    finishSession();
+    await stopping;
+    await finished;
+    expect(controller.getRun().sessionInitializations[0]?.status).toBe('manual');
+    controller.markClosed(true);
+    expect(controller.getRun().closed).toBeDefined();
+  });
+
   it('registers the target conversation even when the send fails', async () => {
     const { env } = makeEnv({
       chatgpt: [SEND(['claude'], 'hi'), DONE('done anyway')],
@@ -265,12 +518,23 @@ describe('ChatLedController', () => {
       claude: ['reply 1', 'reply 2'],
     });
     let claudeReads = 0;
+    const otherReads = new Map<AIProvider, number>();
     env.readConversationUrl = vi.fn(async (provider: AIProvider) => {
-      if (provider !== 'claude') return `https://example.test/${provider}/c/123`;
+      if (provider !== 'claude') {
+        const n = (otherReads.get(provider) ?? 0) + 1;
+        otherReads.set(provider, n);
+        return `https://example.test/${provider}/c/${n === 1 ? 'old' : 'new'}`;
+      }
       claudeReads += 1;
-      // read 1 = registration right after the first reply; later reads = the user took over
-      return claudeReads === 1 ? 'https://example.test/claude/c/123' : 'https://example.test/claude/c/USERS-OWN-CHAT';
+      if (claudeReads === 1) return 'https://example.test/claude/c/old-session';
+      if (claudeReads <= 3) return 'https://example.test/claude/c/123';
+      return 'https://example.test/claude/c/USERS-OWN-CHAT';
     });
+    env.newSession = vi.fn(async (provider: AIProvider) => ({
+      url: provider === 'claude'
+        ? 'https://example.test/claude/c/123'
+        : `https://example.test/${provider}/c/new`,
+    }));
     env.send = vi.fn(async (provider: AIProvider, text: string) => {
       calls.push({ provider, text });
       if (provider === 'claude') {
@@ -295,31 +559,50 @@ describe('ChatLedController', () => {
       chatgpt: [SEND(['claude'], 'first'), SEND(['claude'], 'second'), DONE('done')],
       claude: ['r1', 'r2'],
     });
-    let reads = 0;
+    const reads = new Map<AIProvider, number>();
     env.readConversationUrl = vi.fn(async (provider: AIProvider) => {
-      if (provider !== 'claude') return `https://example.test/${provider}/c/123`;
-      reads += 1;
-      return reads === 1 ? 'https://example.test/' : 'https://example.test/claude/c/second-session';
+      const n = (reads.get(provider) ?? 0) + 1;
+      reads.set(provider, n);
+      if (provider !== 'claude') {
+        return `https://example.test/${provider}/c/${n === 1 ? 'old' : 'new'}`;
+      }
+      return n === 1 ? 'https://example.test/' : 'https://example.test/claude/c/second-session';
     });
+    env.newSession = vi.fn(async (provider: AIProvider) => ({
+      url: provider === 'claude'
+        ? 'https://example.test/claude/c/second-session'
+        : `https://example.test/${provider}/c/new`,
+    }));
     const controller = await create(env);
     await controller.start();
-    expect(env.newSession).toHaveBeenCalledTimes(3); // chatgpt once, claude twice
+    expect(env.newSession).toHaveBeenCalledTimes(2); // chatgpt once, claude once after address capture moved before send
     const claudeUrls = controller.getRun().conversations.filter((c) => c.provider === 'claude').map((c) => c.url);
     expect(claudeUrls).toContain('https://example.test/claude/c/second-session');
   });
 
-  it('stop sends its stop requests without waiting for an unreadable page address', async () => {
+  it('bounds a permanently unreadable post-creation URL and records the attempt manually', async () => {
     const { env, calls } = makeEnv({ chatgpt: [] });
-    env.send = vi.fn(async (provider: AIProvider, text: string) => {
-      calls.push({ provider, text });
-      return new Promise<string>(() => undefined);
+    let reads = 0;
+    env.readConversationUrl = vi.fn(async () => {
+      reads += 1;
+      if (reads === 1) return 'https://example.test/chatgpt/c/old';
+      return new Promise<string | undefined>(() => undefined);
     });
-    env.readConversationUrl = vi.fn(() => new Promise<string | undefined>(() => undefined));
     const controller = await create(env);
-    void controller.start();
-    await vi.waitFor(() => expect(calls).toHaveLength(1));
-    void controller.stop();
-    await vi.waitFor(() => expect(env.stop).toHaveBeenCalledWith('chatgpt'));
+    const started = controller.start();
+    await vi.waitFor(() => expect(env.newSession).toHaveBeenCalled());
+    const stopping = controller.stop();
     expect(controller.getRun().phase).toBe('stopped');
+    await stopping;
+    await started;
+    expect(env.stop).toHaveBeenCalledWith('chatgpt');
+    expect(controller.hasPendingSessions()).toBe(false);
+    expect(controller.getRun().sessionInitializations[0]).toMatchObject({ status: 'manual' });
+    expect(controller.getRun().conversations).toContainEqual(expect.objectContaining({
+      provider: 'chatgpt',
+      url: '',
+      registrationStatus: 'manual',
+    }));
+    expect(calls).toHaveLength(0);
   });
 });

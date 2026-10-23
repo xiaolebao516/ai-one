@@ -35,7 +35,60 @@ async function stateOf(provider: AIProvider): Promise<ProviderState | undefined>
   return snapshot.find((state) => state.provider === provider);
 }
 
-let bridgeStop: (() => void) | undefined;
+async function readProviderUrl(provider: AIProvider): Promise<string | undefined> {
+  const raw = await host.provider.evalWithCallback(provider, 'location.href');
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === 'string' ? parsed : undefined;
+  } catch {
+    return raw.startsWith('http') ? raw : undefined;
+  }
+}
+
+interface BoundedUrlRead {
+  url: string | undefined;
+  timedOut: boolean;
+}
+
+async function readProviderUrlBounded(
+  provider: AIProvider,
+  timeoutMs = 2_000,
+): Promise<BoundedUrlRead> {
+  let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      readProviderUrl(provider).then(
+        (url) => ({ url, timedOut: false }),
+        () => ({ url: undefined, timedOut: false }),
+      ),
+      new Promise<BoundedUrlRead>((resolve) => {
+        timer = globalThis.setTimeout(() => resolve({ url: undefined, timedOut: true }), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) globalThis.clearTimeout(timer);
+  }
+}
+
+function hasConversationPath(url: string): boolean {
+  try {
+    return new URL(url).pathname.length > 1;
+  } catch {
+    return false;
+  }
+}
+
+function sameConversation(a: string, b: string): boolean {
+  try {
+    const x = new URL(a);
+    const y = new URL(b);
+    return x.origin === y.origin && x.pathname === y.pathname;
+  } catch {
+    return false;
+  }
+}
+
+let bridgeStart: Promise<void> | undefined;
 
 /**
  * Makes sure the provider page exists (parked offscreen), is logged in and idle (busy gate, #15).
@@ -68,32 +121,44 @@ export async function prepareProviderPage(provider: AIProvider): Promise<void> {
 
 /** Real environment (UNVERIFIED on a logged-in desktop until the #113 user acceptance run). */
 export function createRealChatLedEnv(): ChatLedEnv {
-  // The response bridge (title pull) and the workflow waiter bus are normally started by the
-  // classic UI; the workbench starts them here. startBridgePull is reference counted.
-  prepareWorkflowRun();
-  if (!bridgeStop) {
-    void startBridgePull().then((stop) => {
-      bridgeStop = stop;
-    });
-  }
   return {
     now: () => Date.now(),
+    async initialize() {
+      // Do not reset shared workflow state or start asynchronous bridge work during create().
+      // start() awaits this hook, so subscription failures become a visible startup failure.
+      prepareWorkflowRun();
+      if (!bridgeStart) {
+        bridgeStart = startBridgePull().then(
+          () => undefined,
+          (error: unknown) => {
+            bridgeStart = undefined;
+            throw error;
+          },
+        );
+      }
+      await bridgeStart;
+    },
     async sendableProviders() {
       const snapshot = await host.connections.get();
       return snapshot.filter(isSendable).map((state) => state.provider);
     },
     prepare: prepareProviderPage,
-    async newSession(provider) {
+    async newSession(provider, previousUrl) {
       await host.provider.newSession(provider);
-      // Give the page a moment to navigate to its blank conversation before the first send.
-      await sleep(2_000);
-      const deadline = Date.now() + PAGE_READY_TIMEOUT_MS;
-      for (;;) {
-        const state = await stateOf(provider);
-        if (state && isSendable(state)) return;
-        if (Date.now() > deadline) throw new Error(`${provider} page did not become ready after starting a new conversation.`);
-        await sleep(POLL_MS);
-      }
+      // Capture the first changed conversation URL before the separate readiness check.
+      // If navigation never changes, return the observed URL and let the controller fail closed.
+      const deadline = Date.now() + 10_000;
+      let url: string | undefined;
+      do {
+        await sleep(250);
+        const read = await readProviderUrlBounded(provider, Math.min(2_000, Math.max(1, deadline - Date.now())));
+        if (read.timedOut) return { url: undefined };
+        url = read.url;
+        if (url && hasConversationPath(url) && (!previousUrl || !sameConversation(previousUrl, url))) {
+          return { url };
+        }
+      } while (Date.now() < deadline);
+      return { url };
     },
     async send(provider, text) {
       const { response } = await sendAndWait(provider, text);
@@ -103,13 +168,7 @@ export function createRealChatLedEnv(): ChatLedEnv {
       await stopProvider(provider);
     },
     async readConversationUrl(provider) {
-      const raw = await host.provider.evalWithCallback(provider, 'location.href');
-      try {
-        const parsed: unknown = JSON.parse(raw);
-        return typeof parsed === 'string' ? parsed : undefined;
-      } catch {
-        return raw.startsWith('http') ? raw : undefined;
-      }
+      return (await readProviderUrlBounded(provider)).url;
     },
   };
 }

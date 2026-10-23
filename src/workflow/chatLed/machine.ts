@@ -8,6 +8,7 @@ import {
   type ForwardStatus,
   type RegisteredConversation,
   type RunPhase,
+  type SessionInitializationStatus,
 } from './types';
 import { parseCoordinatorReply, PROVIDER_LABELS } from './protocol';
 
@@ -39,6 +40,8 @@ export function createRun(input: {
     phase: 'idle',
     forwards: [],
     conversations: [],
+    sessionInitializations: [],
+    initializationPending: false,
     coordinatorReplies: [],
     createdAt: input.now,
     updatedAt: input.now,
@@ -49,9 +52,79 @@ export function isTerminal(run: ChatLedRun): boolean {
   return run.phase === 'finished' || run.phase === 'stopped' || run.closed !== undefined;
 }
 
-/** A run that is using (or about to use) the provider pages. Only one may exist at a time. */
+/** Pending startup or session registration must keep the shared provider pages locked. */
+export function hasPendingInitialization(run: ChatLedRun): boolean {
+  return (
+    run.initializationPending === true ||
+    (run.sessionInitializations ?? []).some((item) => item.status === 'pending')
+  );
+}
+
+/** A run that is using, waiting to use, or still registering shared provider pages is active. */
 export function isRunActive(run: ChatLedRun): boolean {
-  return run.phase === 'idle' || run.phase === 'coordinator-thinking' || run.phase === 'forwarding' || run.phase === 'paused';
+  return (
+    hasPendingInitialization(run) ||
+    run.phase === 'idle' ||
+    run.phase === 'coordinator-thinking' ||
+    run.phase === 'forwarding' ||
+    run.phase === 'paused' ||
+    run.phase === 'awaiting-user'
+  );
+}
+
+export function setInitializationPending(run: ChatLedRun, pending: boolean, now: number): ChatLedRun {
+  if (run.initializationPending === pending) return run;
+  return { ...run, initializationPending: pending, updatedAt: now };
+}
+
+export function setAvailableProviders(
+  run: ChatLedRun,
+  available: readonly AIProvider[],
+  now: number,
+): ChatLedRun {
+  if (run.phase !== 'coordinator-thinking') return run;
+  const next = [...new Set(available.filter((provider) => provider !== run.coordinator))];
+  if (next.length === run.available.length && next.every((provider, index) => provider === run.available[index])) return run;
+  return { ...run, available: next, updatedAt: now };
+}
+
+export function beginSessionInitialization(
+  run: ChatLedRun,
+  id: string,
+  provider: AIProvider,
+  now: number,
+): ChatLedRun {
+  if (run.closed || (run.sessionInitializations ?? []).some((item) => item.id === id)) return run;
+  return {
+    ...run,
+    sessionInitializations: [
+      ...(run.sessionInitializations ?? []),
+      { id, provider, status: 'pending', startedAt: now, updatedAt: now },
+    ],
+    updatedAt: now,
+  };
+}
+
+export function finishSessionInitialization(
+  run: ChatLedRun,
+  id: string,
+  status: Exclude<SessionInitializationStatus, 'pending'>,
+  now: number,
+  details: { url?: string; note?: string } = {},
+): ChatLedRun {
+  const items = run.sessionInitializations ?? [];
+  const index = items.findIndex((item) => item.id === id && item.status === 'pending');
+  if (index < 0) return run;
+  const current = items[index];
+  const next = items.slice();
+  next[index] = {
+    ...current,
+    status,
+    updatedAt: now,
+    ...(details.url === undefined ? {} : { url: details.url }),
+    ...(details.note === undefined ? {} : { note: details.note }),
+  };
+  return { ...run, sessionInitializations: next, updatedAt: now };
 }
 
 export function canPause(run: ChatLedRun): boolean {
@@ -352,13 +425,13 @@ export function recordExport(run: ChatLedRun, now: number): ChatLedRun {
 
 /** Stores the cleanup outcome once; later calls are ignored so results are never overwritten. */
 export function recordCleanup(run: ChatLedRun, results: CleanupItemResult[], now: number): ChatLedRun {
-  if (run.cleanupResults || (run.phase !== 'finished' && run.phase !== 'stopped')) return run;
+  if (hasPendingInitialization(run) || run.cleanupResults || (run.phase !== 'finished' && run.phase !== 'stopped')) return run;
   return { ...run, cleanupResults: results, updatedAt: now };
 }
 
 /** Cleanup starts once per run; the results list then grows one confirmed item at a time. */
 export function beginCleanup(run: ChatLedRun, now: number): ChatLedRun {
-  if (run.closed || run.cleanupResults || run.cleanupRunning) return run;
+  if (hasPendingInitialization(run) || run.closed || run.cleanupResults || run.cleanupRunning) return run;
   if (run.phase !== 'finished' && run.phase !== 'stopped') return run;
   return { ...run, cleanupRunning: true, cleanupResults: [], updatedAt: now };
 }
@@ -397,7 +470,7 @@ export function closeRun(
   exportedMarkdown: boolean,
   now: number,
 ): ChatLedRun {
-  if (run.closed || (run.phase !== 'finished' && run.phase !== 'stopped')) return run;
+  if (hasPendingInitialization(run) || run.closed || (run.phase !== 'finished' && run.phase !== 'stopped')) return run;
   return {
     ...run,
     closed: { at: now, exportedMarkdown },

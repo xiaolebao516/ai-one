@@ -82,11 +82,30 @@ export type StopReason =
   | { type: 'provider-failure'; provider: AIProvider; error: string }
   | { type: 'user' };
 
+export type SessionInitializationStatus = 'pending' | 'registered' | 'manual' | 'not-created';
+
+export interface SessionInitialization {
+  id: string;
+  provider: AIProvider;
+  status: SessionInitializationStatus;
+  startedAt: number;
+  updatedAt: number;
+  /** Set only when the new conversation URL was positively confirmed. */
+  url?: string;
+  /** Short local-only explanation; never includes conversation text or a private URL. */
+  note?: string;
+}
+
 export interface RegisteredConversation {
   provider: AIProvider;
-  url: string; // conversation address read from the provider page after the first send
+  url: string; // empty for an unconfirmed creation attempt; such records are manual-only
   title?: string;
-  createdByAiOne: true; // only conversations created (new session) by this run are ever registered
+  /**
+   * This run invoked newSession for the record. registrationStatus prevents an uncertain attempt
+   * with an empty URL from ever being treated as a confirmed, actionable conversation.
+   */
+  createdByAiOne: true;
+  registrationStatus?: 'confirmed' | 'manual';
   registeredAt: number;
 }
 
@@ -103,6 +122,10 @@ export interface ChatLedRun {
   doneSummary?: string;
   forwards: ForwardRecord[];
   conversations: RegisteredConversation[];
+  /** Creation/address-registration attempts; pending records hold the single-run lock. */
+  sessionInitializations: SessionInitialization[];
+  /** True while bridge/provider readiness is being prepared before the first send. */
+  initializationPending?: boolean;
   /** Raw coordinator replies in order (kept locally for the timeline; never uploaded). */
   coordinatorReplies: { round: number; text: string; at: number }[];
   createdAt: number;

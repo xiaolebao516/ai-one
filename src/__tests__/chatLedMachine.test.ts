@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import type { AIProvider } from '../../shared/types';
 import {
   applyCoordinatorReply,
+  beginCleanup,
+  beginSessionInitialization,
   canExtendRoundLimit,
   canPause,
   canResume,
@@ -10,12 +12,17 @@ import {
   createRun,
   extendRoundLimit,
   failProvider,
+  finishSessionInitialization,
+  hasPendingInitialization,
+  isRunActive,
   isTerminal,
   pauseRun,
   registerConversation,
   resumeAfterStop,
   resumeRun,
   settledFeedbackItems,
+  setAvailableProviders,
+  setInitializationPending,
   startRun,
   stopRun,
   updateForward,
@@ -69,6 +76,47 @@ describe('chat-led state machine', () => {
     expect(run.round).toBe(0);
     expect(run.createdAt).toBe(10);
     expect(run.updatedAt).toBe(10);
+  });
+
+  it('keeps awaiting-user active because remind/extend can resume it', () => {
+    const violation = applyCoordinatorReply(start(), 'No protocol block here.', 12).run;
+    expect(violation.phase).toBe('awaiting-user');
+    expect(isRunActive(violation)).toBe(true);
+    expect(isRunActive(stopRun(violation, 13))).toBe(false);
+  });
+
+  it('keeps a pending creation lock until registration or explicit manual resolution', () => {
+    const pending = beginSessionInitialization(start(), 'init-1', 'claude', 12);
+    expect(hasPendingInitialization(pending)).toBe(true);
+    expect(isRunActive(pending)).toBe(true);
+    const stopped = stopRun(pending, 13);
+    expect(beginCleanup(stopped, 14)).toBe(stopped);
+    expect(closeRun(stopped, true, 14)).toBe(stopped);
+
+    const manual = finishSessionInitialization(
+      stopped,
+      'init-1',
+      'manual',
+      14,
+      { note: 'Needs manual check.' },
+    );
+    expect(hasPendingInitialization(manual)).toBe(false);
+    expect(isRunActive(manual)).toBe(false);
+    expect(manual.sessionInitializations[0]).toMatchObject({ status: 'manual', note: 'Needs manual check.' });
+  });
+
+  it('sets available providers only after startup readiness and never includes the coordinator', () => {
+    const active = start();
+    const configured = setAvailableProviders(active, ['chatgpt', 'gemini', 'claude', 'claude'], 12);
+    expect(configured.available).toEqual(['gemini', 'claude']);
+    const idle = makeRun();
+    expect(setAvailableProviders(idle, ['claude'], 13)).toBe(idle);
+  });
+
+  it('marks initialization pending as active and clears it immutably', () => {
+    const pending = setInitializationPending(makeRun(), true, 12);
+    expect(isRunActive(pending)).toBe(true);
+    expect(setInitializationPending(pending, false, 13).initializationPending).toBe(false);
   });
 
   it('starts only from idle', () => {
