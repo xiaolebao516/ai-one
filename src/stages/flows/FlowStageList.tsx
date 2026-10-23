@@ -101,7 +101,7 @@ export function FlowStageList({
               <h2 id="flows-current-title" className="break-words text-v2-heading font-semibold text-v2-ink">{label(flow, locale)}</h2>
             ) : (
               <label className="grid gap-1" htmlFor="flows-current-title-input">
-                <span className="text-v2-micro text-v2-ink-3">{text.t('flowName')}</span>
+                <span id="flows-current-title" className="text-v2-micro text-v2-ink-3">{text.t('flowName')}</span>
                 <input
                   id="flows-current-title-input"
                   value={flow.name}
