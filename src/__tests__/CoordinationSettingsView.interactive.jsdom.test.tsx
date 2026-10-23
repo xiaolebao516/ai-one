@@ -2,6 +2,7 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { browserLocalStoreFs } from '../host/localStore';
 import type { StorageLike } from '../stages/coordinationModel';
 import { CoordinationSettingsView } from '../workbench/views/CoordinationSettingsView';
 
@@ -193,19 +194,45 @@ describe('CoordinationSettingsView mounted interactive tests', () => {
     expect(written).toContain('"reworkLimit": 8');
   });
 
-  it('mounts with no props as in Workbench and defaults to local store fs', async () => {
+  it('mounts with no props as in Workbench, reads pre-existing local store data and persists changes', async () => {
+    await browserLocalStoreFs.write(
+      'coordination',
+      JSON.stringify({
+        schemaVersion: 1,
+        reworkLimit: 5,
+        onExceedLimit: 'consult_opus',
+        onQuotaTight: 'ask_user',
+        onAuthExpired: 'fallback_ai',
+        aiPreferences: { gpt: '自定义GPT' },
+      }),
+    );
+
     const { container } = await mount(<CoordinationSettingsView />);
-    const select = container.querySelector('#rework-limit-select') as HTMLSelectElement;
-    expect(select).not.toBeNull();
-    expect(select.value).toBe('3');
 
     await act(async () => {
-      select.value = '6';
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const select = container.querySelector('#rework-limit-select') as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    expect(select.value).toBe('5');
+    const preview = container.querySelector('[data-testid="brief-preview"]');
+    expect(preview?.textContent).toContain('- 返工上限：5 轮，先请 Opus 网页裁决，再问用户');
+    expect(preview?.textContent).toContain('GPT（自定义GPT）');
+
+    await act(async () => {
+      select.value = '9';
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
-    const preview = container.querySelector('[data-testid="brief-preview"]');
-    expect(preview?.textContent).toContain('- 返工上限：6 轮');
+    expect(preview?.textContent).toContain('- 返工上限：9 轮');
     expect(container.textContent).toContain('已自动保存到本机设置');
+
+    const storeRead = await browserLocalStoreFs.read('coordination');
+    expect(storeRead.status).toBe('ok');
+    expect(storeRead.text).not.toBeNull();
+    const persisted = JSON.parse(storeRead.text!);
+    expect(persisted.reworkLimit).toBe(9);
+    expect(persisted.onExceedLimit).toBe('consult_opus');
   });
 });

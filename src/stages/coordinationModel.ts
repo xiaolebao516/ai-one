@@ -66,7 +66,7 @@ export interface ValidationResult {
 /**
  * Sanitize preference text to strictly safe plain text, stripping any Markdown syntax,
  * HTML tags, links, images, code markers, headers, and control characters.
- * Neutralizes URL schemes and www prefixes to prevent GitHub Markdown autolinking.
+ * Neutralizes URL schemes, www prefixes, @ mentions, and email addresses to prevent GitHub autolinks.
  */
 export function sanitizePreferenceValue(value: string): string {
   // Neutralize URL schemes and www prefixes so GitHub Markdown does not autolink them
@@ -79,7 +79,7 @@ export function sanitizePreferenceValue(value: string): string {
       cleaned += ' ';
     } else {
       const ch = preprocessed[i];
-      // Strip markdown, HTML, and punctuation markers: # ` * _ ~ [ ] ( ) ! < > \ |
+      // Strip markdown, HTML, and punctuation markers: # ` * _ ~ [ ] ( ) ! < > \ | @
       if (
         ch === '#' ||
         ch === '`' ||
@@ -94,7 +94,8 @@ export function sanitizePreferenceValue(value: string): string {
         ch === '<' ||
         ch === '>' ||
         ch === '\\' ||
-        ch === '|'
+        ch === '|' ||
+        ch === '@'
       ) {
         cleaned += ' ';
       } else {
@@ -278,13 +279,14 @@ export function renderCoordinationBrief(settings: CoordinationSettings): string 
 }
 
 /**
- * Finds the exact character index range of a top-level section heading (not inside ``` code blocks).
+ * Finds the exact character index range of a top-level section heading (not inside ``` or ~~~ code blocks).
  * Matches strictly the exact heading title (no suffix such as "## 协调简报说明").
  * Accurately tracks CRLF and LF byte/character offsets without drift.
  */
 function findTopLevelSection(markdown: string, headingTitle: string): { start: number; end: number } | null {
   const lineRegex = /^([^\r\n]*)(\r?\n|$)/gm;
-  let inCodeBlock = false;
+  let fenceChar: string | null = null;
+  let fenceLen = 0;
   let targetStart = -1;
   let targetEnd = -1;
   let match: RegExpExecArray | null;
@@ -292,17 +294,26 @@ function findTopLevelSection(markdown: string, headingTitle: string): { start: n
   while ((match = lineRegex.exec(markdown)) !== null) {
     const line = match[1];
     const lineStart = match.index;
-    const isFence = line.trimStart().startsWith('```');
 
-    if (isFence) {
-      inCodeBlock = !inCodeBlock;
-    } else if (!inCodeBlock) {
-      // Exact match for "## <title>" (trailing whitespace allowed, but no extra suffix letters)
-      if (line.trimEnd() === `## ${headingTitle}`) {
-        targetStart = lineStart;
-      } else if (targetStart !== -1 && /^##\s+\S/.test(line)) {
-        targetEnd = lineStart;
-        break;
+    if (fenceChar === null) {
+      const fenceMatch = line.match(/^[ ]{0,3}(`{3,}|~{3,})/);
+      if (fenceMatch) {
+        fenceChar = fenceMatch[1][0];
+        fenceLen = fenceMatch[1].length;
+      } else {
+        // Exact match for "## <title>" (trailing whitespace allowed, but no extra suffix letters)
+        if (line.trimEnd() === `## ${headingTitle}`) {
+          targetStart = lineStart;
+        } else if (targetStart !== -1 && /^##\s+\S/.test(line)) {
+          targetEnd = lineStart;
+          break;
+        }
+      }
+    } else {
+      const closeMatch = line.match(/^[ ]{0,3}(`{3,}|~{3,})\s*$/);
+      if (closeMatch && closeMatch[1][0] === fenceChar && closeMatch[1].length >= fenceLen) {
+        fenceChar = null;
+        fenceLen = 0;
       }
     }
 
@@ -319,12 +330,15 @@ function findTopLevelSection(markdown: string, headingTitle: string): { start: n
 
 /**
  * Injects or updates the coordination brief section into a Task Issue body markdown.
- * Safely ignores occurrences inside fenced code blocks.
- * Accurately preserves original line break style (CRLF / LF) without offset corruption.
+ * Safely ignores occurrences inside fenced code blocks (``` or ~~~).
+ * Accurately normalizes brief line breaks to match the document's line ending style (CRLF / LF).
  */
 export function injectCoordinationBrief(issueBody: string, settings: CoordinationSettings): string {
-  const brief = renderCoordinationBrief(settings);
+  let brief = renderCoordinationBrief(settings);
   const isCrlf = issueBody.includes('\r\n');
+  if (isCrlf) {
+    brief = brief.replace(/\r?\n/g, '\r\n');
+  }
   const sep = isCrlf ? '\r\n\r\n' : '\n\n';
   const nl = isCrlf ? '\r\n' : '\n';
   const existingBrief = findTopLevelSection(issueBody, '协调简报');
@@ -338,9 +352,10 @@ export function injectCoordinationBrief(issueBody: string, settings: Coordinatio
   // Prepend before top-level ## 任务与范围 or append to the end
   const taskSection = findTopLevelSection(issueBody, '任务与范围');
   if (taskSection) {
-    const before = issueBody.slice(0, taskSection.start);
-    const after = issueBody.slice(taskSection.start);
-    return `${before}${brief}${sep}${after}`;
+    const before = issueBody.slice(0, taskSection.start).trimEnd();
+    const after = issueBody.slice(taskSection.start).trimStart();
+    const prefix = before ? `${before}${sep}` : '';
+    return `${prefix}${brief}${sep}${after}`.trimEnd() + nl;
   }
 
   return `${issueBody.trimEnd()}${sep}${brief}${nl}`;

@@ -49,10 +49,11 @@ describe('coordinationModel', () => {
       expect(cleaned).toBe('角色 恶意注入标题 rm -rf / 更多内容');
     });
 
-    it('neutralizes Markdown links, images, HTML tags and formatting into plain text', () => {
+    it('neutralizes Markdown links, images, HTML tags, @ mentions, and email addresses into plain text', () => {
       expect(sanitizePreferenceValue('[链接文字](https://evil.com)')).toBe('链接文字 evil.com');
       expect(sanitizePreferenceValue('![图片描述](https://evil.com/img.png)')).toBe('图片描述 evil.com/img.png');
       expect(sanitizePreferenceValue('http://evil.com/path and www.evil.com')).toBe('evil.com/path and evil.com');
+      expect(sanitizePreferenceValue('@octocat and name@example.com')).toBe('octocat and name example.com');
       expect(sanitizePreferenceValue('<script>alert("xss")</script>')).toBe('script alert "xss" /script');
       expect(sanitizePreferenceValue('**粗体**与*斜体*~删除线~')).toBe('粗体 与 斜体 删除线');
     });
@@ -255,6 +256,24 @@ describe('coordinationModel', () => {
       expect(injected).toContain('## 真实正文\n真实说明\n\n## 协调简报\n- 返工上限：3 轮');
     });
 
+    it('safely ignores ## 任务与范围 and ## 协调简报 inside tilde ~~~ code fences', () => {
+      const bodyWithTildeFence = [
+        '# Title',
+        '',
+        '~~~markdown',
+        '## 协调简报',
+        '- 波浪号代码块示例中的旧简报',
+        '~~~',
+        '',
+        '## 任务与范围',
+        '真实任务说明',
+      ].join('\n');
+
+      const injected = injectCoordinationBrief(bodyWithTildeFence, DEFAULT_COORDINATION_SETTINGS);
+      expect(injected).toContain('~~~markdown\n## 协调简报\n- 波浪号代码块示例中的旧简报\n~~~');
+      expect(injected.indexOf('## 任务与范围')).toBeGreaterThan(injected.lastIndexOf('## 协调简报'));
+    });
+
     it('replaces existing top-level ## 协调简报 cleanly without duplicating', () => {
       const existing = '# Task\n\n## 协调简报\n旧简报内容...\n\n## 任务与范围\n内容...\n';
       const updated = injectCoordinationBrief(existing, {
@@ -284,17 +303,30 @@ describe('coordinationModel', () => {
       expect(injected).toContain('## 协调简报\n- 返工上限：3 轮');
     });
 
-    it('preserves CRLF line endings accurately without character offset drift', () => {
-      const crlfBody = '# Title\r\n\r\n## 关联 / 派工\r\n- Owner: test\r\n\r\n## 协调简报\r\n- 旧简报\r\n\r\n## 任务与范围\r\n描述内容\r\n';
-      const updated = injectCoordinationBrief(crlfBody, {
+    it('preserves CRLF line endings accurately without character offset drift or bare LFs', () => {
+      const crlfBodyWithBrief =
+        '# Title\r\n\r\n## 关联 / 派工\r\n- Owner: test\r\n\r\n## 协调简报\r\n- 旧简报\r\n\r\n## 任务与范围\r\n描述内容\r\n';
+      const updatedExisting = injectCoordinationBrief(crlfBodyWithBrief, {
         ...DEFAULT_COORDINATION_SETTINGS,
         reworkLimit: 5,
       });
 
-      expect(updated).toContain('\r\n');
-      expect(updated).toContain('## 协调简报\n- 返工上限：5 轮');
-      expect(updated).toContain('## 任务与范围\r\n描述内容');
-      expect(updated).not.toContain('旧简报');
+      expect(updatedExisting).toContain('## 协调简报\r\n- 返工上限：5 轮');
+      expect(updatedExisting).toContain('## 任务与范围\r\n描述内容');
+      expect(updatedExisting).not.toContain('旧简报');
+      // Assert zero bare LF
+      expect(updatedExisting.replace(/\r\n/g, '')).not.toContain('\n');
+      expect(updatedExisting.replace(/\r\n/g, '')).not.toContain('\r');
+
+      const crlfBodyWithoutBrief =
+        '# Title\r\n\r\n## 关联 / 派工\r\n- Owner: test\r\n\r\n## 任务与范围\r\n描述内容\r\n';
+      const updatedNew = injectCoordinationBrief(crlfBodyWithoutBrief, {
+        ...DEFAULT_COORDINATION_SETTINGS,
+        reworkLimit: 5,
+      });
+      expect(updatedNew).toContain('## 协调简报\r\n- 返工上限：5 轮');
+      expect(updatedNew.replace(/\r\n/g, '')).not.toContain('\n');
+      expect(updatedNew.replace(/\r\n/g, '')).not.toContain('\r');
     });
 
     it('buildTaskIssueBody creates ready-to-use task issue body containing brief', () => {
