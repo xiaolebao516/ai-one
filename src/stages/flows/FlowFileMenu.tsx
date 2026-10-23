@@ -162,8 +162,8 @@ export function FlowFileMenu({ file, flowId, text, fs, disabled = false, onImpor
     if (!pending || (conflictCount > 0 && !pending.choice)) return;
     onImport(pending.incoming, pending.choice || 'keep-both');
     setPending(null);
-    setFeedback(text.t('importDone'));
-    setFeedbackTone('neutral');
+    setFeedback(undefined);
+    setOpen(false);
   };
 
   return (
