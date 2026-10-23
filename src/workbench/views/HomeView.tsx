@@ -8,6 +8,8 @@ import { CHANNEL_BADGE, type ChannelView } from '../dispatchView';
 import { categoryHealth, countLabel, isCountable, isExact, type DataHealth } from '../useWorkbenchData';
 import { headline } from '../workbenchModel';
 import { workbenchText } from '../workbenchText';
+import type { AcceptanceState } from '../useUserAcceptance';
+import { UserAcceptanceSection, acceptanceIssueKeys, pendingAcceptanceCount } from './UserAcceptanceSection';
 
 type ComposerMode = 'chat' | 'grill' | 'cc' | 'flow';
 
@@ -20,6 +22,7 @@ export interface HomeViewProps {
   locale: Locale;
   tasks: readonly HudTask[];
   health: DataHealth;
+  acceptance?: AcceptanceState;
   onOpenTask: (task: HudTask) => void;
   onShowTasks: () => void;
   /** What the Prodex channel looks like right now; the rest of the resources is not readable yet. */
@@ -27,15 +30,18 @@ export interface HomeViewProps {
   onShowResources?: () => void;
 }
 
-export function HomeView({ locale, tasks, health, channel, onOpenTask, onShowTasks, onShowResources }: HomeViewProps) {
+export function HomeView({ locale, tasks, health, acceptance, channel, onOpenTask, onShowTasks, onShowResources }: HomeViewProps) {
   const text = workbenchText(locale);
   const lead = headline(tasks);
-  const needsYou = needsYouTasks(tasks);
+  const acceptanceIssues = acceptance ? acceptanceIssueKeys(acceptance) : new Set<string>();
+  const needsYou = needsYouTasks(tasks).filter((task) => !(task.status === 'accept' && task.issue && acceptanceIssues.has(task.repo.toLowerCase() + ':' + task.issue)));
   const moving = inProgressTasks(tasks);
+  const acceptanceWaiting = acceptance ? pendingAcceptanceCount(acceptance) : 0;
   const countable = isCountable(health);
   const byState = categoryHealth(health, tasks);
   let title: string;
-  if (health === 'loading') title = text.t('headlineLoading');
+  if (acceptanceWaiting > 0 && health !== 'demo') title = text.t('headlineAcceptanceWaiting', { n: countLabel(acceptanceWaiting, acceptance?.partial ? 'partial' : 'complete') });
+  else if (health === 'loading') title = text.t('headlineLoading');
   else if (health === 'failed') title = text.t('headlineFailed');
   // A partial read never supports "nothing else": what was not read may hold work for the user.
   else if (health === 'partial' && lead.kind === 'waiting')
@@ -77,6 +83,7 @@ export function HomeView({ locale, tasks, health, channel, onOpenTask, onShowTas
         </p>
       </header>
 
+      {acceptance ? <UserAcceptanceSection locale={locale} state={acceptance} demo={health === 'demo'} /> : null}
       <Composer locale={locale} />
 
       <div className="grid gap-v2-lg min-[1100px]:grid-cols-[minmax(0,1fr)_300px]">
