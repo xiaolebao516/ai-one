@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { builtinFlows, builtinStages, type FlowsFile } from '../stages/flowModel';
+import { applyImport, builtinFlows, builtinStages, parseFlowsFile, planImport, type FlowDef, type FlowsFile, type StageDef } from '../stages/flowModel';
 import { loadFlows, saveFlows } from '../stages/flowStore';
 import type { LocalStoreFs, LocalStoreRead } from '../host/localStore';
 
@@ -100,4 +100,120 @@ describe('flow store recovery', () => {
     expect(issues).toEqual([]);
     expect(fs.writes).toHaveLength(1);
   });
+  it('preserves custom stage and flow definitions that collide with built-in IDs through save and reload', async () => {
+    const fs = new MemoryFs();
+    const local = validFile();
+    // Existing -import IDs force the importer to find a genuinely unique suffix.
+    local.stages.push({ ...builtinStages()[0], id: 'stage.grill-import', name: 'Previous stage copy', builtin: false });
+    local.flows.push({ ...builtinFlows()[0], id: 'flow.quick-import', name: 'Previous flow copy', builtin: false });
+
+    const importedStage: StageDef = {
+      ...builtinStages()[0],
+      builtin: false,
+      description: 'My own imported stage',
+      participants: [
+        { resource: 'claude', role: '讨论者', model: 'Opus', effort: 'max' },
+        { resource: 'gemini', role: '讨论者', freshSession: true },
+      ],
+      endCondition: 'audit-pass',
+      onFail: 'escalate-to-user',
+      note: 'Keep this custom note',
+    };
+    const importedFlow: FlowDef = {
+      ...builtinFlows()[0],
+      builtin: false,
+      description: 'My own imported flow',
+      stages: [
+        { stageId: importedStage.id },
+        { stageId: importedStage.id, overrides: { note: 'Per-flow note' } },
+      ],
+    };
+    const otherFlow: FlowDef = {
+      id: 'flow.second-custom',
+      name: 'Second imported flow',
+      builtin: false,
+      stages: [{ stageId: importedStage.id }],
+    };
+    const parsed = parseFlowsFile(JSON.stringify({
+      schemaVersion: 1,
+      stages: [importedStage],
+      flows: [importedFlow, otherFlow],
+    }));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error('Import fixture must be valid JSON and a valid flows schema');
+
+    const plan = planImport(local, parsed.file);
+    expect(plan.stages.conflicts).toHaveLength(1);
+    expect(plan.flows.conflicts).toHaveLength(1);
+    expect(plan.stages.conflicts[0].reason).toBe('id-and-name');
+    expect(plan.flows.conflicts[0].reason).toBe('id-and-name');
+
+    const merged = applyImport(local, parsed.file, 'overwrite');
+    const stageId = 'stage.grill-import-2';
+    const flowId = 'flow.quick-import-2';
+    const savedStage = { ...importedStage, id: stageId, name: importedStage.name + ' (2)' };
+    const savedFlow = {
+      ...importedFlow,
+      id: flowId,
+      name: importedFlow.name + ' (2)',
+      stages: [
+        { stageId },
+        { stageId, overrides: { note: 'Per-flow note' } },
+      ],
+    };
+    expect(merged.stages.find((stage) => stage.id === stageId)).toEqual(savedStage);
+    expect(merged.flows.find((flow) => flow.id === flowId)).toEqual(savedFlow);
+    expect(merged.flows.find((flow) => flow.id === otherFlow.id)?.stages).toEqual([{ stageId }]);
+    for (const builtin of builtinStages()) {
+      expect(merged.stages.find((stage) => stage.id === builtin.id)).toEqual(builtin);
+    }
+    for (const builtin of builtinFlows()) {
+      expect(merged.flows.find((flow) => flow.id === builtin.id)).toEqual(builtin);
+    }
+
+    expect(await saveFlows(fs, merged)).toEqual([]);
+    expect(fs.files.has('flows')).toBe(true);
+    const reloaded = await loadFlows(fs);
+    expect(reloaded.status).toBe('ok');
+    expect(reloaded.file.stages.find((stage) => stage.id === stageId)).toEqual(savedStage);
+    expect(reloaded.file.flows.find((flow) => flow.id === flowId)).toEqual(savedFlow);
+    expect(reloaded.file.flows.find((flow) => flow.id === otherFlow.id)?.stages).toEqual([{ stageId }]);
+    for (const builtin of builtinStages()) {
+      expect(reloaded.file.stages.find((stage) => stage.id === builtin.id)).toEqual(builtin);
+    }
+    for (const builtin of builtinFlows()) {
+      expect(reloaded.file.flows.find((flow) => flow.id === builtin.id)).toEqual(builtin);
+    }
+  });
+
+  it('does not rename unique custom names on built-in ID collisions and still skips actual imported built-ins', () => {
+    const local = validFile();
+    const importedStage: StageDef = { ...builtinStages()[0], name: 'Custom one', builtin: false };
+    const importedFlow: FlowDef = {
+      ...builtinFlows()[0],
+      name: 'Custom flow one',
+      builtin: false,
+      stages: [{ stageId: importedStage.id }],
+    };
+    const parsed = parseFlowsFile(JSON.stringify({
+      schemaVersion: 1,
+      stages: [importedStage],
+      flows: [importedFlow],
+    }));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error('Unique-name fixture must validate');
+    const merged = applyImport(local, parsed.file, 'overwrite');
+    expect(merged.stages.find((stage) => stage.id === 'stage.grill-import')).toMatchObject({
+      name: 'Custom one', builtin: false,
+    });
+    expect(merged.flows.find((flow) => flow.id === 'flow.quick-import')).toMatchObject({
+      name: 'Custom flow one', builtin: false, stages: [{ stageId: 'stage.grill-import' }],
+    });
+
+    const builtinOnly = parseFlowsFile(JSON.stringify(validFile()));
+    expect(builtinOnly.ok).toBe(true);
+    if (!builtinOnly.ok) throw new Error('Built-in fixture must validate');
+    expect(applyImport(local, builtinOnly.file, 'overwrite')).toEqual(local);
+  });
+
 });

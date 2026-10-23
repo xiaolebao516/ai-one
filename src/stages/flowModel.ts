@@ -830,6 +830,18 @@ export function applyImport(
         return;
       }
       if (idMatch) {
+        if (idMatch.builtin && !item.builtin) {
+          // A user stage with a built-in ID is not that built-in definition.
+          // Retain the entire imported stage and point imported refs to its fresh ID.
+          const newId = uniqueId(item.id + '-import', [...occupiedStageIds, ...occupiedFlowIds]);
+          const newName = stages.some((stage) => normalizeName(stage.name) === normalizeName(item.name))
+            ? uniqueName(item.name, stages)
+            : item.name;
+          stages.push({ ...item, id: newId, name: newName, builtin: false });
+          occupiedStageIds.add(newId);
+          stageIdMap.set(item.id, newId);
+          return;
+        }
         if (idMatch.builtin || item.builtin) {
           stageIdMap.set(item.id, idMatch.id);
           return;
@@ -918,6 +930,16 @@ export function applyImport(
     if (resolution === 'overwrite') {
       if (item.builtin && idMatch?.builtin) return;
       if (idMatch) {
+        if (idMatch.builtin && !item.builtin) {
+          // Preserve a user flow whose ID happens to match a code-owned built-in.
+          const newId = uniqueId(item.id + '-import', [...occupiedStageIds, ...occupiedFlowIds]);
+          const newName = flows.some((flow) => normalizeName(flow.name) === normalizeName(item.name))
+            ? uniqueName(item.name, flows)
+            : item.name;
+          flows.push({ ...item, id: newId, name: newName, builtin: false });
+          occupiedFlowIds.add(newId);
+          return;
+        }
         if (idMatch.builtin || item.builtin) return;
         const index = flows.findIndex((flow) => flow.id === idMatch.id);
         flows[index] = { ...item, builtin: false };
