@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Locale } from '../../i18n/resolve';
-import { githubWrite, type GithubWriteResult, type PauseState } from '../../host/githubWrite';
+import { githubWrite, type GithubWriteResult } from '../../host/githubWrite';
 import { isInProgress, type HudTask } from '../../ui/taskHudModel';
 import { Badge, Button, Icon, Notice } from '../../ui/v2';
+
+export type PauseState = 'paused' | 'running' | 'none';
 
 export interface TaskPauseControlProps {
   task: HudTask;
@@ -21,15 +23,31 @@ export function TaskPauseControl({
   const [pauseState, setPauseState] = useState<PauseState>(initialPauseState);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<GithubWriteResult | null>(null);
+  const [ghAvailable, setGhAvailable] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    githubWrite.status().then((s) => {
+      if (active) setGhAvailable(s.available);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    setPauseState(initialPauseState);
+  }, [initialPauseState]);
 
   // Only show when in progress and has a GitHub issue
   if (!isInProgress(task.status) || !task.issue) return null;
 
   const isMock = task.dataSource === 'mock';
   const isPaused = pauseState === 'paused';
+  const canWrite = !isMock && ghAvailable;
 
   const handleToggle = async () => {
-    if (isMock || submitting) return;
+    if (!canWrite || submitting) return;
     setSubmitting(true);
     setResult(null);
 
@@ -43,14 +61,16 @@ export function TaskPauseControl({
       });
       setResult(res);
 
-      if (res.outcome === 'confirmed') {
+      if (res.status === 'confirmed') {
         setPauseState(nextState);
         onStateChange?.(nextState);
       }
     } catch (err: unknown) {
       setResult({
-        outcome: 'failed',
-        message: typeof err === 'string' ? err : '暂停操作异常',
+        status: 'unconfirmed',
+        code: 'unconfirmed',
+        message: typeof err === 'string' ? err : '暂停操作异常，请先回读，不要重试',
+        steps: [],
       });
     } finally {
       setSubmitting(false);
@@ -68,7 +88,7 @@ export function TaskPauseControl({
           data-testid="pause-toggle-button"
           size="sm"
           variant={isPaused ? 'primary' : 'secondary'}
-          disabled={isMock || submitting}
+          disabled={!canWrite || submitting}
           onClick={handleToggle}
           icon={<Icon name={isPaused ? 'play' : 'pause'} size={14} />}
         >
@@ -96,11 +116,11 @@ export function TaskPauseControl({
         </span>
       </div>
 
-      {result && result.outcome !== 'confirmed' ? (
+      {result && result.status !== 'confirmed' ? (
         <Notice
-          tone={result.outcome === 'unconfirmed' ? 'unknown' : 'block'}
+          tone={result.status === 'unconfirmed' ? 'unknown' : 'block'}
         >
-          {result.outcome === 'unconfirmed'
+          {result.status === 'unconfirmed'
             ? isZh
               ? '已发出，但没能确认（未改动暂停状态，请刷新检查）'
               : 'Command sent but could not be confirmed'

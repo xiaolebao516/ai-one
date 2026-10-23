@@ -22,6 +22,26 @@ export function TaskNotificationIsland({ task, locale, onNavigate }: TaskNotific
     setDismissed(false);
   }, [task.status]);
 
+  // When window is in background / hidden, trigger desktop notification if available
+  useEffect(() => {
+    if (!needsAction || dismissed) return;
+    if (typeof document !== 'undefined' && document.hidden) {
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        try {
+          const n = new Notification(isZh ? 'ai-one: 任务需要你处理' : 'ai-one: Task needs you', {
+            body: pickText(task.title, locale),
+          });
+          n.onclick = () => {
+            window.focus();
+            onNavigate?.();
+          };
+        } catch {
+          // ignore notification errors
+        }
+      }
+    }
+  }, [needsAction, dismissed, task.title, locale, isZh, onNavigate]);
+
   if (!needsAction || dismissed) return null;
 
   return (

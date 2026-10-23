@@ -151,12 +151,20 @@ function validString(
 
 function validTitle(value: unknown): value is string {
   if (typeof value !== 'string' || /[\n\r\t]/u.test(value)) return false;
-  const trimmed = value.trim();
-  const length = characterCount(trimmed);
-  return length > 0
-    && length <= 256
-    && !CONTROL_CHAR_RE.test(trimmed)
-    && !trimmed.includes(MARKER_PREFIX);
+  const trimmedLength = characterCount(value.trim());
+  return trimmedLength >= 1
+    && trimmedLength <= 256
+    && validString(value, MAX_TEXT_CHARS, false, true);
+}
+
+function validBody(value: unknown): value is string {
+  return validString(value, MAX_TEXT_CHARS, true, true);
+}
+
+function validText(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.trim().length > 0
+    && validString(value, MAX_TEXT_CHARS, false, true);
 }
 
 function validSha(value: unknown): value is string {
@@ -167,48 +175,56 @@ function validCreateIssueArgs(value: unknown): value is GithubWriteCreateIssueAr
   if (!isRecord(value) || !hasExactKeys(value, ['repo', 'title', 'body'], ['parentSpec'])) return false;
   return validRepo(value.repo)
     && validTitle(value.title)
-    && validString(value.body, MAX_TEXT_CHARS, false, true)
+    && validBody(value.body)
     && (value.parentSpec === undefined || validNumber(value.parentSpec));
 }
 
 function validCommentArgs(value: unknown): value is GithubWriteCommentArgs {
-  if (!isRecord(value) || !hasExactKeys(value, ['repo', 'issue', 'text'])) return false;
-  return validRepo(value.repo)
+  return isRecord(value)
+    && hasExactKeys(value, ['repo', 'issue', 'text'])
+    && validRepo(value.repo)
     && validNumber(value.issue)
-    && validString(value.text, MAX_TEXT_CHARS, false, true);
+    && validText(value.text);
 }
 
 function validPauseArgs(value: unknown): value is GithubWriteSetPauseArgs {
-  if (!isRecord(value) || !hasExactKeys(value, ['repo', 'issue', 'state'])) return false;
-  return validRepo(value.repo)
+  return isRecord(value)
+    && hasExactKeys(value, ['repo', 'issue', 'state'])
+    && validRepo(value.repo)
     && validNumber(value.issue)
     && (value.state === 'paused' || value.state === 'running');
 }
 
 function validAcceptArgs(value: unknown): value is GithubWriteAcceptArgs {
-  if (!isRecord(value) || !hasExactKeys(value, ['repo', 'issue', 'pr', 'expectedHead'])) return false;
-  return validRepo(value.repo)
+  return isRecord(value)
+    && hasExactKeys(value, ['repo', 'issue', 'pr', 'expectedHead'])
+    && validRepo(value.repo)
     && validNumber(value.issue)
     && validNumber(value.pr)
     && validSha(value.expectedHead);
 }
 
 function validRequestChangesArgs(value: unknown): value is GithubWriteRequestChangesArgs {
-  if (!isRecord(value) || !hasExactKeys(value, ['repo', 'issue', 'pr', 'expectedHead', 'text'])) return false;
-  return validRepo(value.repo)
+  return isRecord(value)
+    && hasExactKeys(value, ['repo', 'issue', 'pr', 'expectedHead', 'text'])
+    && validRepo(value.repo)
     && validNumber(value.issue)
     && validNumber(value.pr)
     && validSha(value.expectedHead)
-    && validString(value.text, MAX_TEXT_CHARS, false, true);
+    && validText(value.text);
+}
+
+function failedResult(code: GithubWriteCode = 'github_failed'): GithubWriteResult {
+  return {
+    status: 'failed',
+    code,
+    message: MESSAGES[code],
+    steps: [],
+  };
 }
 
 function invalidResult(): GithubWriteResult {
-  return {
-    status: 'failed',
-    code: 'invalid_input',
-    message: MESSAGES.invalid_input,
-    steps: [],
-  };
+  return failedResult('invalid_input');
 }
 
 function unconfirmedResult(): GithubWriteResult {
@@ -334,6 +350,23 @@ async function requestChanges(args: GithubWriteRequestChangesArgs): Promise<Gith
   });
 }
 
+export function derivePauseState(comments: { body: string }[]): { paused: boolean } {
+  let paused = false;
+  for (const comment of comments) {
+    if (typeof comment?.body !== 'string') continue;
+    const lines = comment.body.split(/\r?\n/u);
+    if (lines.length !== 3 || lines[0] !== COMMENT_PREFIX || lines[2] !== PAUSE_MARKER) continue;
+    if (lines[1] === '用户已暂停：请停止派发新工作，正在进行的一步可完成。') paused = true;
+    else if (lines[1] === '用户已恢复：可继续派发。') paused = false;
+    else continue;
+  }
+  return { paused };
+}
+
+export const AI_ONE_COMMENT_PREFIX = COMMENT_PREFIX;
+export const COMMENT_MARKER = '<!-- ai-one:comment:v1 -->';
+export { PAUSE_MARKER };
+
 export function formatCommentBody(text: string): string {
   return `${COMMENT_PREFIX}\n\n${text}\n\n<!-- ai-one:comment:v1 -->`;
 }
@@ -351,18 +384,6 @@ export function formatAcceptBody(expectedHead: string): string {
 
 export function formatRequestChangesBody(expectedHead: string, text: string): string {
   return `${COMMENT_PREFIX}\n\n要求修改（基于 HEAD \`${expectedHead}\`）：\n\n${text}\n\n<!-- ai-one:request_changes:v1 -->`;
-}
-
-export function derivePauseState(comments: { body: string }[]): { paused: boolean } {
-  let paused = false;
-  for (const comment of comments) {
-    if (typeof comment?.body !== 'string') continue;
-    const lines = comment.body.split(/\r?\n/u);
-    if (lines.length !== 3 || lines[0] !== COMMENT_PREFIX || lines[2] !== PAUSE_MARKER) continue;
-    if (lines[1] === '用户已暂停：请停止派发新工作，正在进行的一步可完成。') paused = true;
-    else if (lines[1] === '用户已恢复：可继续派发。') paused = false;
-  }
-  return { paused };
 }
 
 export const githubWrite = {

@@ -49,62 +49,59 @@ describe('githubWrite helpers and models', () => {
   });
 
   describe('derivePauseState', () => {
-    it('returns none for empty comments list', () => {
-      expect(derivePauseState([])).toBe('none');
+    it('returns not paused for empty comments list', () => {
+      expect(derivePauseState([])).toEqual({ paused: false });
     });
 
-    it('returns none for comments without required prefix and marker', () => {
+    it('returns not paused for comments without required prefix and marker', () => {
       const comments = [
         { body: '用户已暂停：请停止派发新工作' },
         { body: '普通讨论评论 <!-- ai-one:comment:v1 -->' },
       ];
-      expect(derivePauseState(comments)).toBe('none');
+      expect(derivePauseState(comments)).toEqual({ paused: false });
     });
 
-    it('returns none if marker is not the final line', () => {
-      const malformed = `${AI_ONE_COMMENT_PREFIX}\n用户已暂停：请停止派发\n${PAUSE_MARKER}\n额外末尾文字`;
-      expect(derivePauseState([{ body: malformed }])).toBe('none');
+    it('returns not paused if marker is not the final line', () => {
+      const malformed = `${AI_ONE_COMMENT_PREFIX}\n用户已暂停：请停止派发新工作，正在进行的一步可完成。\n${PAUSE_MARKER}\n额外末尾文字`;
+      expect(derivePauseState([{ body: malformed }])).toEqual({ paused: false });
     });
 
-    it('returns none if prefix is not the first line', () => {
-      const malformed = `前置文字\n${AI_ONE_COMMENT_PREFIX}\n用户已暂停：请停止派发\n${PAUSE_MARKER}`;
-      expect(derivePauseState([{ body: malformed }])).toBe('none');
+    it('returns not paused if prefix is not the first line', () => {
+      const malformed = `前置文字\n${AI_ONE_COMMENT_PREFIX}\n用户已暂停：请停止派发新工作，正在进行的一步可完成。\n${PAUSE_MARKER}`;
+      expect(derivePauseState([{ body: malformed }])).toEqual({ paused: false });
     });
 
     it('correctly derives paused from a valid pause comment', () => {
       const valid = formatPauseBody('paused');
-      expect(derivePauseState([{ body: valid }])).toBe('paused');
+      expect(derivePauseState([{ body: valid }])).toEqual({ paused: true });
     });
 
     it('correctly derives running from a valid resume comment', () => {
       const valid = formatPauseBody('running');
-      expect(derivePauseState([{ body: valid }])).toBe('running');
+      expect(derivePauseState([{ body: valid }])).toEqual({ paused: false });
     });
 
     it('resolves latest comment state chronologically', () => {
       const c1 = {
         body: formatPauseBody('paused'),
-        createdAt: '2026-10-23T10:00:00Z',
       };
       const c2 = {
         body: formatPauseBody('running'),
-        createdAt: '2026-10-23T11:00:00Z',
       };
       const c3 = {
         body: formatPauseBody('paused'),
-        createdAt: '2026-10-23T12:00:00Z',
       };
 
-      expect(derivePauseState([c1, c2])).toBe('running');
-      expect(derivePauseState([c1, c2, c3])).toBe('paused');
+      expect(derivePauseState([c1, c2])).toEqual({ paused: false });
+      expect(derivePauseState([c1, c2, c3])).toEqual({ paused: true });
     });
   });
 
   describe('githubWrite parameter validation', () => {
     it('rejects empty comment text', async () => {
       const res = await githubWrite.comment({ repo: 'owner/repo', issue: 1, text: '   ' });
-      expect(res.outcome).toBe('failed');
-      expect(res.message).toContain('不能为空');
+      expect(res.status).toBe('failed');
+      expect(res.code).toBe('invalid_input');
     });
 
     it('rejects restricted ai-one internal markers in comment input', async () => {
@@ -113,8 +110,8 @@ describe('githubWrite helpers and models', () => {
         issue: 1,
         text: 'hello <!-- ai-one:set_pause:v1 -->',
       });
-      expect(res.outcome).toBe('failed');
-      expect(res.message).toContain('受限');
+      expect(res.status).toBe('failed');
+      expect(res.code).toBe('invalid_input');
     });
 
     it('rejects accept without valid 40-hex expectedHead', async () => {
@@ -124,8 +121,8 @@ describe('githubWrite helpers and models', () => {
         pr: 10,
         expectedHead: 'short',
       });
-      expect(res.outcome).toBe('failed');
-      expect(res.message).toContain('无效');
+      expect(res.status).toBe('failed');
+      expect(res.code).toBe('invalid_input');
     });
 
     it('rejects requestChanges without notes or without 40-hex SHA', async () => {
@@ -136,8 +133,8 @@ describe('githubWrite helpers and models', () => {
         expectedHead: '1234567890123456789012345678901234567890',
         text: '   ',
       });
-      expect(resEmpty.outcome).toBe('failed');
-      expect(resEmpty.message).toContain('不能为空');
+      expect(resEmpty.status).toBe('failed');
+      expect(resEmpty.code).toBe('invalid_input');
 
       const resBadSha = await githubWrite.requestChanges({
         repo: 'owner/repo',
@@ -146,8 +143,8 @@ describe('githubWrite helpers and models', () => {
         expectedHead: 'bad',
         text: '修改意见',
       });
-      expect(resBadSha.outcome).toBe('failed');
-      expect(resBadSha.message).toContain('无效');
+      expect(resBadSha.status).toBe('failed');
+      expect(resBadSha.code).toBe('invalid_input');
     });
   });
 });

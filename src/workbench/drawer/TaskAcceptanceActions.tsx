@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Locale } from '../../i18n/resolve';
 import { githubWrite, type GithubWriteResult } from '../../host/githubWrite';
 import type { HudTask } from '../../ui/taskHudModel';
@@ -24,6 +24,17 @@ export function TaskAcceptanceActions({
   const [rejectText, setRejectText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<GithubWriteResult | null>(null);
+  const [ghAvailable, setGhAvailable] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    githubWrite.status().then((s) => {
+      if (active) setGhAvailable(s.available);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const pr = task.pr;
   const isMock = task.dataSource === 'mock';
@@ -34,11 +45,13 @@ export function TaskAcceptanceActions({
 
   // Check if live HEAD has changed compared to expectedHead from the task PR
   const headMismatch = Boolean(
-    currentHeadSha && expectedHead && currentHeadSha !== expectedHead
+    currentHeadSha && expectedHead && currentHeadSha.toLowerCase() !== expectedHead.toLowerCase()
   );
 
+  const canWrite = !isMock && ghAvailable && !headMismatch && Boolean(expectedHead);
+
   const handleAccept = async () => {
-    if (isMock || submitting || headMismatch || !expectedHead) return;
+    if (!canWrite || submitting || !expectedHead) return;
     setSubmitting(true);
     setResult(null);
 
@@ -50,13 +63,15 @@ export function TaskAcceptanceActions({
         expectedHead,
       });
       setResult(res);
-      if (res.outcome === 'confirmed') {
+      if (res.status === 'confirmed') {
         onAccepted?.();
       }
     } catch (err: unknown) {
       setResult({
-        outcome: 'failed',
-        message: typeof err === 'string' ? err : '验收操作异常',
+        status: 'unconfirmed',
+        code: 'unconfirmed',
+        message: typeof err === 'string' ? err : '验收操作异常，请先回读，不要重试',
+        steps: [],
       });
     } finally {
       setSubmitting(false);
@@ -64,7 +79,7 @@ export function TaskAcceptanceActions({
   };
 
   const handleRequestChanges = async () => {
-    if (isMock || submitting || headMismatch || !expectedHead || !rejectText.trim()) return;
+    if (!canWrite || submitting || !expectedHead || !rejectText.trim()) return;
     setSubmitting(true);
     setResult(null);
 
@@ -77,15 +92,17 @@ export function TaskAcceptanceActions({
         text: rejectText.trim(),
       });
       setResult(res);
-      if (res.outcome === 'confirmed') {
+      if (res.status === 'confirmed') {
         setRejectText('');
         setShowRejectForm(false);
         onRequestChangesSent?.();
       }
     } catch (err: unknown) {
       setResult({
-        outcome: 'failed',
-        message: typeof err === 'string' ? err : '要求修改操作异常',
+        status: 'unconfirmed',
+        code: 'unconfirmed',
+        message: typeof err === 'string' ? err : '要求修改操作异常，请先回读，不要重试',
+        steps: [],
       });
     } finally {
       setSubmitting(false);
@@ -94,13 +111,21 @@ export function TaskAcceptanceActions({
 
   return (
     <div className="mt-v2-sm flex flex-col gap-v2-sm border-t border-v2-line/60 pt-v2-sm">
+      {!ghAvailable && !isMock ? (
+        <Notice tone="block">
+          {isZh
+            ? '未安装 GitHub CLI 或未登录 GitHub，写回操作已禁用。'
+            : 'GitHub CLI is not installed or not logged in; write actions are disabled.'}
+        </Notice>
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-between gap-v2-sm">
         <div className="flex flex-wrap items-center gap-v2-xs">
           <Button
             data-testid="accept-pass-button"
             size="sm"
             variant="primary"
-            disabled={isMock || submitting || headMismatch || !expectedHead}
+            disabled={!canWrite || submitting}
             onClick={handleAccept}
             icon={<Icon name="check" size={14} />}
           >
@@ -121,7 +146,7 @@ export function TaskAcceptanceActions({
             data-testid="request-changes-button"
             size="sm"
             variant="secondary"
-            disabled={isMock || submitting || headMismatch || !expectedHead}
+            disabled={!canWrite || submitting}
             onClick={() => setShowRejectForm(!showRejectForm)}
             icon={<Icon name="edit" size={14} />}
           >
@@ -157,7 +182,7 @@ export function TaskAcceptanceActions({
               data-testid="request-changes-submit"
               size="sm"
               variant="primary"
-              disabled={!rejectText.trim() || submitting}
+              disabled={!rejectText.trim() || submitting || !canWrite}
               onClick={handleRequestChanges}
             >
               {submitting ? (isZh ? '提交中…' : 'Submitting…') : isZh ? '提交修改要求' : 'Submit changes'}
@@ -169,20 +194,20 @@ export function TaskAcceptanceActions({
       {result ? (
         <Notice
           tone={
-            result.outcome === 'confirmed'
+            result.status === 'confirmed'
               ? 'done'
-              : result.outcome === 'partial'
+              : result.status === 'partial'
               ? 'rework'
-              : result.outcome === 'unconfirmed'
+              : result.status === 'unconfirmed'
               ? 'unknown'
               : 'block'
           }
         >
           <span className="font-medium">
-            {result.outcome === 'confirmed' && (isZh ? '已确认：' : 'Confirmed: ')}
-            {result.outcome === 'partial' && (isZh ? '部分成功：' : 'Partial: ')}
-            {result.outcome === 'unconfirmed' && (isZh ? '状态未知：' : 'Unconfirmed: ')}
-            {result.outcome === 'failed' && (isZh ? '失败：' : 'Failed: ')}
+            {result.status === 'confirmed' && (isZh ? '已确认：' : 'Confirmed: ')}
+            {result.status === 'partial' && (isZh ? '部分成功：' : 'Partial: ')}
+            {result.status === 'unconfirmed' && (isZh ? '状态未知：' : 'Unconfirmed: ')}
+            {result.status === 'failed' && (isZh ? '失败：' : 'Failed: ')}
           </span>
           {result.message}
         </Notice>

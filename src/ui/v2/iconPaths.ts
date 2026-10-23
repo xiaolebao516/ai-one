@@ -1,7 +1,7 @@
 /** 16px stroke icons (24-unit viewBox), drawn in currentColor. Add only what a v2 page actually uses. */
 export const V2_ICON_PATHS = {
   arrowLeft: ['M19 12H5', 'm12 19-7-7 7-7'],
-  arrowRight: ['M5 12h14', 'm12 5 7-7-7-7'],
+  arrowRight: ['M5 12h14', 'M12 5l7 7-7 7'],
   chevronRight: ['m9 18 6-6-6-6'],
   chevronDown: ['m6 9 6 6 6-6'],
   check: ['M20 6 9 17l-5-5'],

@@ -40,6 +40,7 @@ const live: { root: Root; container: HTMLElement }[] = [];
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.restoreAllMocks();
+  vi.spyOn(ghWriteModule.githubWrite, 'status').mockResolvedValue({ available: true, reason: 'ok' });
 });
 
 afterEach(async () => {
@@ -179,8 +180,10 @@ describe('TaskView Controls & Live Inspector integration (Spec #110)', () => {
 
   it('mounted: handles pause and resume toggle', async () => {
     const spyPause = vi.spyOn(ghWriteModule.githubWrite, 'setPause').mockResolvedValue({
-      outcome: 'confirmed',
+      status: 'confirmed',
+      code: 'ok',
       message: '已暂停',
+      steps: [{ step: 'comment', state: 'confirmed' }],
     });
 
     const container = document.createElement('div');

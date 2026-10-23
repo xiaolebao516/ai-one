@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
+import type { DispatchSnapshot } from '../../dispatch/types';
 import type { Locale } from '../../i18n/resolve';
 import {
   effectiveCi,
@@ -15,8 +16,9 @@ import { TaskAcceptanceActions } from '../drawer/TaskAcceptanceActions';
 import { TaskCommentBox } from '../drawer/TaskCommentBox';
 import { TaskDrawer, type DrawerTabKey } from '../drawer/TaskDrawer';
 import { TaskNotificationIsland } from '../drawer/TaskNotificationIsland';
-import { TaskPauseControl } from '../drawer/TaskPauseControl';
+import { TaskPauseControl, type PauseState } from '../drawer/TaskPauseControl';
 import { TaskTakeoverBanner } from '../drawer/TaskTakeoverBanner';
+import { derivePauseState } from '../../host/githubWrite';
 import { StageStrip, TaskStatus } from '../TaskBits';
 import { workbenchText } from '../workbenchText';
 
@@ -24,6 +26,9 @@ export interface TaskViewProps {
   locale: Locale;
   task: HudTask;
   onBack: () => void;
+  dispatchSnapshot?: DispatchSnapshot | null;
+  onOpenClassic?: () => void;
+  onTakeoverAi?: (aiName: string) => void;
 }
 
 const EVIDENCE_TONE = { readback: 'done', local: 'run', self: 'neutral', unverified: 'unknown' } as const;
@@ -35,7 +40,14 @@ interface TeamMember {
 }
 
 /** Task page (design §5, §6): now → needs you → stages and evidence, inspector drawer, pause, comment, accept/reject & takeover. */
-export function TaskView({ locale, task, onBack }: TaskViewProps) {
+export function TaskView({
+  locale,
+  task,
+  onBack,
+  dispatchSnapshot,
+  onOpenClassic,
+  onTakeoverAi,
+}: TaskViewProps) {
   const isZh = locale.startsWith('zh');
   const text = workbenchText(locale);
   const hud = taskHudText(locale);
@@ -48,6 +60,22 @@ export function TaskView({ locale, task, onBack }: TaskViewProps) {
     setActiveDrawerTab(tab);
     setDrawerOpen(true);
   };
+
+  const handleTakeover = (name: string) => {
+    setTakeoverAi(name);
+    onTakeoverAi?.(name);
+    onOpenClassic?.();
+  };
+
+  const initialPauseState: PauseState = useMemo(() => {
+    for (const item of task.evidence) {
+      if (item.raw && item.raw.includes('ai-one:set_pause:v1')) {
+        const derived = derivePauseState([{ body: item.raw }]);
+        if (derived.paused) return 'paused';
+      }
+    }
+    return 'none';
+  }, [task.evidence]);
 
   // Team members derived from task or standard multi-AI workflow
   const teamMembers: TeamMember[] = [
@@ -93,7 +121,7 @@ export function TaskView({ locale, task, onBack }: TaskViewProps) {
             <h1 className="min-w-0 font-v2-serif text-v2-heading text-v2-ink">{pickText(task.title, locale)}</h1>
             <div className="flex flex-wrap items-center gap-v2-sm">
               <TaskStatus task={task} locale={locale} />
-              <TaskPauseControl task={task} locale={locale} />
+              <TaskPauseControl task={task} locale={locale} initialPauseState={initialPauseState} />
             </div>
           </header>
 
@@ -130,7 +158,11 @@ export function TaskView({ locale, task, onBack }: TaskViewProps) {
 
                 {/* Acceptance actions on acceptance card */}
                 {task.status === 'accept' ? (
-                  <TaskAcceptanceActions task={task} locale={locale} />
+                  <TaskAcceptanceActions
+                    task={task}
+                    locale={locale}
+                    currentHeadSha={task.pr?.headSha || ''}
+                  />
                 ) : null}
               </Card>
             </section>
@@ -143,90 +175,87 @@ export function TaskView({ locale, task, onBack }: TaskViewProps) {
           ) : null}
 
           <section aria-labelledby="task-evidence">
-            <div className="flex items-center justify-between">
-              <SectionHeader id="task-evidence" title={text.t('evidence')} count={task.evidence.length} description={text.t('evidenceHint')} />
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => openDrawer('dispatch')}
-                icon={<Icon name="search" size={14} />}
-              >
-                {isZh ? '打开检查器' : 'Open Inspector'}
-              </Button>
+            <div className="flex flex-wrap items-center justify-between gap-v2-sm">
+              <SectionHeader id="task-evidence" level={2} title={text.t('evidence')} />
+              <div className="flex flex-wrap items-center gap-v2-xs text-v2-micro text-v2-ink-3">
+                <span>{isZh ? '直跳检查器：' : 'Inspector jump:'}</span>
+                <button
+                  type="button"
+                  onClick={() => openDrawer('dispatch')}
+                  className="hover:text-v2-ink hover:underline"
+                >
+                  {isZh ? '派工单 ›' : 'Dispatch ›'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openDrawer('response')}
+                  className="hover:text-v2-ink hover:underline"
+                >
+                  {isZh ? '原始回复 ›' : 'Response ›'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openDrawer('diff')}
+                  className="hover:text-v2-ink hover:underline"
+                >
+                  Diff ›
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openDrawer('tests')}
+                  className="hover:text-v2-ink hover:underline"
+                >
+                  {isZh ? '测试 ›' : 'Tests ›'}
+                </button>
+              </div>
             </div>
 
-            <ul className="mt-v2-sm grid gap-v2-sm">
-              {task.evidence.map((item) => (
-                <li key={item.id}>
-                  <Card padding="sm" className="grid gap-v2-xs">
-                    <div className="flex flex-wrap items-center justify-between gap-v2-sm">
-                      <span className="text-v2-body text-v2-ink">{pickText(item.text, locale)}</span>
-                      <div className="flex flex-wrap items-center gap-v2-sm text-v2-micro text-v2-ink-3">
-                        <Badge tone={EVIDENCE_TONE[item.kind]}>{hud.evidence(item.kind, task.dataSource)}</Badge>
-                        {formatAge(item.observedMinutesAgo, locale)}
-
-                        {/* End links to inspector drawer tabs (Design §6.1) */}
-                        <span className="flex items-center gap-1.5 border-l border-v2-line pl-2">
-                          <button
-                            type="button"
-                            onClick={() => openDrawer('dispatch')}
-                            className="text-v2-ink-3 hover:text-v2-accent hover:underline"
-                          >
-                            {isZh ? '派工单 ›' : 'Dispatch ›'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openDrawer('response')}
-                            className="text-v2-ink-3 hover:text-v2-accent hover:underline"
-                          >
-                            {isZh ? '原始回复 ›' : 'Response ›'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openDrawer('diff')}
-                            className="text-v2-ink-3 hover:text-v2-accent hover:underline"
-                          >
-                            Diff ›
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openDrawer('tests')}
-                            className="text-v2-ink-3 hover:text-v2-accent hover:underline"
-                          >
-                            {isZh ? '测试 ›' : 'Tests ›'}
-                          </button>
-                        </span>
+            {task.evidence.length ? (
+              <ul className="mt-v2-sm grid gap-v2-sm">
+                {task.evidence.map((item) => (
+                  <li key={item.id}>
+                    <Card padding="sm" className="grid content-start gap-v2-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-v2-sm">
+                        <span className="text-v2-body text-v2-ink">{pickText(item.text, locale)}</span>
+                        <div className="flex items-center gap-v2-xs">
+                          <Badge tone={EVIDENCE_TONE[item.kind]}>{hud.evidence(item.kind, task.dataSource)}</Badge>
+                          <span className="text-v2-micro text-v2-ink-3">
+                            {formatAge(item.observedMinutesAgo, locale)}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                    {item.raw ? (
-                      <details>
-                        <summary className="cursor-pointer text-v2-micro text-v2-ink-3">{text.t('rawEvidence')}</summary>
-                        <pre className="mt-v2-xs overflow-auto whitespace-pre-wrap rounded-v2-sm bg-v2-sunken p-v2-sm font-v2-mono text-v2-micro text-v2-ink-2">{item.raw}</pre>
-                      </details>
-                    ) : null}
-                  </Card>
-                </li>
-              ))}
-            </ul>
+                      {item.raw ? (
+                        <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-v2-sm bg-v2-sunken p-v2-sm font-v2-mono text-v2-micro text-v2-ink-2">
+                          {item.raw}
+                        </pre>
+                      ) : null}
+                    </Card>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-v2-sm text-v2-meta text-v2-ink-3">{isZh ? '暂无证据' : 'No evidence'}</p>
+            )}
           </section>
 
-          {/* Bottom Leave Message to CC Box (Design §6.4) */}
-          <TaskCommentBox task={task} locale={locale} />
+          {/* Comment section (Design §6.4) */}
+          <section aria-labelledby="task-comments">
+            <TaskCommentBox task={task} locale={locale} />
+          </section>
         </div>
       </div>
 
-      {/* Right Sidebar: Delivery Facts & Team */}
       <aside
         aria-label={text.t('delivery')}
-        className="w-full shrink-0 border-v2-line bg-v2-panel p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:w-[300px] min-[1320px]:border-l min-[1320px]:p-v2-page"
+        className="w-full shrink-0 border-t border-v2-line bg-v2-sunken/40 p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:w-[280px] min-[1320px]:border-l min-[1320px]:border-t-0 min-[1320px]:p-v2-page"
       >
-        <div className="flex items-center justify-between border-b border-v2-line/60 pb-v2-sm">
-          <SectionHeader level={3} title={text.t('delivery')} />
+        <div className="flex items-center justify-between">
+          <SectionHeader level={2} title={text.t('delivery')} />
           <Button
             data-testid="inspector-button"
             size="sm"
             variant="secondary"
-            onClick={() => openDrawer(activeDrawerTab)}
+            onClick={() => setDrawerOpen(true)}
             icon={<Icon name="search" size={14} />}
           >
             {isZh ? '检查器' : 'Inspector'}
@@ -268,7 +297,7 @@ export function TaskView({ locale, task, onBack }: TaskViewProps) {
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => setTakeoverAi(member.name)}
+                    onClick={() => handleTakeover(member.name)}
                   >
                     {isZh ? '接管' : 'Take over'}
                   </Button>
@@ -287,19 +316,28 @@ export function TaskView({ locale, task, onBack }: TaskViewProps) {
         onTabChange={setActiveDrawerTab}
         task={task}
         locale={locale}
+        snapshot={dispatchSnapshot ?? undefined}
       />
 
-      {/* Foreground Notification Island (Design §6.7) */}
-      <TaskNotificationIsland task={task} locale={locale} />
+      {/* Notification Island (Design §6.7) */}
+      <TaskNotificationIsland
+        task={task}
+        locale={locale}
+        onNavigate={() => {
+          if (typeof window !== 'undefined') {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+        }}
+      />
     </div>
   );
 }
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-baseline gap-v2-sm">
+    <div className="flex flex-wrap items-baseline justify-between gap-v2-xs">
       <dt className="text-v2-ink-3">{label}</dt>
-      <dd className="min-w-0 text-v2-ink">{children}</dd>
+      <dd className="font-medium text-v2-ink">{children}</dd>
     </div>
   );
 }
@@ -307,11 +345,9 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 function CiFact({ task, locale }: { task: HudTask; locale: Locale }) {
   const hud = taskHudText(locale);
   const ci = effectiveCi(task);
-  const tone = ci.state === 'success' ? 'done' : ci.state === 'failure' ? 'block' : ci.state === 'running' ? 'run' : 'unknown';
-  return (
-    <span className="grid gap-0.5">
-      <Badge tone={tone}>{hud.ci(ci.state)}</Badge>
-      {ci.state === 'unknown' ? <span className="text-v2-micro text-v2-ink-3">{hud.ciReason(ci.reason)}</span> : null}
-    </span>
-  );
+  if (ci.state === 'unknown') {
+    return <span className="text-v2-ink-3">{hud.ci(ci.state)}</span>;
+  }
+  const tone = ci.state === 'success' ? 'done' : ci.state === 'failure' ? 'block' : 'run';
+  return <Badge tone={tone}>{hud.ci(ci.state)}</Badge>;
 }

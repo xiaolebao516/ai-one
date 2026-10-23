@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Locale } from '../../i18n/resolve';
 import { formatCommentBody, githubWrite, type GithubWriteResult } from '../../host/githubWrite';
 import type { HudTask } from '../../ui/taskHudModel';
@@ -15,15 +15,26 @@ export function TaskCommentBox({ task, locale, onCommentSent }: TaskCommentBoxPr
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<GithubWriteResult | null>(null);
+  const [ghAvailable, setGhAvailable] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    githubWrite.status().then((s) => {
+      if (active) setGhAvailable(s.available);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   if (!task.issue) return null;
 
   const isMock = task.dataSource === 'mock';
-
   const preview = text.trim() ? formatCommentBody(text) : '';
+  const canWrite = !isMock && ghAvailable;
 
   const handleSubmit = async () => {
-    if (!text.trim() || isMock || submitting) return;
+    if (!text.trim() || !canWrite || submitting) return;
     setSubmitting(true);
     setResult(null);
 
@@ -34,14 +45,16 @@ export function TaskCommentBox({ task, locale, onCommentSent }: TaskCommentBoxPr
         text: text.trim(),
       });
       setResult(res);
-      if (res.outcome === 'confirmed') {
+      if (res.status === 'confirmed') {
         setText('');
         onCommentSent?.(text.trim());
       }
     } catch (err: unknown) {
       setResult({
-        outcome: 'failed',
-        message: typeof err === 'string' ? err : '留言操作异常',
+        status: 'unconfirmed',
+        code: 'unconfirmed',
+        message: typeof err === 'string' ? err : '留言操作异常，请先回读，不要重试',
+        steps: [],
       });
     } finally {
       setSubmitting(false);
@@ -60,17 +73,29 @@ export function TaskCommentBox({ task, locale, onCommentSent }: TaskCommentBoxPr
         </span>
       </div>
 
+      {!ghAvailable && !isMock ? (
+        <Notice tone="block">
+          {isZh
+            ? '未安装 GitHub CLI 或未登录 GitHub，留言功能已禁用。'
+            : 'GitHub CLI is not installed or not logged in; commenting is disabled.'}
+        </Notice>
+      ) : null}
+
       <div className="grid gap-v2-xs">
         <textarea
           data-testid="comment-input"
           value={text}
-          disabled={isMock || submitting}
+          disabled={!canWrite || submitting}
           onChange={(e) => setText(e.target.value)}
           placeholder={
             isMock
               ? isZh
                 ? '演示数据，留言功能已禁用'
                 : 'Demo mode: commenting disabled'
+              : !ghAvailable
+              ? isZh
+                ? 'GitHub CLI 未就绪，无法留言'
+                : 'GitHub CLI not ready, commenting disabled'
               : isZh
               ? '输入给 CC 的留言或指令…（评论发出后不能撤回）'
               : 'Message or instructions for CC... (Cannot be undone)'
@@ -106,7 +131,7 @@ export function TaskCommentBox({ task, locale, onCommentSent }: TaskCommentBoxPr
           data-testid="comment-submit"
           size="sm"
           variant="primary"
-          disabled={!text.trim() || isMock || submitting}
+          disabled={!text.trim() || !canWrite || submitting}
           onClick={handleSubmit}
           icon={<Icon name="arrowRight" size={14} />}
         >
@@ -117,20 +142,20 @@ export function TaskCommentBox({ task, locale, onCommentSent }: TaskCommentBoxPr
       {result ? (
         <Notice
           tone={
-            result.outcome === 'confirmed'
+            result.status === 'confirmed'
               ? 'done'
-              : result.outcome === 'partial'
+              : result.status === 'partial'
               ? 'rework'
-              : result.outcome === 'unconfirmed'
+              : result.status === 'unconfirmed'
               ? 'unknown'
               : 'block'
           }
         >
           <span className="font-medium">
-            {result.outcome === 'confirmed' && (isZh ? '已确认：' : 'Confirmed: ')}
-            {result.outcome === 'partial' && (isZh ? '部分成功：' : 'Partial: ')}
-            {result.outcome === 'unconfirmed' && (isZh ? '已发出未确认：' : 'Unconfirmed: ')}
-            {result.outcome === 'failed' && (isZh ? '发送失败：' : 'Failed: ')}
+            {result.status === 'confirmed' && (isZh ? '已确认：' : 'Confirmed: ')}
+            {result.status === 'partial' && (isZh ? '部分成功：' : 'Partial: ')}
+            {result.status === 'unconfirmed' && (isZh ? '已发出未确认：' : 'Unconfirmed: ')}
+            {result.status === 'failed' && (isZh ? '发送失败：' : 'Failed: ')}
           </span>
           {result.message}
         </Notice>
