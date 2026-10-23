@@ -7,7 +7,7 @@ import {
   type ProviderCleanupSelectors,
 } from './providerCleaner';
 
-// Confirmation dialog structure is unverified on the real site; unknown or ambiguous dialogs must fail closed.
+// Real confirmation dialogs and menu-click effects are unverified; fill dedicated selectors after live inspection.
 export const SELECTORS: ProviderCleanupSelectors = {
   historyRoot: "aside:has(a[data-row-main-button][href^=\"/chat/\"])",
   historyLink: "a[data-row-main-button][href^=\"/chat/\"]",
@@ -18,10 +18,10 @@ export const SELECTORS: ProviderCleanupSelectors = {
   menu: "[role=\"menu\"]",
   deleteAction: "[role=\"menuitem\"][data-testid=\"delete-chat-trigger\"]",
   archiveAction: "[role=\"menuitem\"][data-testid=\"archive-chat-trigger\"]",
-  dialog: "[role=\"dialog\"],[role=\"alertdialog\"],mat-dialog-container",
-  dialogTitle: "h1,h2,h3,[role=\"heading\"],p,span,strong,[data-testid*=\"title\"]",
-  confirmDelete: "button,[role=\"button\"]",
-  confirmArchive: "button,[role=\"button\"]",
+  dialog: "",
+  dialogTitle: "",
+  confirmDelete: "",
+  confirmArchive: "",
   notFoundHeading: "",
   notFoundText: "",
 };
@@ -31,7 +31,8 @@ export const CLAUDE_CLEANER_CONFIG: ProviderCleanerConfig = {
   origin: 'https://claude.ai',
   conversationPath: /^\/chat\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
   selectors: SELECTORS,
-  verified: { delete: true, archive: true },
+  // Enable delete and archive separately only after verifying each site's real confirmation and readback.
+  verified: { delete: false, archive: false },
 };
 
 export function createClaudeCleaner(dependencies: ProviderCleanerDependencies): ConversationCleaner {

@@ -22,6 +22,8 @@ export interface ProviderCleanupSelectors {
   dialogTitle: string;
   confirmDelete: string;
   confirmArchive: string;
+  /** Positive indication that the complete history list is ready. */
+  listReady?: string;
   notFoundHeading: string;
   notFoundText: string;
 }
@@ -31,7 +33,7 @@ export interface ProviderCleanerConfig {
   origin: string;
   conversationPath: RegExp;
   selectors: ProviderCleanupSelectors;
-  /** Confirmed menu capabilities; unrecognized confirmations still fail closed. */
+  /** Enable each action only after real-site menu-click and confirmation verification. */
   verified: { delete: boolean; archive: boolean };
 }
 
@@ -72,9 +74,12 @@ export function buildProviderCleanerScript(
     '  const peers = ' + JSON.stringify(peers) + ';',
     '  const S = ' + JSON.stringify(config.selectors) + ';',
     '  const provider = ' + JSON.stringify(config.provider) + ';',
+    '  const verified = ' + JSON.stringify(config.verified) + ';',
     '  const pathPattern = new RegExp(' + JSON.stringify(config.conversationPath.source) + ', ' + JSON.stringify(config.conversationPath.flags) + ');',
     '  const fail = (note) => JSON.stringify({ ok: false, note });',
     '  if (location.origin !== origin || location.pathname !== path || !pathPattern.test(path)) return fail("Conversation origin or path mismatch");',
+    '  if ((action === "delete" || action === "confirm-delete") && !verified.delete) return fail("Deletion not verified");',
+    '  if ((action === "archive" || action === "confirm-archive") && !verified.archive) return fail("Archiving not verified");',
     '  const one = (root, css) => { if (!root || !css) return null; const matches = root.querySelectorAll(css); return matches.length === 1 ? matches[0] : null; };',
     '  const text = (node) => (node && (node.getAttribute("aria-label") || node.innerText || node.textContent || "") || "").replace(/\\s+/g, " ").trim();',
     '  const hrefPath = (node) => {',
@@ -113,10 +118,13 @@ export function buildProviderCleanerScript(
     '    const menu = one(document, S.menu);',
     '    if (!watch || !trigger || !menu || watch.invalid || watch.menu !== menu || watch.trigger !== trigger || watch.path !== path || Date.now() - watch.at > 15000) return null;',
     '    const owner = trigger.closest("[aria-haspopup=menu]") || trigger;',
-    '    const controls = trigger.getAttribute("aria-controls") || owner.getAttribute("aria-controls");',
-    '    if (controls && menu.id !== controls) return null;',
-    '    const labelledBy = menu.getAttribute("aria-labelledby");',
-    '    if (labelledBy && labelledBy !== trigger.id && labelledBy !== owner.id) return null;',
+    '    const controls = [trigger.getAttribute("aria-controls"), owner.getAttribute("aria-controls")].map((value) => (value || "").trim()).filter(Boolean);',
+    '    const menuId = (menu.id || "").trim();',
+    '    const labelledBy = (menu.getAttribute("aria-labelledby") || "").trim();',
+    '    const ownerIds = [trigger.id, owner.id].map((value) => (value || "").trim()).filter(Boolean);',
+    '    if (controls.length && (!menuId || !controls.every((value) => value === menuId))) return null;',
+    '    if (labelledBy && !ownerIds.includes(labelledBy)) return null;',
+    '    if (!(menuId && controls.includes(menuId)) && !(labelledBy && ownerIds.includes(labelledBy))) return null;',
     '    return menu;',
     '  };',
     '  const clearWatch = () => {',
@@ -192,6 +200,7 @@ export function buildProviderCleanerScript(
     '    const kind = action === "confirm-delete" ? "delete" : "archive";',
     '    const watch = window[watchKey];',
     '    const reject = (note) => { clearWatch(); return fail(note); };',
+    '    if (!S.dialog || !S.dialogTitle || !(kind === "delete" ? S.confirmDelete : S.confirmArchive)) return reject("Confirmation selectors not verified");',
     '    if (!watch || watch.origin !== origin || watch.path !== path || watch.action !== kind || !watch.title || Date.now() - watch.at > 15000 || watch.invalid) return reject("No fresh target-bound confirmation");',
     '    if (S.menu && document.querySelectorAll(S.menu).length !== 0) return reject("Options menu still open");',
     '    const dialogs = Array.from(document.querySelectorAll(S.dialog));',
@@ -212,9 +221,10 @@ export function buildProviderCleanerScript(
     '    if (list.paths.includes(path)) return fail("Target still listed");',
     '    const peersPresent = peers.length > 0 && peers.every((peer) => pathPattern.test(peer) && list.paths.includes(peer));',
     '    const heading = one(document, S.notFoundHeading);',
-    '    const targetNotFound = action === "check-delete" && !!S.notFoundText && text(heading).toLowerCase() === S.notFoundText.toLowerCase();',
-    '    const ok = peersPresent || targetNotFound;',
-    '    return JSON.stringify({ ok, note: ok ? "Target absent with positive evidence" : "Absence lacks target-specific or preserved-peer evidence" });',
+    '    const targetNotFound = !!S.notFoundText && text(heading).toLowerCase() === S.notFoundText.toLowerCase();',
+    '    const listReady = !!S.listReady && !!one(list.root, S.listReady);',
+    '    const ok = targetNotFound || (listReady && peersPresent);',
+    '    return JSON.stringify({ ok, note: ok ? "Target absent with positive evidence" : "Absence lacks target-specific not-found or unique list-ready evidence" });',
     '  }',
     '  return fail("Unsupported action");',
     '})()',
