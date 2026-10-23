@@ -16,6 +16,7 @@ export type PendingEditorAction =
   | { kind: 'create-flow' }
   | { kind: 'create-stage' }
   | { kind: 'add-stage'; flowId: string; stageId: string; index: number }
+  | { kind: 'move-stage'; flowId: string; from: number; to: number }
   | { kind: 'create-add-stage'; flowId: string; index: number }
   | { kind: 'remove-stage'; selection: StageSelection }
   | { kind: 'delete-flow'; flowId: string }
