@@ -255,6 +255,19 @@ mod tests {
     }
 
     #[test]
+    fn distinct_instances_have_independent_boot_and_sequence() {
+        let mut transport = BridgeState::default();
+        rotate_boot_if_needed(&mut transport, "chatgpt", "same-boot");
+        rotate_boot_if_needed(&mut transport, "chatgpt#2", "same-boot");
+        assert!(accept_seq(&mut transport, "chatgpt", "same-boot", 1));
+        assert!(accept_seq(&mut transport, "chatgpt#2", "same-boot", 1));
+        assert!(!accept_seq(&mut transport, "chatgpt#2", "same-boot", 1));
+        rotate_boot_if_needed(&mut transport, "chatgpt#2", "new-boot");
+        assert_eq!(transport.active_boot.get("chatgpt").map(String::as_str), Some("same-boot"));
+        assert_eq!(transport.active_boot.get("chatgpt#2").map(String::as_str), Some("new-boot"));
+    }
+
+    #[test]
     fn rejects_large_title_frame() {
         let title = format!("{TITLE_PREFIX}boot1|1|{}", "a".repeat(901));
         assert!(decode_title_frame(&title).is_err());

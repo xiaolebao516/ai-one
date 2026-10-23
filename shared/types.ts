@@ -2,6 +2,7 @@
 // Extended for Multi-AI Chat Desktop per docs/SPEC.md v1.1.
 
 export type AIProvider = 'chatgpt' | 'claude' | 'gemini' | 'grok' | 'meta';
+export type ProviderInstance = AIProvider | `${AIProvider}#${number}`;
 
 // Snapshot schema compatibility alias.
 export type AIProviderV2 = AIProvider;
@@ -63,8 +64,8 @@ export interface Conversation {
   createdAt: number;
 }
 
-export interface ProviderState {
-  provider: AIProvider;
+export interface ProviderState<Instance extends ProviderInstance = AIProvider> {
+  provider: Instance;
   webview: 'none' | 'creating' | 'loaded';
   dom: 'unknown' | 'ready';
   login: 'unknown' | 'logged_in' | 'logged_out' | 'blocked';
@@ -101,6 +102,12 @@ export interface BridgeMessage {
   bootId?: string;
   seq?: number;
   mid?: number;
+}
+
+// What the host emits on bridge://msg: the page engine itself always speaks the base provider
+// (BridgeMessage), but the host stamps the instance key of the page the frame came from.
+export interface BridgeInstanceMessage extends Omit<BridgeMessage, 'provider'> {
+  provider?: ProviderInstance;
 }
 
 export type ExtensionMessage = Omit<BridgeMessage, 'v' | 'bootId' | 'seq' | 'mid'>;

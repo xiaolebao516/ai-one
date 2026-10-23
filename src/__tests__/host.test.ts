@@ -82,6 +82,42 @@ describe('host snapshot bindings', () => {
     expect(String(invokeMock.mock.calls.at(-1)?.[1]?.js)).not.toContain('SEND_MESSAGE');
   });
 
+  it('routes extra instance keys to native while dispatching the base provider to the page engine', async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const bounds = { x: 0, y: 0, width: 420, height: 320 } as DOMRectReadOnly;
+    await host.provider.open('chatgpt#2', bounds);
+    expect(invokeMock).toHaveBeenLastCalledWith('provider_open', {
+      provider: 'chatgpt#2',
+      bounds: { x: 0, y: 0, width: 420, height: 320 },
+    });
+    await host.provider.send('chatgpt#2', 'hello');
+    expect(invokeMock).toHaveBeenLastCalledWith('provider_eval', {
+      provider: 'chatgpt#2',
+      js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
+        v: 1, action: 'SEND_MESSAGE', provider: 'chatgpt', payload: { text: 'hello' },
+      })});`,
+    });
+    await host.provider.fill('chatgpt#3', 'draft');
+    expect(invokeMock).toHaveBeenLastCalledWith('provider_eval', {
+      provider: 'chatgpt#3',
+      js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
+        v: 1, action: 'FILL_DRAFT', provider: 'chatgpt', payload: { text: 'draft' },
+      })});`,
+    });
+  });
+
+  it('isolates failed stop latches between provider instances', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('stop timed out'));
+    await expect(host.provider.stop('chatgpt#2')).rejects.toThrow('stop timed out');
+    await expect(host.provider.send('chatgpt#2', 'unsafe')).rejects.toThrow('reload provider page');
+    invokeMock.mockResolvedValueOnce(undefined);
+    await expect(host.provider.send('chatgpt#3', 'safe')).resolves.toBeUndefined();
+    invokeMock.mockResolvedValueOnce(undefined);
+    await host.provider.reload('chatgpt#2');
+    invokeMock.mockResolvedValueOnce(undefined);
+    await expect(host.provider.send('chatgpt#2', 'recovered')).resolves.toBeUndefined();
+  });
+
   it('starts a fresh provider conversation through the dedicated host command', async () => {
     invokeMock.mockResolvedValueOnce(undefined);
 
@@ -221,5 +257,76 @@ describe('host read-only GitHub bindings (#51)', () => {
     await expect(host.github.get('user')).rejects.toThrow(/^GitHub query failed/);
     invokeMock.mockRejectedValueOnce('gh query timed out; snapshot is incomplete.');
     await expect(host.github.get('user')).rejects.toThrow(new Error('gh query timed out; snapshot is incomplete.'));
+  });
+});
+
+describe('host connection states with provider instances (#143)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    listenMock.mockReset();
+  });
+
+  const state = (provider: string) => ({ provider, webview: 'loaded', dom: 'ready', login: 'logged_in' });
+
+  it('gives existing consumers only the first instance of each provider, and instance-aware code everything', async () => {
+    const all = [state('chatgpt'), state('chatgpt#2'), state('claude')];
+    invokeMock.mockResolvedValueOnce(all);
+    await expect(host.connections.get()).resolves.toEqual([state('chatgpt'), state('claude')]);
+    invokeMock.mockResolvedValueOnce(all);
+    await expect(host.connections.getAll()).resolves.toEqual(all);
+    expect(invokeMock).toHaveBeenLastCalledWith('connections_get');
+  });
+
+  it('forwards update events by the same rule', async () => {
+    let emit!: (event: { payload: unknown }) => void;
+    listenMock.mockImplementation(async (_name: string, handler: (event: { payload: unknown }) => void) => {
+      emit = handler;
+      return () => undefined;
+    });
+    const base = vi.fn();
+    const everything = vi.fn();
+    await host.connections.onUpdate(base);
+    const baseEmit = emit;
+    await host.connections.onUpdateAll(everything);
+    const allEmit = emit;
+
+    baseEmit({ payload: state('chatgpt') });
+    baseEmit({ payload: state('chatgpt#2') });
+    allEmit({ payload: state('chatgpt#2') });
+
+    expect(base).toHaveBeenCalledTimes(1);
+    expect(base).toHaveBeenCalledWith(state('chatgpt'));
+    expect(everything).toHaveBeenCalledWith(state('chatgpt#2'));
+  });
+});
+
+describe('host bridge title messages with provider instances (#143)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    listenMock.mockReset();
+  });
+
+  it('keeps the old subscription on first-instance messages and offers an instance-aware one', async () => {
+    let emit!: (event: { payload: unknown }) => void;
+    listenMock.mockImplementation(async (_name: string, handler: (event: { payload: unknown }) => void) => {
+      emit = handler;
+      return () => undefined;
+    });
+    const base = vi.fn();
+    const all = vi.fn();
+    await host.bridge.subscribeTitle(base);
+    const baseEmit = emit;
+    await host.bridge.subscribeTitleAll(all);
+    const allEmit = emit;
+
+    const message = (provider?: string) => ({ v: 1, action: 'STATUS', provider });
+    baseEmit({ payload: message('chatgpt') });
+    baseEmit({ payload: message('chatgpt#2') });
+    baseEmit({ payload: message(undefined) });
+    allEmit({ payload: message('chatgpt#2') });
+
+    expect(base).toHaveBeenCalledTimes(2);
+    expect(base).not.toHaveBeenCalledWith(message('chatgpt#2'));
+    expect(all).toHaveBeenCalledWith(message('chatgpt#2'));
   });
 });

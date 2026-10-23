@@ -1,4 +1,5 @@
-import type { AIProvider, BridgeMessage, ProviderState } from '../../shared/types';
+import type { AIProvider, BridgeInstanceMessage, BridgeMessage, ProviderInstance, ProviderState } from '../../shared/types';
+import { parseProviderInstance, providerInstanceBase } from '../../shared/providerInstances';
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -14,7 +15,7 @@ export interface StoredSnapshotInfo {
 }
 
 export interface NavBlockedPayload {
-  provider: string;
+  provider: ProviderInstance;
   host: string;
 }
 
@@ -28,7 +29,9 @@ export interface ProviderStopResult {
 
 // Fail closed at the host as well if the stop callback fails or the page engine is unavailable.
 // Only a successful explicit provider reload clears the host-side latch.
-const providersWithUnconfirmedStop = new Set<AIProvider>();
+const isBaseProviderState = (state: ProviderState<ProviderInstance>): state is ProviderState => parseProviderInstance(state.provider)?.n === 1;
+
+const providersWithUnconfirmedStop = new Set<ProviderInstance>();
 
 const STOP_ENGINE_JS =
   "window.__MAC_ENGINE__ && typeof window.__MAC_ENGINE__.stop === 'function' ? window.__MAC_ENGINE__.stop() : null";
@@ -71,6 +74,78 @@ function safeSnapshotId(snapshotId: string): string {
   return snapshotId;
 }
 
+// Existing callers and test mocks are typed with AIProvider. TypeScript infers Parameters<> (and so
+// vi.mocked() implementations) from the LAST overload, so listing AIProvider last keeps them compiling
+// unchanged while new code can pass an instance key such as 'chatgpt#2'.
+type InstanceMethod<Args extends unknown[], Result> = {
+  (provider: ProviderInstance, ...args: Args): Result;
+  (provider: AIProvider, ...args: Args): Result;
+};
+type InstanceAware<T> = {
+  [K in keyof T]: K extends 'open'
+    ? T[K]
+    : T[K] extends (provider: ProviderInstance, ...args: infer Args) => infer Result
+      ? InstanceMethod<Args, Result>
+      : T[K];
+};
+
+const providerApi = {
+  open: <Instance extends ProviderInstance>(provider: Instance, bounds: DOMRectReadOnly): Promise<ProviderState<Instance>> =>
+    invoke('provider_open', { provider, bounds: toBounds(bounds) }),
+  close: (provider: ProviderInstance): Promise<void> => invoke('provider_close', { provider }),
+  show: (provider: ProviderInstance, focus = false): Promise<void> => invoke('provider_show', { provider, focus }),
+  hide: (provider: ProviderInstance): Promise<void> => invoke('provider_hide', { provider }),
+  park: async (provider: ProviderInstance, bounds: DOMRectReadOnly): Promise<void> => {
+    await invoke('provider_set_bounds', { provider, bounds: toBounds(bounds) });
+    await invoke('provider_show', { provider, focus: false });
+  },
+  eval: (provider: ProviderInstance, js: string): Promise<void> => invoke('provider_eval', { provider, js }),
+  evalWithCallback: (provider: ProviderInstance, js: string): Promise<string> =>
+    invoke('provider_eval_with_callback', { provider, js }),
+  send: (provider: ProviderInstance, text: string): Promise<void> => {
+    if (providersWithUnconfirmedStop.has(provider)) {
+      return Promise.reject(new Error(`${provider} send rejected: stop failed; reload provider page before retrying`));
+    }
+    return invoke('provider_eval', {
+      provider,
+      js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
+        v: 1,
+        action: 'SEND_MESSAGE',
+        provider: providerInstanceBase(provider),
+        payload: { text },
+      })});`,
+    });
+  },
+  fill: (provider: ProviderInstance, text: string): Promise<void> =>
+    invoke('provider_eval', {
+      provider,
+      js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
+        v: 1,
+        action: 'FILL_DRAFT',
+        provider: providerInstanceBase(provider),
+        payload: { text },
+      })});`,
+    }),
+  stop: async (provider: ProviderInstance): Promise<ProviderStopResult> => {
+    // Mark unconfirmed before the async call; a timeout is not proof that stop succeeded.
+    providersWithUnconfirmedStop.add(provider);
+    const result = parseProviderStopResult(await invoke<string>('provider_eval_with_callback', { provider, js: STOP_ENGINE_JS }));
+    if (result.outcome === 'clicked') providersWithUnconfirmedStop.delete(provider);
+    return result;
+  },
+  openLogin: (provider: ProviderInstance): Promise<void> => invoke('provider_open_login', { provider }),
+  openLoginExternal: (provider: ProviderInstance): Promise<void> => invoke('provider_open_login_external', { provider }),
+  reload: async (provider: ProviderInstance): Promise<void> => {
+    await invoke('provider_reload', { provider });
+    providersWithUnconfirmedStop.delete(provider);
+  },
+  reconnect: async (provider: ProviderInstance): Promise<void> => {
+    await invoke('provider_reload', { provider, reconnect: true });
+    providersWithUnconfirmedStop.delete(provider);
+  },
+  newSession: (provider: ProviderInstance): Promise<void> => invoke('provider_new_session', { provider }),
+};
+
 export const host = {
   app: {
     isDesktop: (): boolean => isTauri(),
@@ -81,66 +156,11 @@ export const host = {
     const unlisten = await listen<NavBlockedPayload>('nav://blocked', (event) => handler(event.payload));
     return unlisten;
   },
-  provider: {
-    open: (provider: AIProvider, bounds: DOMRectReadOnly): Promise<ProviderState> =>
-      invoke('provider_open', { provider, bounds: toBounds(bounds) }),
-    close: (provider: AIProvider): Promise<void> => invoke('provider_close', { provider }),
-    show: (provider: AIProvider, focus = false): Promise<void> => invoke('provider_show', { provider, focus }),
-    hide: (provider: AIProvider): Promise<void> => invoke('provider_hide', { provider }),
-    park: async (provider: AIProvider, bounds: DOMRectReadOnly): Promise<void> => {
-      await invoke('provider_set_bounds', { provider, bounds: toBounds(bounds) });
-      await invoke('provider_show', { provider, focus: false });
-    },
-    eval: (provider: AIProvider, js: string): Promise<void> => invoke('provider_eval', { provider, js }),
-    evalWithCallback: (provider: AIProvider, js: string): Promise<string> =>
-      invoke('provider_eval_with_callback', { provider, js }),
-    send: (provider: AIProvider, text: string): Promise<void> => {
-      if (providersWithUnconfirmedStop.has(provider)) {
-        return Promise.reject(new Error(`${provider} send rejected: stop failed; reload provider page before retrying`));
-      }
-      return invoke('provider_eval', {
-        provider,
-        js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
-          v: 1,
-          action: 'SEND_MESSAGE',
-          provider,
-          payload: { text },
-        })});`,
-      });
-    },
-    fill: (provider: AIProvider, text: string): Promise<void> =>
-      invoke('provider_eval', {
-        provider,
-        js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
-          v: 1,
-          action: 'FILL_DRAFT',
-          provider,
-          payload: { text },
-        })});`,
-      }),
-    stop: async (provider: AIProvider): Promise<ProviderStopResult> => {
-      // Mark unconfirmed before the async call; a timeout is not proof that stop succeeded.
-      providersWithUnconfirmedStop.add(provider);
-      const result = parseProviderStopResult(await invoke<string>('provider_eval_with_callback', { provider, js: STOP_ENGINE_JS }));
-      if (result.outcome === 'clicked') providersWithUnconfirmedStop.delete(provider);
-      return result;
-    },
-    openLogin: (provider: AIProvider): Promise<void> => invoke('provider_open_login', { provider }),
-    openLoginExternal: (provider: AIProvider): Promise<void> => invoke('provider_open_login_external', { provider }),
-    reload: async (provider: AIProvider): Promise<void> => {
-      await invoke('provider_reload', { provider });
-      providersWithUnconfirmedStop.delete(provider);
-    },
-    reconnect: async (provider: AIProvider): Promise<void> => {
-      await invoke('provider_reload', { provider, reconnect: true });
-      providersWithUnconfirmedStop.delete(provider);
-    },
-    newSession: (provider: AIProvider): Promise<void> => invoke('provider_new_session', { provider }),
-  },
+  provider: providerApi as InstanceAware<typeof providerApi>,
   adapter: {
-    push: (provider: AIProvider, _cfg: unknown): Promise<void> => invoke('adapter_push', { provider }),
-    reportBroken: (provider: AIProvider): Promise<string> => invoke('report_broken', { provider }),
-    openIssue: (provider: AIProvider, body: string): Promise<void> =>
+    push: (provider: ProviderInstance, _cfg: unknown): Promise<void> => invoke('adapter_push', { provider }),
+    reportBroken: (provider: ProviderInstance): Promise<string> => invoke('report_broken', { provider }),
+    openIssue: (provider: ProviderInstance, body: string): Promise<void> =>
       invoke('open_adapter_issue', { provider, body }),
     onNotice: async (handler: (notice: AdapterNotice) => void): Promise<() => void> => {
       const unlisten = await listen<AdapterNotice>('adapter://notice', (event) => handler(event.payload));
@@ -148,19 +168,36 @@ export const host = {
     },
   },
   connections: {
-    get: (): Promise<ProviderState[]> => invoke('connections_get'),
+    // Existing consumers key states by AIProvider and never show extra instances: they get only the
+    // first instance of each provider. Instance-aware code uses getAll / onUpdateAll.
+    get: async (): Promise<ProviderState[]> => (await invoke<ProviderState<ProviderInstance>[]>('connections_get')).filter(isBaseProviderState),
+    getAll: (): Promise<ProviderState<ProviderInstance>[]> => invoke('connections_get'),
     onUpdate: async (handler: (state: ProviderState) => void): Promise<() => void> => {
-      const unlisten = await listen<ProviderState>('connections://update', (event) => handler(event.payload));
+      const unlisten = await listen<ProviderState<ProviderInstance>>('connections://update', (event) => {
+        if (isBaseProviderState(event.payload)) handler(event.payload);
+      });
+      return unlisten;
+    },
+    onUpdateAll: async (handler: (state: ProviderState<ProviderInstance>) => void): Promise<() => void> => {
+      const unlisten = await listen<ProviderState<ProviderInstance>>('connections://update', (event) => handler(event.payload));
       return unlisten;
     },
   },
   layout: {
-    setBounds: (provider: AIProvider, rect: DOMRectReadOnly): Promise<void> =>
+    setBounds: (provider: ProviderInstance, rect: DOMRectReadOnly): Promise<void> =>
       invoke('provider_set_bounds', { provider, bounds: toBounds(rect) }),
   },
   bridge: {
+    // Existing consumers only ever saw first-instance pages: they still get exactly those messages.
     subscribeTitle: async (handler: (message: BridgeMessage) => void): Promise<() => void> => {
-      const unlisten = await listen<BridgeMessage>('bridge://msg', (event) => handler(event.payload));
+      const unlisten = await listen<BridgeInstanceMessage>('bridge://msg', (event) => {
+        const provider = event.payload.provider;
+        if (provider === undefined || parseProviderInstance(provider)?.n === 1) handler(event.payload as BridgeMessage);
+      });
+      return unlisten;
+    },
+    subscribeTitleAll: async (handler: (message: BridgeInstanceMessage) => void): Promise<() => void> => {
+      const unlisten = await listen<BridgeInstanceMessage>('bridge://msg', (event) => handler(event.payload));
       return unlisten;
     },
     subscribe: async (handler: (message: BridgeMessage) => void): Promise<() => void> =>
