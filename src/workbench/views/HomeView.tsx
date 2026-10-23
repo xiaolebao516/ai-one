@@ -25,9 +25,11 @@ export interface HomeViewProps {
   /** What the Prodex channel looks like right now; the rest of the resources is not readable yet. */
   channel?: ChannelView;
   onShowResources?: () => void;
+  /** One-shot draft handoff from Chat; it is never submitted automatically. */
+  prefill?: { text: string; mode: 'grill' };
 }
 
-export function HomeView({ locale, tasks, health, channel, onOpenTask, onShowTasks, onShowResources }: HomeViewProps) {
+export function HomeView({ locale, tasks, health, channel, onOpenTask, onShowTasks, onShowResources, prefill }: HomeViewProps) {
   const text = workbenchText(locale);
   const lead = headline(tasks);
   const needsYou = needsYouTasks(tasks);
@@ -77,7 +79,7 @@ export function HomeView({ locale, tasks, health, channel, onOpenTask, onShowTas
         </p>
       </header>
 
-      <Composer locale={locale} />
+      <Composer locale={locale} prefill={prefill} />
 
       <div className="grid gap-v2-lg min-[1100px]:grid-cols-[minmax(0,1fr)_300px]">
         <div className="grid content-start gap-v2-lg">
@@ -194,10 +196,10 @@ function NeedsYouCard({ task, locale, onOpen }: { task: HudTask; locale: Locale;
  * The one input from the design (§0.2). Nothing here can dispatch yet, so the start button is
  * disabled with the reason written out instead of pretending (Spec #79 v2).
  */
-function Composer({ locale }: { locale: Locale }) {
+function Composer({ locale, prefill }: { locale: Locale; prefill?: { text: string; mode: 'grill' } }) {
   const text = workbenchText(locale);
-  const [mode, setMode] = useState<ComposerMode>('cc');
-  const [draft, setDraft] = useState('');
+  const [mode, setMode] = useState<ComposerMode>(prefill?.mode ?? 'cc');
+  const [draft, setDraft] = useState(prefill?.text ?? '');
   return (
     <Card className="grid gap-v2-sm">
       <label className="sr-only" htmlFor="workbench-composer">
