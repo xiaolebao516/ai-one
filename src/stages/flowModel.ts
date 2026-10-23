@@ -840,15 +840,34 @@ export function applyImport(
         return;
       }
       if (conflicts.length > 0) {
-        const sameName = conflicts.find((candidate) => normalizeName(candidate.name) === normalizeName(item.name));
-        const replaceByName = Boolean(sameName && !sameName.builtin && !item.builtin);
-        const target = sameName ?? conflicts[0];
-        if (replaceByName && sameName) {
-          const index = stages.findIndex((stage) => stage.id === sameName.id);
-          stages[index] = { ...item, id: sameName.id, builtin: false };
+        const sameNameCustom = conflicts.find((candidate) =>
+          !candidate.builtin && normalizeName(candidate.name) === normalizeName(item.name),
+        );
+        if (sameNameCustom) {
+          if (!item.builtin) {
+            const index = stages.findIndex((stage) => stage.id === sameNameCustom.id);
+            stages[index] = { ...item, id: sameNameCustom.id, builtin: false };
+          }
+          // Prefer the custom name match, but never overwrite a local custom stage with an imported built-in.
+          stageIdMap.set(item.id, sameNameCustom.id);
+          return;
         }
-        // Built-ins remain code-owned. Custom name-only conflicts are overwritten by the selected choice.
-        stageIdMap.set(item.id, target.id);
+
+        const sameNameBuiltin = conflicts.find((candidate) =>
+          candidate.builtin && normalizeName(candidate.name) === normalizeName(item.name),
+        );
+        if (sameNameBuiltin) {
+          // A different-ID built-in is code-owned. Keep the imported definition as an editable copy
+          // instead of silently redirecting its flow reference to the local built-in.
+          const newId = uniqueId(item.id + '-import', [...occupiedStageIds, ...occupiedFlowIds]);
+          const newName = uniqueName(item.name, stages);
+          stages.push({ ...item, id: newId, name: newName, builtin: false });
+          occupiedStageIds.add(newId);
+          stageIdMap.set(item.id, newId);
+          return;
+        }
+
+        stageIdMap.set(item.id, conflicts[0].id);
         return;
       }
       stages.push({ ...item, builtin: false });

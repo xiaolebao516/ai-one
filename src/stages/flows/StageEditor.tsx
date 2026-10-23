@@ -253,15 +253,14 @@ export function StageEditor({
         {effectiveReadOnly ? (
           <Button size="sm" onClick={onCopy} disabled={disabled}>{text.t('copyEdit')}</Button>
         ) : (
-          <>
-            <Button size="sm" variant="secondary" onClick={onCopy} disabled={disabled}>{text.t('duplicate')}</Button>
-            {selection.kind === 'flow' ? (
-              <Button size="sm" variant="ghost" onClick={onRemoveFromFlow} disabled={disabled || Boolean(selectedFlow?.builtin)}>{text.t('removeFromFlow')}</Button>
-            ) : (
-              <Button size="sm" variant="ghost" onClick={onRequestDelete} disabled={disabled || !canDelete} disabledReason={!canDelete && references.length > 0 ? text.t('cannotDeleteReferenced', { flows: references.join(', ') }) : undefined}>{text.t('deleteFromLibrary')}</Button>
-            )}
-          </>
+          <Button size="sm" variant="secondary" onClick={onCopy} disabled={disabled}>{text.t('duplicate')}</Button>
         )}
+        {selection.kind === 'flow' && selectedFlow && !selectedFlow.builtin ? (
+          <Button size="sm" variant="ghost" onClick={onRemoveFromFlow} disabled={disabled}>{text.t('removeFromFlow')}</Button>
+        ) : null}
+        {!effectiveReadOnly && selection.kind === 'library' ? (
+          <Button size="sm" variant="ghost" onClick={onRequestDelete} disabled={disabled || !canDelete} disabledReason={!canDelete && references.length > 0 ? text.t('cannotDeleteReferenced', { flows: references.join(', ') }) : undefined}>{text.t('deleteFromLibrary')}</Button>
+        ) : null}
       </div>
     </Card>
   );

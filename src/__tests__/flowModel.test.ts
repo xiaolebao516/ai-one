@@ -347,4 +347,86 @@ describe('flow import/export', () => {
     expect(merged.stages).toHaveLength(1);
     expect(merged.stages[0]).toMatchObject({ id: 'original', description: 'incoming definition', builtin: false });
   });
+
+  it('keeps an imported stage as a renamed custom stage when only a different-ID built-in has the same name', () => {
+    const current = validFile();
+    const builtin = current.stages[0];
+    const importedStage: StageDef = {
+      ...customStage('stage.imported', builtin.name),
+      participants: [{ resource: 'claude', role: 'worker' }],
+      endCondition: 'audit-pass',
+      onFail: 'escalate-to-user',
+      note: 'preserve imported note',
+    };
+    const incoming: FlowsFile = {
+      schemaVersion: FLOWS_SCHEMA_VERSION,
+      stages: [importedStage],
+      flows: [customFlow('flow.imported', 'Imported flow', importedStage.id)],
+    };
+
+    const merged = applyImport(current, incoming, 'overwrite');
+    const preserved = merged.stages.find((stage) => stage.id === 'stage.imported-import');
+
+    expect(preserved).toMatchObject({
+      id: 'stage.imported-import',
+      name: `${builtin.name} (2)`,
+      builtin: false,
+      participants: [{ resource: 'claude', role: 'worker' }],
+      endCondition: 'audit-pass',
+      onFail: 'escalate-to-user',
+      note: 'preserve imported note',
+    });
+    expect(merged.stages.find((stage) => stage.id === builtin.id)).toEqual(builtin);
+    expect(merged.flows.find((flow) => flow.id === 'flow.imported')?.stages).toEqual([
+      { stageId: 'stage.imported-import' },
+    ]);
+    expect(validateFile(merged)).toEqual([]);
+  });
+
+  it('prefers a same-name custom stage over an earlier built-in match when overwriting', () => {
+    const current = validFile();
+    const builtin = current.stages[0];
+    const existingCustom = {
+      ...customStage('stage.custom-same-name', builtin.name),
+      participants: [{ resource: 'old-resource', role: 'worker' }],
+      note: 'old note',
+    };
+    current.stages.push(existingCustom);
+    current.flows.push(customFlow('flow.local', 'Local flow', existingCustom.id));
+
+    const importedStage: StageDef = {
+      ...customStage('stage.imported', builtin.name),
+      participants: [{ resource: 'claude', role: 'worker' }],
+      endCondition: 'audit-pass',
+      onFail: 'escalate-to-user',
+      note: 'preserve imported note',
+    };
+    const incoming: FlowsFile = {
+      schemaVersion: FLOWS_SCHEMA_VERSION,
+      stages: [importedStage],
+      flows: [customFlow('flow.imported', 'Imported flow', importedStage.id)],
+    };
+
+    const merged = applyImport(current, incoming, 'overwrite');
+
+    expect(merged.stages.find((stage) => stage.id === builtin.id)).toEqual(builtin);
+    expect(merged.stages.find((stage) => stage.id === existingCustom.id)).toMatchObject({
+      id: existingCustom.id,
+      name: builtin.name,
+      builtin: false,
+      participants: [{ resource: 'claude', role: 'worker' }],
+      endCondition: 'audit-pass',
+      onFail: 'escalate-to-user',
+      note: 'preserve imported note',
+    });
+    expect(merged.flows.find((flow) => flow.id === 'flow.local')?.stages).toEqual([
+      { stageId: existingCustom.id },
+    ]);
+    expect(merged.flows.find((flow) => flow.id === 'flow.imported')?.stages).toEqual([
+      { stageId: existingCustom.id },
+    ]);
+    expect(merged.stages.some((stage) => stage.id === importedStage.id)).toBe(false);
+    expect(validateFile(merged)).toEqual([]);
+  });
+
 });
