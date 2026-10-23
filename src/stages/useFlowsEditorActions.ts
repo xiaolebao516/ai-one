@@ -6,9 +6,8 @@ import {
   moveStageRef,
   removeStageRef,
   type FlowsFile,
-  type StageDef,
 } from './flowModel';
-import { applyStageDraft, canOverrideStageDraft, resolveImportChoice, stageForSelection, type StageDraftScope, type StageSelection, type ImportResolution } from './flowEditor';
+import { applyStageDraft, canOverrideStageDraft, resolveImportChoice, stageForSelection, type StageDraftScope, type StageSelection } from './flowEditor';
 import { createFlowDefinition, createStageDefinition, replaceFlowStage, uniqueFlowEditorId } from './flows/flowEditorFactory';
 import type { FlowsEditorActionContext, FlowsEditorActionHandlers, PendingEditorAction } from './flows/flowEditorTypes';
 
@@ -302,6 +301,7 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
 
   const moveFlowStage = (from: number, to: number) => {
     if (!context.selectedFlow || context.mutationsDisabled) return;
+    if (from < 0 || to < 0 || from >= context.selectedFlow.stages.length || to >= context.selectedFlow.stages.length || from === to) return;
     requestAction({ kind: 'move-stage', flowId: context.selectedFlow.id, from, to });
   };
 
