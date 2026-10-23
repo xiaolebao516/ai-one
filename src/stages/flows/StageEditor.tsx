@@ -127,9 +127,11 @@ export function StageEditor({
       <div className="flex items-start justify-between gap-v2-sm">
         <div className="min-w-0">
           <h2 className="text-v2-body font-semibold text-v2-ink">{text.t('stageDetails')}: {label(stage, locale)}</h2>
-          <p className="mt-1 text-v2-meta text-v2-ink-3">
-            {stage.builtin ? text.t('copyBuiltinHint') : selection.kind === 'flow' ? text.t('flowDetails') + ': ' + label(selectedFlow ?? { id: '', name: '', stages: [], builtin: false }, locale) : text.t('stageLibrary')}
-          </p>
+          {!stage.builtin ? (
+            <p className="mt-1 text-v2-meta text-v2-ink-3">
+              {selection.kind === 'flow' ? text.t('flowDetails') + ': ' + label(selectedFlow ?? { id: '', name: '', stages: [], builtin: false }, locale) : text.t('stageLibrary')}
+            </p>
+          ) : null}
         </div>
         {stage.builtin ? <Badge>{text.t('builtin')}</Badge> : null}
       </div>
