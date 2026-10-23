@@ -128,7 +128,7 @@ function renderablePayload(payload: unknown): { content: string; truncated: bool
     const typed = payload as { text?: unknown; truncated?: unknown };
     return { content: typeof typed.text === 'string' ? typed.text : '', truncated: typed.truncated === true };
   }
-  return { content: JSON.stringify(payload ?? ''), truncated: false };
+  return { content: JSON.stringify(payload ?? '') ?? String(payload ?? ''), truncated: false };
 }
 
 function isProvider(value: string | undefined): value is AIProvider {
