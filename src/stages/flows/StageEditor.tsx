@@ -151,7 +151,7 @@ export function StageEditor({
       </div>
 
       <div className="grid gap-v2-xs">
-        <label className={fieldLabelClass()}>{text.t('collaboration')}</label>
+        <span className={fieldLabelClass()}>{text.t('collaboration')}</span>
         <Select id="flows-stage-collaboration" label={text.t('collaboration')} hideLabel options={collabOptions} value={draft.collaboration} disabled={effectiveReadOnly || disabled} onChange={(value) => change({ collaboration: value as StageDef['collaboration'] })} className="w-full" />
       </div>
 
@@ -181,7 +181,7 @@ export function StageEditor({
                 <input id={'flows-model-' + index} className={textInputClass()} value={participant.model ?? ''} disabled={effectiveReadOnly || disabled} onChange={(event: ChangeEvent<HTMLInputElement>) => updateParticipant(index, { model: event.target.value || undefined })} />
               </div>
               <div className="grid gap-1">
-                <label className={fieldLabelClass()} htmlFor={'flows-effort-' + index}>{text.t('effort')}</label>
+                <span className={fieldLabelClass()}>{text.t('effort')}</span>
                 <Select id={'flows-effort-' + index} label={text.t('effort')} hideLabel options={effortOptions} value={participant.effort ?? 'default'} disabled={effectiveReadOnly || disabled} onChange={(value) => updateParticipant(index, { effort: value as NonNullable<Participant['effort']> })} className="w-full" />
               </div>
             </div>
@@ -199,12 +199,12 @@ export function StageEditor({
       </section>
 
       <div className="grid gap-v2-xs">
-        <label className={fieldLabelClass()}>{text.t('endCondition')} <Badge>{text.t('ccReference')}</Badge></label>
+        <span className={fieldLabelClass()}>{text.t('endCondition')} <Badge>{text.t('ccReference')}</Badge></span>
         <Select id="flows-stage-end" label={text.t('endCondition')} hideLabel options={endOptions} value={draft.endCondition} disabled={effectiveReadOnly || disabled} onChange={(value) => change({ endCondition: value as StageDef['endCondition'] })} className="w-full" />
       </div>
 
       <div className="grid gap-v2-xs">
-        <label className={fieldLabelClass()}>{text.t('onFail')} <Badge>{text.t('ccReference')}</Badge></label>
+        <span className={fieldLabelClass()}>{text.t('onFail')} <Badge>{text.t('ccReference')}</Badge></span>
         <Select id="flows-stage-fail" label={text.t('onFail')} hideLabel options={failOptions} value={draft.onFail} disabled={effectiveReadOnly || disabled} onChange={(value) => change({ onFail: value as StageDef['onFail'] })} className="w-full" />
       </div>
 
