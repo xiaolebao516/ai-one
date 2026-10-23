@@ -356,7 +356,14 @@ describe('CoordinationSettingsView mounted interactive tests', () => {
     const failingQuarantineFs = {
       read: vi.fn().mockResolvedValue({
         status: 'ok',
-        text: '{ corrupt json content that fails schema and requires quarantine ...',
+        text: JSON.stringify({
+          schemaVersion: 999,
+          reworkLimit: 5,
+          onExceedLimit: 'ask_user',
+          onQuotaTight: 'ask_user',
+          onAuthExpired: 'ask_user',
+          aiPreferences: {},
+        }),
         backup: null,
       }),
       write: writeSpy,

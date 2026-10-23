@@ -240,7 +240,7 @@ pub async fn local_store_export(
 }
 
 fn safe_suggested_name(value: &str) -> String {
-    let leaf = value.rsplit(|character| character == '/' || character == '\\').next().unwrap_or("");
+    let leaf = value.rsplit(['/', '\\']).next().unwrap_or("");
     let leaf = leaf.trim();
     if leaf.is_empty() || leaf == "." || leaf == ".." {
         "export.json".to_string()

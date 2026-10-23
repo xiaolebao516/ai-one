@@ -363,10 +363,11 @@ export function injectCoordinationBrief(issueBody: string, settings: Coordinatio
 
 /**
  * Builds standard Task Issue markdown body with coordination brief injected.
+ * Takes explicit coordination settings or defaults to standard DEFAULT_COORDINATION_SETTINGS.
  */
 export function buildTaskIssueBody(
   description: string,
-  settings: CoordinationSettings = loadCoordinationSettings(),
+  settings: CoordinationSettings = DEFAULT_COORDINATION_SETTINGS,
 ): string {
   const base = [
     '## 任务与范围',
@@ -376,6 +377,18 @@ export function buildTaskIssueBody(
     '- [ ] 完成并经独立审计 PASS',
   ].join('\n');
   return injectCoordinationBrief(base, settings);
+}
+
+/**
+ * Builds standard Task Issue markdown body asynchronously using settings from the production LocalStoreFs.
+ * Accurately reads from the user's persisted coordination.json file.
+ */
+export async function buildTaskIssueBodyFromStore(
+  description: string,
+  fs: LocalStoreFs = getLocalStoreFs(),
+): Promise<string> {
+  const loaded = await loadCoordination(fs);
+  return buildTaskIssueBody(description, loaded.settings);
 }
 
 function defaultStorage(): StorageLike | undefined {

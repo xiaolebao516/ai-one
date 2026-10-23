@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   COORDINATION_SETTINGS_BACKUP_KEY,
   COORDINATION_SETTINGS_STORAGE_KEY,
   DEFAULT_COORDINATION_SETTINGS,
   buildTaskIssueBody,
+  buildTaskIssueBodyFromStore,
   injectCoordinationBrief,
   loadCoordination,
   loadCoordinationSettings,
@@ -337,6 +338,33 @@ describe('coordinationModel', () => {
       expect(body).toContain('## 协调简报\n- 返工上限：4 轮');
       expect(body).toContain('## 任务与范围\n实现某些特定能力');
       expect(body).toContain('## 交付 / 验收标准');
+    });
+
+    it('buildTaskIssueBodyFromStore reads from local store and reflects saved settings in issue body', async () => {
+      const customSettings: CoordinationSettings = {
+        schemaVersion: 1,
+        reworkLimit: 6,
+        onExceedLimit: 'consult_opus',
+        onQuotaTight: 'ask_user',
+        onAuthExpired: 'ask_user',
+        aiPreferences: { gpt: '核心实现', opus: '终审把关' },
+      };
+      const mockFs: LocalStoreFs = {
+        read: vi.fn().mockResolvedValue({
+          status: 'ok',
+          text: JSON.stringify(customSettings),
+          backup: null,
+        }),
+        write: vi.fn(),
+        quarantine: vi.fn(),
+        exportFile: vi.fn(),
+      };
+
+      const body = await buildTaskIssueBodyFromStore('实现 L3 协调设置', mockFs);
+      expect(body).toContain('## 协调简报\n- 返工上限：6 轮，先请 Opus 网页裁决，再问用户');
+      expect(body).toContain('GPT（核心实现）、Opus（终审把关）');
+      expect(body).toContain('## 任务与范围\n实现 L3 协调设置');
+      expect(mockFs.read).toHaveBeenCalledWith('coordination');
     });
   });
 
