@@ -76,6 +76,30 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
       return;
     }
 
+    if (action.kind === 'move-stage') {
+      const flow = source.flows.find((item) => item.id === action.flowId);
+      if (!flow || flow.builtin) return;
+      const nextFlow = moveStageRef(flow, action.from, action.to);
+      if (nextFlow === flow) return;
+      const next = { ...source, flows: source.flows.map((item) => item.id === flow.id ? nextFlow : item) };
+      context.flows.updateFile(() => next);
+      if (context.selection?.kind === 'flow' && context.selection.flowId === flow.id) {
+        const selectedIndex = context.selection.index;
+        const index = selectedIndex === action.from
+          ? action.to
+          : action.from < action.to && selectedIndex > action.from && selectedIndex <= action.to
+            ? selectedIndex - 1
+            : action.from > action.to && selectedIndex >= action.to && selectedIndex < action.from
+              ? selectedIndex + 1
+              : selectedIndex;
+        const nextSelection: StageSelection = { kind: 'flow', flowId: flow.id, index };
+        context.setSelection(nextSelection);
+        context.setDraft(stageForSelection(next, nextSelection));
+      }
+      context.setFeedback(undefined);
+      return;
+    }
+
     if (action.kind === 'create-add-stage') {
       const flow = source.flows.find((item) => item.id === action.flowId);
       if (!flow || flow.builtin) return;
@@ -277,24 +301,8 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
   };
 
   const moveFlowStage = (from: number, to: number) => {
-    if (!context.file || !context.selectedFlow || context.mutationsDisabled || context.selectedFlow.builtin) return;
-    const nextFlow = moveStageRef(context.selectedFlow, from, to);
-    if (nextFlow === context.selectedFlow) return;
-    const next = { ...context.file, flows: context.file.flows.map((flow) => flow.id === context.selectedFlow?.id ? nextFlow : flow) };
-    context.flows.updateFile(() => next);
-    if (context.selection?.kind === 'flow' && context.selection.flowId === context.selectedFlow.id) {
-      const index = context.selection.index === from
-        ? to
-        : from < to && context.selection.index > from && context.selection.index <= to
-          ? context.selection.index - 1
-          : from > to && context.selection.index >= to && context.selection.index < from
-            ? context.selection.index + 1
-            : context.selection.index;
-      const nextSelection: StageSelection = { kind: 'flow', flowId: context.selectedFlow.id, index };
-      context.setSelection(nextSelection);
-      context.setDraft(stageForSelection(next, nextSelection));
-    }
-    context.setFeedback(undefined);
+    if (!context.selectedFlow || context.mutationsDisabled) return;
+    requestAction({ kind: 'move-stage', flowId: context.selectedFlow.id, from, to });
   };
 
   const openInsert = (index: number) => {
