@@ -87,11 +87,15 @@ const MESSAGES: Record<GithubWriteCode, string> = {
   sub_issue_failed: 'Issue 已创建，但没能挂到父 Spec 下',
 };
 
+const PR_NOT_OPEN_MESSAGE = 'PR 不存在或当前不是开放状态，已拒绝';
+const LABEL_FAILED_MESSAGE = '评论已确认，但标签未能更新';
+const SUB_ISSUE_UNCONFIRMED_MESSAGE = 'Issue 已创建，但子 Issue 关系已发出，暂未确认；请先回读，不要重试';
+
 const ALLOWED_MESSAGES = new Set<string>([
   ...Object.values(MESSAGES),
-  'PR 不存在或当前不是开放状态，已拒绝',
-  '评论已确认，但标签未能更新',
-  'Issue 已创建，但子 Issue 关系已发出，暂未确认；请先回读，不要重试',
+  PR_NOT_OPEN_MESSAGE,
+  LABEL_FAILED_MESSAGE,
+  SUB_ISSUE_UNCONFIRMED_MESSAGE,
 ]);
 
 const STEP_NAMES = new Set<GithubWriteStep['step']>(['comment', 'label', 'create_issue', 'sub_issue']);
@@ -287,6 +291,37 @@ function normalizeResult(value: unknown): GithubWriteResult {
       && steps.some((step) => step.step === 'create_issue' && step.state === 'confirmed')
       && steps.some((step) => step.step === 'sub_issue' && step.state === 'failed')
     )
+  ) {
+    return unconfirmedResult();
+  }
+  // Fixed wordings carry a contract: an uncertain wording only travels with an unconfirmed total,
+  // "comment confirmed, label failed" only with a matching partial, and so on. Anything else is a
+  // contradiction and is reported as unconfirmed (never as a safe-to-retry failure).
+  const hasStep = (name: GithubWriteStep['step'], state: GithubWriteStep['state']) =>
+    steps.some((step) => step.step === name && step.state === state);
+  if (
+    (value.message === MESSAGES.unconfirmed || value.message === SUB_ISSUE_UNCONFIRMED_MESSAGE)
+    && value.status !== 'unconfirmed'
+  ) {
+    return unconfirmedResult();
+  }
+  if (
+    value.message === SUB_ISSUE_UNCONFIRMED_MESSAGE
+    && !(hasStep('create_issue', 'confirmed') && hasStep('sub_issue', 'unconfirmed'))
+  ) {
+    return unconfirmedResult();
+  }
+  if (
+    value.message === LABEL_FAILED_MESSAGE
+    && !(value.status === 'partial' && hasStep('comment', 'confirmed') && hasStep('label', 'failed'))
+  ) {
+    return unconfirmedResult();
+  }
+  if (value.message === PR_NOT_OPEN_MESSAGE && value.status !== 'failed') return unconfirmedResult();
+  if (
+    (value.code === 'head_mismatch' || value.code === 'pr_issue_mismatch' || value.code === 'invalid_input'
+      || value.code === 'not_allowed')
+    && value.status !== 'failed'
   ) {
     return unconfirmedResult();
   }

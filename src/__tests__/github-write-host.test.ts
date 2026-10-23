@@ -137,6 +137,18 @@ describe('host GitHub write bridge', () => {
         steps: [{ step: 'comment', state: 'confirmed' }, { step: 'label', state: 'skipped' }] },
       { status: 'partial', code: 'ok', message: okMessage, steps: [{ step: 'comment', state: 'confirmed' }] },
       { status: 'failed', code: 'ok', message: okMessage, steps: [] },
+      { status: 'failed', code: 'github_failed', message: '已发出，但没能确认；请先回读，不要重试', steps: [] },
+      { status: 'failed', code: 'github_failed', message: '评论已确认，但标签未能更新', steps: [] },
+      { status: 'partial', code: 'github_failed', message: '评论已确认，但标签未能更新',
+        steps: [{ step: 'comment', state: 'confirmed' }, { step: 'label', state: 'unconfirmed' }] },
+      { status: 'failed', code: 'github_failed',
+        message: 'Issue 已创建，但子 Issue 关系已发出，暂未确认；请先回读，不要重试',
+        steps: [{ step: 'create_issue', state: 'confirmed' }, { step: 'sub_issue', state: 'unconfirmed' }] },
+      { status: 'unconfirmed', code: 'timeout',
+        message: 'Issue 已创建，但子 Issue 关系已发出，暂未确认；请先回读，不要重试', steps: [] },
+      { status: 'partial', code: 'head_mismatch', message: 'HEAD 已更新，先刷新', steps: [] },
+      { status: 'unconfirmed', code: 'pr_issue_mismatch', message: '该 PR 与这个 Issue 没有关联，已拒绝', steps: [] },
+      { status: 'partial', code: 'github_failed', message: 'PR 不存在或当前不是开放状态，已拒绝', steps: [] },
       { status: 'failed', code: 'unconfirmed', message: '已发出，但没能确认；请先回读，不要重试', steps: [] },
       { status: 'partial', code: 'unconfirmed', message: '已发出，但没能确认；请先回读，不要重试',
         steps: [{ step: 'comment', state: 'confirmed' }, { step: 'label', state: 'failed' }] },
@@ -154,6 +166,26 @@ describe('host GitHub write bridge', () => {
       const result = await host.githubWrite.comment({ repo: 'owner/repo', issue: 12, text: 'hello' });
       expect(result.status).toBe('unconfirmed');
       expect(result.code).toBe('unconfirmed');
+    }
+  });
+
+  it('passes genuine partial / failed / unconfirmed shapes through unchanged', async () => {
+    const genuine = [
+      { status: 'partial', code: 'github_failed', message: '评论已确认，但标签未能更新',
+        steps: [{ step: 'comment', state: 'confirmed' }, { step: 'label', state: 'failed' }] },
+      { status: 'unconfirmed', code: 'timeout',
+        message: 'Issue 已创建，但子 Issue 关系已发出，暂未确认；请先回读，不要重试',
+        steps: [{ step: 'create_issue', state: 'confirmed' }, { step: 'sub_issue', state: 'unconfirmed' }] },
+      { status: 'failed', code: 'head_mismatch', message: 'HEAD 已更新，先刷新', steps: [], currentHead: sha },
+      { status: 'failed', code: 'pr_issue_mismatch', message: '该 PR 与这个 Issue 没有关联，已拒绝', steps: [] },
+      { status: 'failed', code: 'github_failed', message: 'PR 不存在或当前不是开放状态，已拒绝', steps: [] },
+      { status: 'unconfirmed', code: 'unconfirmed', message: '已发出，但没能确认；请先回读，不要重试',
+        steps: [{ step: 'comment', state: 'unconfirmed' }] },
+    ];
+    for (const value of genuine) {
+      invokeMock.mockResolvedValueOnce(value);
+      await expect(host.githubWrite.comment({ repo: 'owner/repo', issue: 12, text: 'hello' }))
+        .resolves.toEqual(value);
     }
   });
 
