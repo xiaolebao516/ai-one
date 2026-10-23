@@ -104,7 +104,7 @@ export function FlowStageList({
                 <span id="flows-current-title" className="text-v2-micro text-v2-ink-3">{text.t('flowName')}</span>
                 <input
                   id="flows-current-title-input"
-                  value={flow.name}
+                  value={locale.toLowerCase().startsWith('zh') ? flow.name : flow.nameEn ?? flow.name}
                   onChange={(event) => onFlowNameChange(event.target.value)}
                   disabled={disabled}
                   className="h-v2-control-md w-full min-w-0 rounded-v2-md border border-v2-line bg-v2-surface px-v2-sm text-v2-heading font-semibold text-v2-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-v2-primary"
