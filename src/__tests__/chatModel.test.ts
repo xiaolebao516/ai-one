@@ -5,6 +5,7 @@ import {
   buildForwardMessage,
   buildTaskPrefill,
   busyTargets,
+  classifyResponseContent,
   deriveCardState,
   deriveLoginState,
   insertMarkdownQuote,
@@ -69,8 +70,11 @@ describe('chat model login and card state', () => {
     expect(insertMarkdownQuote('', undefined, 'first\nsecond')).toBe('> first\n> second\n');
   });
 
-  it('exposes exactly the four chat presets and detects busy targets', () => {
+  it('exposes exactly the four chat presets, classifies response errors, and detects busy targets', () => {
     expect(CHAT_PRESET_IDS).toEqual(['free', 'debate', 'consult', 'deliberation']);
+    expect(classifyResponseContent('normal response')).toBe('completed');
+    expect(classifyResponseContent('[Error: provider unavailable]')).toBe('failed');
+    expect(classifyResponseContent('[Error: request timed out]')).toBe('timedOut');
     expect(busyTargets(['chatgpt', 'claude', 'chatgpt'], new Set<AIProvider>(['claude']))).toEqual(['claude']);
   });
 
