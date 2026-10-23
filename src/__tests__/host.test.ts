@@ -396,6 +396,42 @@ describe('host send with outbox draining (#143)', () => {
     await expect(host.provider.send('chatgpt#2', 'x', { drainOutbox: true })).rejects.toThrow(/unreadable outbox drain result/);
   });
 
+  it('refuses to dispatch once its expiry has passed (the host stops waiting after 5 s and cannot recall a queued script)', async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const js = await drainedScript(); // generated at t0; expires 2.5 s later
+      const dispatch = vi.fn();
+
+      // 1. The page only gets to run the script after the expiry.
+      now = 1_000_000 + 4_000;
+      expect(runInPage(js, { peekOutbox: () => [], ackBulk: () => undefined, dispatch })).toEqual({ sent: false, reason: 'expired' });
+
+      // 2. The expiry passes while the outbox is being drained.
+      now = 1_000_000 + 100;
+      let outbox = [{ mid: 1 }];
+      const slow = runInPage(js, {
+        peekOutbox: () => outbox,
+        ackBulk: (maxMid: number) => { outbox = outbox.filter((entry) => entry.mid > maxMid); now = 1_000_000 + 4_000; },
+        dispatch,
+      });
+      expect(slow).toEqual({ sent: false, reason: 'expired' });
+      expect(dispatch).not.toHaveBeenCalled();
+
+      // 3. Inside the window it still sends.
+      now = 1_000_000 + 100;
+      expect(runInPage(js, { peekOutbox: () => [], ackBulk: () => undefined, dispatch })).toEqual({ sent: true });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('rejects, reporting an unknown result, when the callback itself fails or times out', async () => {
+    invokeMock.mockRejectedValue(new Error('provider eval callback timed out'));
+    await expect(host.provider.send('chatgpt#2', 'x', { drainOutbox: true })).rejects.toThrow(/drain result unknown/);
+  });
+
   it('keeps the plain send unchanged when draining is not requested', async () => {
     invokeMock.mockResolvedValue(undefined);
     await host.provider.send('chatgpt#2', 'task C');

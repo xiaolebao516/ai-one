@@ -120,7 +120,15 @@ const providerApi = {
     if (!options?.drainOutbox) {
       return invoke('provider_eval', { provider, js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${message});` });
     }
-    const raw = await invoke<string>('provider_eval_with_callback', { provider, js: drainAndDispatchScript(message) });
+    // The host stops waiting for the callback after 5 s but cannot recall a script already queued in the
+    // page. The script therefore carries its own, shorter expiry and refuses to dispatch after it.
+    const expiresAt = Date.now() + DRAIN_SCRIPT_TTL_MS;
+    let raw: string;
+    try {
+      raw = await invoke<string>('provider_eval_with_callback', { provider, js: drainAndDispatchScript(message, expiresAt) });
+    } catch (error) {
+      throw new Error(`${provider} send rejected: outbox drain result unknown (${error instanceof Error ? error.message : String(error)}); the page will not dispatch after its expiry`);
+    }
     let result: unknown;
     try {
       result = JSON.parse(raw) as unknown;
@@ -164,14 +172,20 @@ const providerApi = {
 };
 
 // Runs in the provider page. Returns JSON {sent:true} after dispatching, or {sent:false, reason} without dispatching.
-function drainAndDispatchScript(message: string): string {
+// Shorter than the host's 5 s callback wait, so a script that only runs after the host gave up expires.
+const DRAIN_SCRIPT_TTL_MS = 2500;
+
+function drainAndDispatchScript(message: string, expiresAt: number): string {
   return `(() => {
+  const expiresAt = ${expiresAt};
   const b = window.__MAC_BRIDGE__;
   if (!b) return JSON.stringify({ sent: false, reason: 'no bridge' });
+  if (Date.now() > expiresAt) return JSON.stringify({ sent: false, reason: 'expired' });
   try {
     let lastMax = 0;
     let drained = false;
     for (let round = 0; round < 500; round++) {
+      if (Date.now() > expiresAt) return JSON.stringify({ sent: false, reason: 'expired' });
       let max = 0;
       for (const item of (b.peekOutbox() || [])) { if (item && typeof item.mid === 'number' && item.mid > max) max = item.mid; }
       if (max <= 0) { drained = true; break; }
@@ -183,6 +197,7 @@ function drainAndDispatchScript(message: string): string {
   } catch (e) {
     return JSON.stringify({ sent: false, reason: 'drain failed: ' + String(e && e.message || e) });
   }
+  if (Date.now() > expiresAt) return JSON.stringify({ sent: false, reason: 'expired' });
   b.dispatch(${message});
   return JSON.stringify({ sent: true });
 })()`;
