@@ -564,7 +564,8 @@ async fn post_comment_and_confirm<G: GhApi>(
     let comment = match gh.get(&read_path).await {
         Ok(comment) => comment,
         Err(error) => {
-            let code = code_for_error(gh, error).await;
+            // The comment POST already ran; a failed readback cannot prove it was not written.
+            let code = uncertain_write_code(error);
             return CommentOutcome::Unconfirmed(code);
         }
     };
@@ -1077,7 +1078,8 @@ async fn ensure_label_state<G: GhApi>(
             None => return LabelOutcome::Unconfirmed(GithubWriteCode::Unconfirmed),
         },
         Err(error) => {
-            let code = code_for_error(gh, error).await;
+            // The label write already ran; do not turn a failed readback into a no-login message.
+            let code = uncertain_write_code(error);
             return LabelOutcome::Unconfirmed(code);
         }
     };
@@ -1343,7 +1345,8 @@ async fn create_issue<G: GhApi>(gh: &G, args: &CreateIssueArgs) -> GithubWriteRe
     let issue = match gh.get(&path).await {
         Ok(value) => value,
         Err(error) => {
-            let code = code_for_error(gh, error).await;
+            // The Issue POST already ran; a failed readback must remain unconfirmed.
+            let code = uncertain_write_code(error);
             let mut steps = vec![step(
                 GithubWriteStepName::CreateIssue,
                 GithubWriteStepState::Unconfirmed,
@@ -1462,7 +1465,8 @@ async fn create_issue<G: GhApi>(gh: &G, args: &CreateIssueArgs) -> GithubWriteRe
                 }
             },
             Err(error) => {
-                let code = code_for_error(gh, error).await;
+                // The sub-issue POST already ran; a failed readback cannot prove it was not applied.
+                let code = uncertain_write_code(error);
                 confirmed.status = GithubWriteState::Unconfirmed;
                 confirmed.code = code;
                 confirmed.message = "Issue 已创建，但子 Issue 关系已发出，暂未确认；请先回读，不要重试".to_string();
@@ -1625,6 +1629,7 @@ mod tests {
         calls: Mutex<Vec<String>>,
         responses: Mutex<VecDeque<Result<Value, GhError>>>,
         auth_result: Result<bool, GhError>,
+        auth_results: Mutex<VecDeque<Result<bool, GhError>>>,
     }
 
     impl FakeGh {
@@ -1633,6 +1638,7 @@ mod tests {
                 calls: Mutex::new(Vec::new()),
                 responses: Mutex::new(responses.into()),
                 auth_result: Ok(true),
+                auth_results: Mutex::new(VecDeque::new()),
             }
         }
 
@@ -1641,6 +1647,19 @@ mod tests {
                 calls: Mutex::new(Vec::new()),
                 responses: Mutex::new(responses.into()),
                 auth_result,
+                auth_results: Mutex::new(VecDeque::new()),
+            }
+        }
+
+        fn with_auth_sequence(
+            responses: Vec<Result<Value, GhError>>,
+            auth_results: Vec<Result<bool, GhError>>,
+        ) -> Self {
+            Self {
+                calls: Mutex::new(Vec::new()),
+                responses: Mutex::new(responses.into()),
+                auth_result: Ok(true),
+                auth_results: Mutex::new(auth_results.into()),
             }
         }
 
@@ -1686,7 +1705,7 @@ mod tests {
         fn auth_status<'a>(&'a self) -> GhFuture<'a, bool> {
             Box::pin(async move {
                 self.calls.lock().unwrap().push("AUTH".to_string());
-                self.auth_result
+                self.auth_results.lock().unwrap().pop_front().unwrap_or(self.auth_result)
             })
         }
     }
@@ -1970,6 +1989,22 @@ mod tests {
         let result = comment(&gh, &valid_comment_args("hello")).await;
         assert_eq!(result.status, GithubWriteState::Unconfirmed);
         assert_eq!(result.steps[0].state, GithubWriteStepState::Unconfirmed);
+        assert_eq!(gh.write_calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn post_write_readback_failure_never_masquerades_as_no_login() {
+        let gh = FakeGh::with_auth_sequence(
+            vec![
+                Ok(comment_post(79)),
+                Err(GhError::Failed),
+            ],
+            vec![Ok(true), Ok(false)],
+        );
+        let result = comment(&gh, &valid_comment_args("hello")).await;
+        assert_eq!(result.status, GithubWriteState::Unconfirmed);
+        assert_eq!(result.code, GithubWriteCode::Unconfirmed);
+        assert_eq!(result.message, fixed_message(GithubWriteCode::Unconfirmed));
         assert_eq!(gh.write_calls().len(), 1);
     }
 
