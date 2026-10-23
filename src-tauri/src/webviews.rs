@@ -85,16 +85,20 @@ const PERMISSION_SHIM_JS: &str = r#"(function () {
   } catch (e) {}
 })();"#;
 
+fn base_provider(provider: &str) -> &str {
+    provider.split('#').next().unwrap_or(provider)
+}
+
 fn provider_uses_permission_shim(provider: &str) -> bool {
-    provider != "grok"
+    base_provider(provider) != "grok"
 }
 
 fn provider_uses_document_start_bridge(provider: &str) -> bool {
-    provider != "grok"
+    base_provider(provider) != "grok"
 }
 
 fn grok_app_title_ready(provider: &str, title: &str) -> bool {
-    if provider != "grok" {
+    if base_provider(provider) != "grok" {
         return false;
     }
     let normalized = title.trim().to_lowercase();
@@ -107,7 +111,7 @@ fn grok_bridge_install_ready(provider: &str, title: &str, url: &tauri::Url) -> b
 }
 
 fn grok_challenge_title_active(provider: &str, title: &str) -> bool {
-    if provider != "grok" {
+    if base_provider(provider) != "grok" {
         return false;
     }
     let normalized = title.trim().to_lowercase();
@@ -168,7 +172,7 @@ fn set_provider_challenge_blocked(app: &AppHandle, provider: &str) {
 
 fn clear_provider_challenge_blocked(app: &AppHandle, provider: &str) {
     let mut state = current_state(provider);
-    if provider != "grok" || state.login != "blocked" {
+    if base_provider(provider) != "grok" || state.login != "blocked" {
         return;
     }
     state.dom = "unknown".into();
@@ -180,18 +184,20 @@ fn clear_provider_challenge_blocked(app: &AppHandle, provider: &str) {
 }
 
 fn gemini_sorry_navigation_active(provider: &str, url: &tauri::Url) -> bool {
-    provider == "gemini"
+    base_provider(provider) == "gemini"
         && url.scheme() == "https"
         && url.host_str() == Some("www.google.com")
         && (url.path() == "/sorry" || url.path().starts_with("/sorry/"))
 }
 
 fn challenge_auxiliary_navigation_allowed(provider: &str, url: &tauri::Url) -> bool {
-    provider == "grok" && url.scheme() == "about" && matches!(url.path(), "blank" | "srcdoc")
+    base_provider(provider) == "grok"
+        && url.scheme() == "about"
+        && matches!(url.path(), "blank" | "srcdoc")
 }
 
 fn grok_external_auth_handoff_needs_app_return(provider: &str, url: &tauri::Url) -> bool {
-    provider == "grok"
+    base_provider(provider) == "grok"
         && url.scheme() == "https"
         && url.host_str() == Some("auth.x.ai")
         && url.port().is_none()
@@ -319,7 +325,7 @@ enum GrokBridgeHostAction {
 }
 
 fn prepare_grok_navigation(provider: &str) -> Result<u64, String> {
-    if provider != "grok" {
+    if base_provider(provider) != "grok" {
         return Ok(0);
     }
     let mut guard = runtime()
@@ -372,7 +378,9 @@ fn insert_grok_navigation_locked(
 }
 
 fn grok_auth_popup_may_complete_login(provider: &str, url: &tauri::Url) -> bool {
-    if provider != "grok" || !adapters::url_allowed_for_sso(provider, url).unwrap_or(false) {
+    if base_provider(provider) != "grok"
+        || !adapters::url_allowed_for_sso(provider, url).unwrap_or(false)
+    {
         return false;
     }
     !url.host_str().is_some_and(|host| {
@@ -386,7 +394,7 @@ fn grok_popup_recovery_needed(
     current_epoch: u64,
     navigation_pending: bool,
 ) -> bool {
-    state.provider == "grok"
+    base_provider(state.provider.as_str()) == "grok"
         && state.webview == "loaded"
         && state.dom == "unknown"
         && state.login == "blocked"
@@ -421,7 +429,7 @@ fn prepare_grok_popup_recovery(provider: &str, observed_epoch: u64) -> Option<u6
 }
 
 fn prepare_grok_external_auth_return(provider: &str, observed_epoch: u64) -> Option<u64> {
-    if provider != "grok" || observed_epoch == 0 {
+    if base_provider(provider) != "grok" || observed_epoch == 0 {
         return None;
     }
     let Ok(mut guard) = runtime().lock() else {
@@ -444,7 +452,7 @@ fn grok_external_auth_return_is_current(
     observed_epoch: u64,
     prepared_epoch: u64,
 ) -> bool {
-    provider == "grok"
+    base_provider(provider) == "grok"
         && observed_epoch != 0
         && prepared_epoch != 0
         && runtime().lock().ok().is_some_and(|guard| {
@@ -523,7 +531,7 @@ fn grok_popup_recovery_claim_is_current(provider: &str, prepared_epoch: u64) -> 
 }
 
 fn confirm_grok_page_load(provider: &str) -> u64 {
-    if provider != "grok" {
+    if base_provider(provider) != "grok" {
         return 0;
     }
     let Ok(mut guard) = runtime().lock() else {
@@ -550,7 +558,7 @@ fn cancel_grok_navigation_owned(
     prepared_epoch: u64,
     expected_owners: &[GrokNavigationOwner],
 ) {
-    if provider != "grok" || prepared_epoch == 0 {
+    if base_provider(provider) != "grok" || prepared_epoch == 0 {
         return;
     }
     let Ok(mut guard) = runtime().lock() else {
@@ -660,7 +668,7 @@ fn schedule_grok_navigation_start_lease(
     prepared_epoch: u64,
     owner: GrokNavigationOwner,
 ) {
-    if provider != "grok" || prepared_epoch == 0 {
+    if base_provider(provider) != "grok" || prepared_epoch == 0 {
         return;
     }
     let provider = provider.to_string();
@@ -671,7 +679,7 @@ fn schedule_grok_navigation_start_lease(
 }
 
 fn retire_grok_document(provider: &str) {
-    if provider != "grok" {
+    if base_provider(provider) != "grok" {
         return;
     }
     let Ok(mut guard) = runtime().lock() else {
@@ -688,7 +696,7 @@ fn retire_grok_document(provider: &str) {
 }
 
 fn adopt_grok_bridge_boot(provider: &str, observed_epoch: u64, boot_id: &str) -> bool {
-    if provider != "grok" || observed_epoch == 0 || boot_id.is_empty() {
+    if base_provider(provider) != "grok" || observed_epoch == 0 || boot_id.is_empty() {
         return false;
     }
     let Ok(mut guard) = runtime().lock() else {
@@ -707,7 +715,7 @@ fn adopt_grok_bridge_boot(provider: &str, observed_epoch: u64, boot_id: &str) ->
 }
 
 fn grok_bridge_result_is_current(provider: &str, observed_epoch: u64) -> bool {
-    provider == "grok"
+    base_provider(provider) == "grok"
         && observed_epoch != 0
         && runtime().lock().ok().is_some_and(|guard| {
             guard.grok_document_epoch.get(provider).copied() == Some(observed_epoch)
@@ -716,7 +724,7 @@ fn grok_bridge_result_is_current(provider: &str, observed_epoch: u64) -> bool {
 }
 
 fn grok_bridge_boot_is_current(provider: &str, boot_id: Option<&str>) -> bool {
-    if provider != "grok" {
+    if base_provider(provider) != "grok" {
         return true;
     }
     let Some(boot_id) = boot_id else {
@@ -744,7 +752,7 @@ fn current_grok_document_epoch(provider: &str) -> u64 {
 }
 
 fn set_grok_app_title_signal(provider: &str, observed_epoch: u64, active: bool) {
-    if provider != "grok" {
+    if base_provider(provider) != "grok" {
         return;
     }
     if let Ok(mut guard) = runtime().lock() {
@@ -759,7 +767,7 @@ fn set_grok_app_title_signal(provider: &str, observed_epoch: u64, active: bool) 
 }
 
 fn grok_app_title_signal_is_current(provider: &str, observed_epoch: u64) -> bool {
-    provider == "grok"
+    base_provider(provider) == "grok"
         && observed_epoch != 0
         && runtime().lock().ok().is_some_and(|guard| {
             guard.grok_app_title_epoch.get(provider).copied() == Some(observed_epoch)
@@ -767,7 +775,9 @@ fn grok_app_title_signal_is_current(provider: &str, observed_epoch: u64) -> bool
 }
 
 fn should_drive_grok_bridge(state: &ProviderState) -> bool {
-    state.provider == "grok" && state.webview == "loaded" && state.dom != "ready"
+    base_provider(state.provider.as_str()) == "grok"
+        && state.webview == "loaded"
+        && state.dom != "ready"
 }
 
 fn should_drive_grok_bridge_from_background(
@@ -781,11 +791,11 @@ fn generic_staleness_dispatch_allowed(
     state: &ProviderState,
     app_title_signal_is_current: bool,
 ) -> bool {
-    state.provider != "grok" || app_title_signal_is_current
+    base_provider(state.provider.as_str()) != "grok" || app_title_signal_is_current
 }
 
 fn grok_reconnect_allowed(state: &ProviderState, now_ms: u64) -> bool {
-    state.provider == "grok"
+    base_provider(state.provider.as_str()) == "grok"
         && state.webview == "loaded"
         && state.dom == "unknown"
         && matches!(state.login.as_str(), "unknown" | "logged_in")
@@ -818,7 +828,7 @@ fn provider_document_allows_generic_eval(
     if !url_matches_app {
         return false;
     }
-    if provider != "grok" {
+    if base_provider(provider) != "grok" {
         return true;
     }
     let Some(state) = state else {
@@ -836,7 +846,7 @@ fn provider_state_allows_control_eval(state: &ProviderState) -> bool {
 }
 
 fn grok_bridge_drive_allowed(state: &ProviderState) -> bool {
-    state.provider == "grok"
+    base_provider(state.provider.as_str()) == "grok"
         && matches!(state.webview.as_str(), "creating" | "loaded")
         && state.dom != "ready"
 }
@@ -1059,11 +1069,12 @@ pub async fn provider_open(
     ensure_control_webview(&webview)?;
     let (position, size) = physical_bounds(&bounds)?;
     let adapter = adapters::get_adapter(&provider)?;
+    let (base, _) = adapters::parse_provider_instance(&provider)?;
     // Serialize provider creation with standby changes. Otherwise settings_set could select this
     // provider as standby after the first active check but before add_child registers the WebView.
     let _lifecycle_guard = settings::lock_provider_lifecycle()?;
-    settings::ensure_provider_active_locked(&app, &provider)?;
-    let label = provider_label(&provider);
+    settings::ensure_provider_active_locked(&app, base)?;
+    let label = provider_label(&provider)?;
     if let Some(webview) = app.get_webview(&label) {
         webview.show().map_err(|error| error.to_string())?;
         set_webview_bounds(&webview, position, size)?;
@@ -1083,7 +1094,7 @@ pub async fn provider_open(
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?;
-    let profile_dir = app_data.join("webviews").join(&provider);
+    let profile_dir = app_data.join("webviews").join(base);
     std::fs::create_dir_all(&profile_dir).map_err(|error| error.to_string())?;
     let url = adapter
         .urls
@@ -1093,12 +1104,12 @@ pub async fn provider_open(
 
     let init_script = format!(
         "window.__MAC_PROVIDER__ = {};\nwindow.__MAC_APP_HOSTS__ = {};\n{}",
-        serde_json::to_string(&provider).map_err(|error| error.to_string())?,
+        serde_json::to_string(base).map_err(|error| error.to_string())?,
         serde_json::to_string(&adapters::app_hosts_for_provider(&provider)?)
             .map_err(|error| error.to_string())?,
         BOOTSTRAP_JS
     );
-    let delayed_grok_script = if provider == "grok" {
+    let delayed_grok_script = if base_provider(&provider) == "grok" {
         Some(delayed_grok_bridge_script(&provider)?)
     } else {
         None
@@ -1187,13 +1198,13 @@ pub async fn provider_open(
         .on_page_load(move |webview, payload| {
             match payload.event() {
                 PageLoadEvent::Started => {
-                    if load_provider == "grok" {
+                    if base_provider(load_provider.as_str()) == "grok" {
                         confirm_grok_page_load(&load_provider);
                     }
                     reset_bridge_state(&load_app, &load_provider);
                 }
                 PageLoadEvent::Finished => {
-                    if load_provider != "grok" {
+                    if base_provider(load_provider.as_str()) != "grok" {
                         return;
                     }
                     let Some(script) = load_delayed_grok_script.as_deref() else {
@@ -1360,7 +1371,7 @@ pub async fn provider_close(
 }
 
 fn close_provider(app: &AppHandle, provider: &str) -> Result<(), String> {
-    let label = provider_label(provider);
+    let label = provider_label(provider)?;
     retire_grok_document(provider);
     if let Some(webview) = app.get_webview(&label) {
         webview.close().map_err(|error| error.to_string())?;
@@ -1384,11 +1395,17 @@ fn close_provider(app: &AppHandle, provider: &str) -> Result<(), String> {
 }
 
 pub(crate) fn close_standby_provider(app: &AppHandle, provider: &str) -> Result<(), String> {
-    let has_webview = app.get_webview(&provider_label(provider)).is_some();
-    if !has_webview && current_state(provider).webview == "none" {
-        return Ok(());
+    let mut instances = vec![provider.to_string()];
+    for n in 2..=adapters::MAX_EXTRA_PROVIDER_INSTANCES + 1 {
+        instances.push(format!("{provider}#{n}"));
     }
-    close_provider(app, provider)
+    for instance in instances {
+        let has_webview = app.get_webview(&provider_label(&instance)?).is_some();
+        if has_webview || current_state(&instance).webview != "none" {
+            close_provider(app, &instance)?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1399,8 +1416,8 @@ pub async fn provider_show(
     focus: Option<bool>,
 ) -> Result<(), String> {
     ensure_control_webview(&webview)?;
-    settings::ensure_provider_active(&app, &provider)?;
-    let label = provider_label(&provider);
+    settings::ensure_provider_active(&app, adapters::parse_provider_instance(&provider)?.0)?;
+    let label = provider_label(&provider)?;
     let webview = app
         .get_webview(&label)
         .ok_or_else(|| format!("webview not found: {label}"))?;
@@ -1418,7 +1435,7 @@ pub async fn provider_hide(
     provider: String,
 ) -> Result<(), String> {
     ensure_control_webview(&webview)?;
-    let label = provider_label(&provider);
+    let label = provider_label(&provider)?;
     let webview = app
         .get_webview(&label)
         .ok_or_else(|| format!("webview not found: {label}"))?;
@@ -1433,9 +1450,9 @@ pub async fn provider_set_bounds(
     bounds: Bounds,
 ) -> Result<(), String> {
     ensure_control_webview(&webview)?;
-    settings::ensure_provider_active(&app, &provider)?;
+    settings::ensure_provider_active(&app, adapters::parse_provider_instance(&provider)?.0)?;
     let (position, size) = physical_bounds(&bounds)?;
-    let label = provider_label(&provider);
+    let label = provider_label(&provider)?;
     let webview = app
         .get_webview(&label)
         .ok_or_else(|| format!("webview not found: {label}"))?;
@@ -1450,7 +1467,7 @@ pub async fn provider_eval(
     js: String,
 ) -> Result<(), String> {
     ensure_control_webview(&webview)?;
-    settings::ensure_provider_active(&app, &provider)?;
+    settings::ensure_provider_active(&app, adapters::parse_provider_instance(&provider)?.0)?;
     ensure_provider_control_eval_allowed(&provider)?;
     eval_provider(&app, &provider, &js)
 }
@@ -1471,7 +1488,7 @@ pub(crate) async fn eval_provider_with_callback_from_control(
     provider: &str,
     js: &str,
 ) -> Result<String, String> {
-    settings::ensure_provider_active(app, provider)?;
+    settings::ensure_provider_active(app, adapters::parse_provider_instance(provider)?.0)?;
     ensure_provider_control_eval_allowed(provider)?;
     eval_provider_with_callback(app, provider, js).await
 }
@@ -1508,8 +1525,8 @@ pub async fn provider_open_login(
 ) -> Result<(), String> {
     ensure_control_webview(&webview)?;
     let adapter = adapters::get_adapter(&provider)?;
-    settings::ensure_provider_active(&app, &provider)?;
-    if app.get_webview(&provider_label(&provider)).is_none() {
+    settings::ensure_provider_active(&app, adapters::parse_provider_instance(&provider)?.0)?;
+    if app.get_webview(&provider_label(&provider)?).is_none() {
         let bounds = Bounds {
             x: 24.0,
             y: 24.0,
@@ -1613,7 +1630,7 @@ pub async fn provider_reload(
     reconnect: Option<bool>,
 ) -> Result<(), String> {
     ensure_control_webview(&webview)?;
-    settings::ensure_provider_active(&app, &provider)?;
+    settings::ensure_provider_active(&app, adapters::parse_provider_instance(&provider)?.0)?;
     if reconnect.unwrap_or(false) {
         let state = current_state(&provider);
         if !grok_reconnect_allowed(&state, now_ms()) {
@@ -1655,8 +1672,8 @@ pub async fn provider_new_session(
     provider: String,
 ) -> Result<(), String> {
     ensure_control_webview(&webview)?;
-    settings::ensure_provider_active(&app, &provider)?;
-    if app.get_webview(&provider_label(&provider)).is_none() {
+    settings::ensure_provider_active(&app, adapters::parse_provider_instance(&provider)?.0)?;
+    if app.get_webview(&provider_label(&provider)?).is_none() {
         return Err(format!("provider webview is not open: {provider}"));
     }
     let adapter = adapters::get_adapter(&provider)?;
@@ -1727,6 +1744,16 @@ pub async fn connections_get(webview: tauri::Webview) -> Result<Vec<ProviderStat
             state
         }));
     }
+    let mut extra_states = guard
+        .states
+        .values()
+        .filter(|state| {
+            adapters::parse_provider_instance(&state.provider).is_ok_and(|(_, n)| n > 1)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    extra_states.sort_by(|a, b| a.provider.cmp(&b.provider));
+    states.extend(extra_states);
     Ok(states)
 }
 
@@ -1824,16 +1851,17 @@ fn bridge_resets_on_boot_rotation(
 
 pub(crate) fn push_engine_and_adapter(app: &AppHandle, provider: &str) -> Result<(), String> {
     let adapter = adapters::get_adapter(provider)?;
+    let base = adapters::parse_provider_instance(provider)?.0;
     let dispatch_adapter = serde_json::json!({
         "v": 1,
         "action": "ADAPTER_UPDATE",
-        "provider": provider,
+        "provider": base,
         "payload": adapter
     });
     let dispatch_check = serde_json::json!({
         "v": 1,
         "action": "CHECK_STATUS",
-        "provider": provider
+        "provider": base
     });
     let js = format!(
         "{engine}\nwindow.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch({adapter_msg});\nwindow.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch({check_msg});",
@@ -1846,23 +1874,24 @@ pub(crate) fn push_engine_and_adapter(app: &AppHandle, provider: &str) -> Result
 
 fn delayed_grok_bridge_script(provider: &str) -> Result<String, String> {
     let adapter = adapters::get_adapter(provider)?;
+    let base = adapters::parse_provider_instance(provider)?.0;
     let challenge_signals = serde_json::from_str::<serde_json::Value>(CHALLENGE_SIGNALS_JSON)
         .map_err(|error| format!("invalid shared challenge signals: {error}"))?;
     let challenge_signals_json =
         serde_json::to_string(&challenge_signals).map_err(|error| error.to_string())?;
-    let provider_json = serde_json::to_string(provider).map_err(|error| error.to_string())?;
+    let provider_json = serde_json::to_string(base).map_err(|error| error.to_string())?;
     let app_hosts_json = serde_json::to_string(&adapters::app_hosts_for_provider(provider)?)
         .map_err(|error| error.to_string())?;
     let dispatch_adapter = serde_json::json!({
         "v": 1,
         "action": "ADAPTER_UPDATE",
-        "provider": provider,
+        "provider": base,
         "payload": adapter
     });
     let dispatch_check = serde_json::json!({
         "v": 1,
         "action": "CHECK_STATUS",
-        "provider": provider
+        "provider": base
     });
     let template = r#"(function driveGrokBridge() {
   try {
@@ -1954,14 +1983,6 @@ fn delayed_grok_bridge_script(provider: &str) -> Result<String, String> {
         .replace("__MAC_BOOTSTRAP_JS__", BOOTSTRAP_JS))
 }
 
-fn cached_grok_bridge_script() -> Result<&'static str, String> {
-    static SCRIPT: OnceLock<Result<String, String>> = OnceLock::new();
-    match SCRIPT.get_or_init(|| delayed_grok_bridge_script("grok")) {
-        Ok(script) => Ok(script.as_str()),
-        Err(error) => Err(error.clone()),
-    }
-}
-
 fn update_status_state(
     app: &AppHandle,
     provider: &str,
@@ -2022,7 +2043,7 @@ fn can_push_now(guard: &ProviderRuntime, provider: &str) -> bool {
 }
 
 fn get_provider_webview(app: &AppHandle, provider: &str) -> Result<tauri::Webview, String> {
-    let label = provider_label(provider);
+    let label = provider_label(provider)?;
     app.get_webview(&label)
         .ok_or_else(|| format!("webview not found: {label}"))
 }
@@ -2034,7 +2055,7 @@ fn get_provider_webview_for_generic_eval(
     let webview = get_provider_webview(app, provider)?;
     let url = webview.url().map_err(|error| error.to_string())?;
     let url_matches_app = adapters::url_matches_provider_app(provider, &url)?;
-    let allowed = if provider == "grok" {
+    let allowed = if base_provider(provider) == "grok" {
         let guard = runtime()
             .lock()
             .map_err(|_| "provider state poisoned".to_string())?;
@@ -2067,6 +2088,7 @@ fn get_provider_webview_for_generic_eval(
 }
 
 fn ensure_provider_control_eval_allowed(provider: &str) -> Result<(), String> {
+    adapters::parse_provider_instance(provider)?;
     let state = current_state(provider);
     if provider_state_allows_control_eval(&state) {
         Ok(())
@@ -2090,8 +2112,13 @@ pub(crate) fn ensure_control_webview(webview: &tauri::Webview) -> Result<(), Str
     }
 }
 
-fn provider_label(provider: &str) -> String {
-    format!("ai-{provider}")
+fn provider_label(provider: &str) -> Result<String, String> {
+    let (base, n) = adapters::parse_provider_instance(provider)?;
+    if n == 1 {
+        Ok(format!("ai-{base}"))
+    } else {
+        Ok(format!("ai-{base}-{n}"))
+    }
 }
 
 fn set_webview_bounds<R: tauri::Runtime>(
@@ -2140,7 +2167,7 @@ fn state_with(
         last_status_at: now_ms(),
         bridge: "ok".into(),
         bridge_reason: None,
-        adapter: if adapters::broken_adapters().contains(provider) {
+        adapter: if adapters::broken_adapters().contains(base_provider(provider)) {
             "broken"
         } else {
             "ok"
@@ -2150,7 +2177,7 @@ fn state_with(
 }
 
 fn current_url_matches_provider(app: &AppHandle, provider: &str) -> Result<bool, String> {
-    let label = provider_label(provider);
+    let label = provider_label(provider)?;
     let webview = app
         .get_webview(&label)
         .ok_or_else(|| format!("webview not found: {label}"))?;
@@ -2202,7 +2229,7 @@ fn accept_status_for_session_reset(provider: &str, incoming_boot: Option<&str>) 
     let Ok(mut guard) = runtime().lock() else {
         return false;
     };
-    if provider == "grok" {
+    if base_provider(provider) == "grok" {
         let Some(incoming_boot) = incoming_boot else {
             return false;
         };
@@ -2340,11 +2367,12 @@ fn run_staleness_check(app: &AppHandle) {
     for state in state_updates {
         let _ = app.emit_to("main", "connections://update", &state);
     }
-    if let Ok(script) = cached_grok_bridge_script() {
-        for (provider, document_epoch) in grok_to_drive {
-            if let Some(webview) = app.get_webview(&provider_label(&provider)) {
-                drive_grok_bridge_on_webview(&webview, app, &provider, script, document_epoch);
-            }
+    for (provider, document_epoch) in grok_to_drive {
+        if let (Ok(webview), Ok(script)) = (
+            get_provider_webview(app, &provider),
+            delayed_grok_bridge_script(&provider),
+        ) {
+            drive_grok_bridge_on_webview(&webview, app, &provider, &script, document_epoch);
         }
     }
     for provider in to_check {
@@ -3547,5 +3575,31 @@ mod tests {
             guard.status_boot.remove(provider);
             guard.pending_session_boot.remove(provider);
         }
+    }
+}
+
+#[cfg(test)]
+mod provider_instance_tests {
+    use super::*;
+
+    #[test]
+    fn labels_preserve_the_legacy_name_and_separate_instances() {
+        assert_eq!(provider_label("chatgpt").unwrap(), "ai-chatgpt");
+        assert_eq!(provider_label("chatgpt#2").unwrap(), "ai-chatgpt-2");
+        assert_eq!(provider_label("chatgpt#3").unwrap(), "ai-chatgpt-3");
+        assert_eq!(provider_label("grok#2").unwrap(), "ai-grok-2");
+        assert_eq!(base_provider("grok#3"), "grok");
+        assert!(provider_label("chatgpt#4").is_err());
+        assert!(provider_label("chatgpt#02").is_err());
+    }
+
+    #[test]
+    fn grok_instance_uses_base_domain_and_bootstrap_without_cross_instance_adapter() {
+        assert!(!provider_uses_permission_shim("grok#2"));
+        assert!(!provider_uses_document_start_bridge("grok#2"));
+        assert!(grok_app_title_ready("grok#2", "Grok"));
+        let js = delayed_grok_bridge_script("grok#2").unwrap();
+        assert!(js.contains(r#"window.__MAC_PROVIDER__ = "grok""#));
+        assert!(!js.contains(r#""provider":"grok#2""#));
     }
 }

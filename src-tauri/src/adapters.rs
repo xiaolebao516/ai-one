@@ -169,16 +169,44 @@ pub async fn open_adapter_issue(
     Ok(())
 }
 
+pub(crate) const MAX_EXTRA_PROVIDER_INSTANCES: u8 = 2;
+
+pub(crate) fn parse_provider_instance(provider: &str) -> Result<(&str, u8), String> {
+    let (base, n) = match provider.split_once('#') {
+        None => (provider, 1),
+        Some((base, suffix)) => {
+            let n = suffix
+                .parse::<u8>()
+                .map_err(|_| format!("invalid provider instance key: {provider}"))?;
+            if n.to_string() != suffix || n < 2 {
+                return Err(format!("invalid provider instance key: {provider}"));
+            }
+            if n > MAX_EXTRA_PROVIDER_INSTANCES + 1 {
+                return Err(format!(
+                    "provider instance limit exceeded: {provider} (at most {} extra instances)",
+                    MAX_EXTRA_PROVIDER_INSTANCES
+                ));
+            }
+            (base, n)
+        }
+    };
+    if !matches!(base, "chatgpt" | "claude" | "gemini" | "grok" | "meta") {
+        return Err(format!("unknown provider instance: {provider}"));
+    }
+    Ok((base, n))
+}
+
 pub(crate) fn get_adapter(provider: &str) -> Result<Adapter, String> {
+    let (base, _) = parse_provider_instance(provider)?;
     if let Some(adapter) = overrides()
         .read()
         .ok()
-        .and_then(|map| map.get(provider).cloned())
+        .and_then(|map| map.get(base).cloned())
     {
         return Ok(adapter);
     }
     adapters()
-        .get(provider)
+        .get(base)
         .cloned()
         .ok_or_else(|| format!("unknown provider: {provider}"))
 }
@@ -1113,5 +1141,24 @@ mod tests {
         assert_eq!(apply_decision(3, 3, false), None);
         assert_eq!(apply_decision(2, 3, false), None);
         assert_eq!(apply_decision(2, 3, true), Some("downgraded"));
+    }
+}
+
+#[cfg(test)]
+mod provider_instance_tests {
+    use super::*;
+
+    #[test]
+    fn provider_instance_keys_are_canonical_and_bounded() {
+        for base in ["chatgpt", "claude", "gemini", "grok", "meta"] {
+            assert_eq!(parse_provider_instance(base), Ok((base, 1)));
+            assert_eq!(parse_provider_instance(&format!("{base}#2")), Ok((base, 2)));
+            assert_eq!(parse_provider_instance(&format!("{base}#3")), Ok((base, 3)));
+            assert_eq!(get_adapter(&format!("{base}#2")).unwrap().provider, base);
+        }
+        for invalid in ["", "other", "chatgpt#", "chatgpt#1", "chatgpt#0", "chatgpt#02", "chatgpt#-2", "chatgpt#2#3", "chatgpt# 2", "ChatGPT#2", "chatgpt#999", "chatgpt/2"] {
+            assert!(parse_provider_instance(invalid).is_err(), "{invalid}");
+        }
+        assert!(parse_provider_instance("chatgpt#4").unwrap_err().contains("limit exceeded"));
     }
 }

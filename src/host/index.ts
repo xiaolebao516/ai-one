@@ -1,4 +1,5 @@
-import type { AIProvider, BridgeMessage, ProviderState } from '../../shared/types';
+import type { BridgeMessage, ProviderInstance, ProviderState } from '../../shared/types';
+import { providerInstanceBase } from '../../shared/providerInstances';
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -14,7 +15,7 @@ export interface StoredSnapshotInfo {
 }
 
 export interface NavBlockedPayload {
-  provider: string;
+  provider: ProviderInstance;
   host: string;
 }
 
@@ -28,7 +29,7 @@ export interface ProviderStopResult {
 
 // Fail closed at the host as well if the stop callback fails or the page engine is unavailable.
 // Only a successful explicit provider reload clears the host-side latch.
-const providersWithUnconfirmedStop = new Set<AIProvider>();
+const providersWithUnconfirmedStop = new Set<ProviderInstance>();
 
 const STOP_ENGINE_JS =
   "window.__MAC_ENGINE__ && typeof window.__MAC_ENGINE__.stop === 'function' ? window.__MAC_ENGINE__.stop() : null";
@@ -82,19 +83,19 @@ export const host = {
     return unlisten;
   },
   provider: {
-    open: (provider: AIProvider, bounds: DOMRectReadOnly): Promise<ProviderState> =>
+    open: <Instance extends ProviderInstance>(provider: Instance, bounds: DOMRectReadOnly): Promise<ProviderState<Instance>> =>
       invoke('provider_open', { provider, bounds: toBounds(bounds) }),
-    close: (provider: AIProvider): Promise<void> => invoke('provider_close', { provider }),
-    show: (provider: AIProvider, focus = false): Promise<void> => invoke('provider_show', { provider, focus }),
-    hide: (provider: AIProvider): Promise<void> => invoke('provider_hide', { provider }),
-    park: async (provider: AIProvider, bounds: DOMRectReadOnly): Promise<void> => {
+    close: (provider: ProviderInstance): Promise<void> => invoke('provider_close', { provider }),
+    show: (provider: ProviderInstance, focus = false): Promise<void> => invoke('provider_show', { provider, focus }),
+    hide: (provider: ProviderInstance): Promise<void> => invoke('provider_hide', { provider }),
+    park: async (provider: ProviderInstance, bounds: DOMRectReadOnly): Promise<void> => {
       await invoke('provider_set_bounds', { provider, bounds: toBounds(bounds) });
       await invoke('provider_show', { provider, focus: false });
     },
-    eval: (provider: AIProvider, js: string): Promise<void> => invoke('provider_eval', { provider, js }),
-    evalWithCallback: (provider: AIProvider, js: string): Promise<string> =>
+    eval: (provider: ProviderInstance, js: string): Promise<void> => invoke('provider_eval', { provider, js }),
+    evalWithCallback: (provider: ProviderInstance, js: string): Promise<string> =>
       invoke('provider_eval_with_callback', { provider, js }),
-    send: (provider: AIProvider, text: string): Promise<void> => {
+    send: (provider: ProviderInstance, text: string): Promise<void> => {
       if (providersWithUnconfirmedStop.has(provider)) {
         return Promise.reject(new Error(`${provider} send rejected: stop failed; reload provider page before retrying`));
       }
@@ -103,44 +104,44 @@ export const host = {
         js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
           v: 1,
           action: 'SEND_MESSAGE',
-          provider,
+          provider: providerInstanceBase(provider),
           payload: { text },
         })});`,
       });
     },
-    fill: (provider: AIProvider, text: string): Promise<void> =>
+    fill: (provider: ProviderInstance, text: string): Promise<void> =>
       invoke('provider_eval', {
         provider,
         js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
           v: 1,
           action: 'FILL_DRAFT',
-          provider,
+          provider: providerInstanceBase(provider),
           payload: { text },
         })});`,
       }),
-    stop: async (provider: AIProvider): Promise<ProviderStopResult> => {
+    stop: async (provider: ProviderInstance): Promise<ProviderStopResult> => {
       // Mark unconfirmed before the async call; a timeout is not proof that stop succeeded.
       providersWithUnconfirmedStop.add(provider);
       const result = parseProviderStopResult(await invoke<string>('provider_eval_with_callback', { provider, js: STOP_ENGINE_JS }));
       if (result.outcome === 'clicked') providersWithUnconfirmedStop.delete(provider);
       return result;
     },
-    openLogin: (provider: AIProvider): Promise<void> => invoke('provider_open_login', { provider }),
-    openLoginExternal: (provider: AIProvider): Promise<void> => invoke('provider_open_login_external', { provider }),
-    reload: async (provider: AIProvider): Promise<void> => {
+    openLogin: (provider: ProviderInstance): Promise<void> => invoke('provider_open_login', { provider }),
+    openLoginExternal: (provider: ProviderInstance): Promise<void> => invoke('provider_open_login_external', { provider }),
+    reload: async (provider: ProviderInstance): Promise<void> => {
       await invoke('provider_reload', { provider });
       providersWithUnconfirmedStop.delete(provider);
     },
-    reconnect: async (provider: AIProvider): Promise<void> => {
+    reconnect: async (provider: ProviderInstance): Promise<void> => {
       await invoke('provider_reload', { provider, reconnect: true });
       providersWithUnconfirmedStop.delete(provider);
     },
-    newSession: (provider: AIProvider): Promise<void> => invoke('provider_new_session', { provider }),
+    newSession: (provider: ProviderInstance): Promise<void> => invoke('provider_new_session', { provider }),
   },
   adapter: {
-    push: (provider: AIProvider, _cfg: unknown): Promise<void> => invoke('adapter_push', { provider }),
-    reportBroken: (provider: AIProvider): Promise<string> => invoke('report_broken', { provider }),
-    openIssue: (provider: AIProvider, body: string): Promise<void> =>
+    push: (provider: ProviderInstance, _cfg: unknown): Promise<void> => invoke('adapter_push', { provider }),
+    reportBroken: (provider: ProviderInstance): Promise<string> => invoke('report_broken', { provider }),
+    openIssue: (provider: ProviderInstance, body: string): Promise<void> =>
       invoke('open_adapter_issue', { provider, body }),
     onNotice: async (handler: (notice: AdapterNotice) => void): Promise<() => void> => {
       const unlisten = await listen<AdapterNotice>('adapter://notice', (event) => handler(event.payload));
@@ -155,7 +156,7 @@ export const host = {
     },
   },
   layout: {
-    setBounds: (provider: AIProvider, rect: DOMRectReadOnly): Promise<void> =>
+    setBounds: (provider: ProviderInstance, rect: DOMRectReadOnly): Promise<void> =>
       invoke('provider_set_bounds', { provider, bounds: toBounds(rect) }),
   },
   bridge: {

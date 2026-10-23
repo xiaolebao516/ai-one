@@ -82,6 +82,42 @@ describe('host snapshot bindings', () => {
     expect(String(invokeMock.mock.calls.at(-1)?.[1]?.js)).not.toContain('SEND_MESSAGE');
   });
 
+  it('routes extra instance keys to native while dispatching the base provider to the page engine', async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const bounds = { x: 0, y: 0, width: 420, height: 320 } as DOMRectReadOnly;
+    await host.provider.open('chatgpt#2', bounds);
+    expect(invokeMock).toHaveBeenLastCalledWith('provider_open', {
+      provider: 'chatgpt#2',
+      bounds: { x: 0, y: 0, width: 420, height: 320 },
+    });
+    await host.provider.send('chatgpt#2', 'hello');
+    expect(invokeMock).toHaveBeenLastCalledWith('provider_eval', {
+      provider: 'chatgpt#2',
+      js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
+        v: 1, action: 'SEND_MESSAGE', provider: 'chatgpt', payload: { text: 'hello' },
+      })});`,
+    });
+    await host.provider.fill('chatgpt#3', 'draft');
+    expect(invokeMock).toHaveBeenLastCalledWith('provider_eval', {
+      provider: 'chatgpt#3',
+      js: `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.dispatch(${JSON.stringify({
+        v: 1, action: 'FILL_DRAFT', provider: 'chatgpt', payload: { text: 'draft' },
+      })});`,
+    });
+  });
+
+  it('isolates failed stop latches between provider instances', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('stop timed out'));
+    await expect(host.provider.stop('chatgpt#2')).rejects.toThrow('stop timed out');
+    await expect(host.provider.send('chatgpt#2', 'unsafe')).rejects.toThrow('reload provider page');
+    invokeMock.mockResolvedValueOnce(undefined);
+    await expect(host.provider.send('chatgpt#3', 'safe')).resolves.toBeUndefined();
+    invokeMock.mockResolvedValueOnce(undefined);
+    await host.provider.reload('chatgpt#2');
+    invokeMock.mockResolvedValueOnce(undefined);
+    await expect(host.provider.send('chatgpt#2', 'recovered')).resolves.toBeUndefined();
+  });
+
   it('starts a fresh provider conversation through the dedicated host command', async () => {
     invokeMock.mockResolvedValueOnce(undefined);
 
