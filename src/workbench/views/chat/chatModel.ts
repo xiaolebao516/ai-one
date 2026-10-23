@@ -115,6 +115,7 @@ export function buildTaskPrefill(
   question: string,
   summaries: readonly { provider: AIProvider; content: string }[],
   includeSummaries: boolean,
+  summaryHeading = '对比摘要',
 ): string {
   if (!includeSummaries || summaries.length === 0) return question;
   const summaryText = summaries
