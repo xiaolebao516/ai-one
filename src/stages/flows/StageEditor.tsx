@@ -183,7 +183,7 @@ export function StageEditor({
             </div>
             <div className="flex flex-wrap items-center justify-between gap-v2-sm">
               <label className="flex items-center gap-v2-xs text-v2-meta text-v2-ink-2">
-                <input type="checkbox" checked={participant.freshSession ?? false} disabled={effectiveReadOnly || disabled} onChange={(event) => updateParticipant(index, { freshSession: event.target.checked || undefined })} />
+                <input type="checkbox" className="accent-v2-primary" checked={participant.freshSession ?? false} disabled={effectiveReadOnly || disabled} onChange={(event) => updateParticipant(index, { freshSession: event.target.checked || undefined })} />
                 {text.t('freshSession')}
               </label>
               <Button size="sm" variant="ghost" disabled={effectiveReadOnly || disabled} aria-label={text.t('removeParticipant', { n: index + 1 })} onClick={() => change({ participants: draft.participants.filter((_, participantIndex) => participantIndex !== index) })}>
