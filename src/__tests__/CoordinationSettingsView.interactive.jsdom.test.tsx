@@ -235,4 +235,98 @@ describe('CoordinationSettingsView mounted interactive tests', () => {
     expect(persisted.reworkLimit).toBe(9);
     expect(persisted.onExceedLimit).toBe('consult_opus');
   });
+
+  it('disables controls and blocks saving while async load is in-flight, preventing race overwrite', async () => {
+    let resolveRead: (value: { status: 'ok'; text: string; backup: null }) => void;
+    const delayedReadPromise = new Promise<{ status: 'ok'; text: string; backup: null }>((resolve) => {
+      resolveRead = resolve;
+    });
+
+    const writeSpy = vi.fn();
+    const slowFs = {
+      read: vi.fn().mockReturnValue(delayedReadPromise),
+      write: writeSpy,
+      quarantine: vi.fn().mockResolvedValue(null),
+      exportFile: vi.fn().mockResolvedValue(null),
+    };
+
+    const { container } = await mount(<CoordinationSettingsView fs={slowFs} />);
+
+    // In loading state: loading notice displayed and controls are disabled
+    expect(container.textContent).toContain('正在加载本机设置...');
+    const select = container.querySelector('#rework-limit-select') as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    expect(select.disabled).toBe(true);
+
+    const resetBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('恢复默认设置'),
+    ) as HTMLButtonElement;
+    expect(resetBtn.disabled).toBe(true);
+
+    // Attempting to change or reset while loading must be ignored and not trigger writes
+    await act(async () => {
+      select.value = '6';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      resetBtn.click();
+    });
+    expect(writeSpy).not.toHaveBeenCalled();
+
+    // Now resolve the read with pre-existing settings (reworkLimit: 7)
+    await act(async () => {
+      resolveRead!({
+        status: 'ok',
+        text: JSON.stringify({
+          schemaVersion: 1,
+          reworkLimit: 7,
+          onExceedLimit: 'ask_user',
+          onQuotaTight: 'pause_and_notify',
+          onAuthExpired: 'ask_user',
+          aiPreferences: { gpt: '已加载偏好' },
+        }),
+        backup: null,
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    // Loading notice gone, controls enabled with resolved settings, no overwrites
+    expect(container.textContent).not.toContain('正在加载本机设置...');
+    expect(select.disabled).toBe(false);
+    expect(select.value).toBe('7');
+    expect(container.querySelector('[data-testid="brief-preview"]')?.textContent).toContain('- 返工上限：7 轮');
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
+  it('catches read / quarantine rejection, displays error notice, and blocks saveback', async () => {
+    const writeSpy = vi.fn();
+    const rejectingFs = {
+      read: vi.fn().mockRejectedValue(new Error('EACCES: permission denied, read coordination.json')),
+      write: writeSpy,
+      quarantine: vi.fn().mockResolvedValue(null),
+      exportFile: vi.fn().mockResolvedValue(null),
+    };
+
+    const { container } = await mount(<CoordinationSettingsView fs={rejectingFs} />);
+
+    // Allow promise rejection to be caught
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    // Error notice must be displayed
+    expect(container.textContent).toContain(
+      '加载本机设置失败：EACCES: permission denied, read coordination.json。为避免覆盖已有设置，当前已禁用保存。',
+    );
+    expect(container.textContent).toContain('加载失败');
+
+    // Controls must remain disabled
+    const select = container.querySelector('#rework-limit-select') as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+
+    // Any attempt to update must be blocked and write must never be called
+    await act(async () => {
+      select.value = '8';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
 });

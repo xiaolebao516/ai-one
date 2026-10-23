@@ -49,30 +49,51 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
     if (storage) return loadCoordinationSettings(storage);
     return { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_AI_PREFERENCES } };
   });
+  const [loading, setLoading] = useState<boolean>(() => Boolean(activeFs));
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<{ tone: 'done' | 'block'; message: string } | null>(null);
 
   useEffect(() => {
     let active = true;
     if (activeFs) {
-      loadCoordination(activeFs).then((res) => {
-        if (!active) return;
-        setSettings(res.settings);
-        if (res.status === 'recovered') {
+      setLoading(true);
+      setLoadError(null);
+      loadCoordination(activeFs)
+        .then((res) => {
+          if (!active) return;
+          setSettings(res.settings);
+          setLoading(false);
+          if (res.status === 'recovered') {
+            setSaveStatus({
+              tone: 'block',
+              message: `读取到损坏的设置文件，已安全隔离备份为 ${res.backup ?? '备份文件'}，已恢复默认设置`,
+            });
+          }
+        })
+        .catch((err) => {
+          if (!active) return;
+          setLoading(false);
+          const msg = err instanceof Error ? err.message : String(err);
+          setLoadError(msg);
           setSaveStatus({
             tone: 'block',
-            message: `读取到损坏的设置文件，已安全隔离备份为 ${res.backup ?? '备份文件'}，已恢复默认设置`,
+            message: `加载本机设置失败：${msg}。为避免覆盖已有设置，当前已禁用保存。`,
           });
-        }
-      });
+        });
+    } else {
+      setLoading(false);
+      setLoadError(null);
     }
     return () => {
       active = false;
     };
   }, [activeFs]);
 
+  const isBlocked = loading || Boolean(loadError);
   const brief = renderCoordinationBrief(settings);
 
   const updateSetting = async <K extends keyof CoordinationSettings>(key: K, value: CoordinationSettings[K]) => {
+    if (isBlocked) return;
     const next = { ...settings, [key]: value };
     setSettings(next);
     if (activeFs) {
@@ -95,11 +116,13 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
   };
 
   const updateAiPreference = (ai: string, role: string) => {
+    if (isBlocked) return;
     const nextAi = { ...settings.aiPreferences, [ai]: sanitizePreferenceValue(role) };
     void updateSetting('aiPreferences', nextAi);
   };
 
   const handleReset = async () => {
+    if (isBlocked) return;
     const reset = { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_COORDINATION_SETTINGS.aiPreferences } };
     setSettings(reset);
     if (activeFs) {
@@ -129,14 +152,18 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
       <header className="grid gap-v2-xs">
         <div className="flex flex-wrap items-center gap-v2-sm">
           <h1 className="font-v2-serif text-v2-title text-v2-ink">CC 协调设置</h1>
-          <Badge tone="run">本机设置</Badge>
+          <Badge tone={loadError ? 'block' : 'run'}>
+            {loading ? '正在加载...' : loadError ? '加载失败' : '本机设置'}
+          </Badge>
         </div>
         <p className="text-v2-meta text-v2-ink-2">
           这些偏好会写进交给 CC 的 Issue，由 CC 参照执行。ai-one 不直接指挥进程，通过 Issue 约定协调规则。
         </p>
       </header>
 
-      {saveStatus ? (
+      {loading ? (
+        <Notice tone="run">正在加载本机设置...</Notice>
+      ) : saveStatus ? (
         <Notice tone={saveStatus.tone} className="transition-opacity">
           {saveStatus.message}
         </Notice>
@@ -156,6 +183,7 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
               hideLabel
               value={String(settings.reworkLimit)}
               options={REWORK_LIMIT_OPTIONS}
+              disabled={isBlocked}
               onChange={(val) => updateSetting('reworkLimit', Number(val))}
             />
           </div>
@@ -172,7 +200,7 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
             label="超限后动作"
             value={settings.onExceedLimit}
             onChange={(val) => updateSetting('onExceedLimit', val as ExceedLimitAction)}
-            options={EXCEED_LIMIT_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+            options={EXCEED_LIMIT_OPTIONS.map((o) => ({ value: o.value, label: o.label, disabled: isBlocked }))}
           />
         </Card>
 
@@ -187,7 +215,7 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
             label="额度紧张策略"
             value={settings.onQuotaTight}
             onChange={(val) => updateSetting('onQuotaTight', val as QuotaTightAction)}
-            options={QUOTA_TIGHT_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+            options={QUOTA_TIGHT_OPTIONS.map((o) => ({ value: o.value, label: o.label, disabled: isBlocked }))}
           />
         </Card>
 
@@ -202,7 +230,7 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
             label="登录失效策略"
             value={settings.onAuthExpired}
             onChange={(val) => updateSetting('onAuthExpired', val as AuthExpiredAction)}
-            options={AUTH_EXPIRED_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+            options={AUTH_EXPIRED_OPTIONS.map((o) => ({ value: o.value, label: o.label, disabled: isBlocked }))}
           />
         </Card>
 
@@ -219,8 +247,9 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
                 <input
                   aria-label={`${ai}偏好标注`}
                   value={role}
+                  disabled={isBlocked}
                   onChange={(e) => updateAiPreference(ai, e.target.value)}
-                  className="h-7 flex-1 rounded-v2-sm border border-v2-line bg-v2-surface px-v2-sm text-v2-meta text-v2-ink"
+                  className="h-7 flex-1 rounded-v2-sm border border-v2-line bg-v2-surface px-v2-sm text-v2-meta text-v2-ink disabled:opacity-50"
                   placeholder="分工或擅长领域，如：执行、审计"
                   maxLength={50}
                 />
@@ -243,7 +272,7 @@ export function CoordinationSettingsView({ storage, fs: propFs, onSaved, classNa
           </pre>
           <div className="flex items-center justify-between pt-v2-xs">
             <span className="text-v2-micro text-v2-ink-3">由 CC 参照执行</span>
-            <Button size="sm" variant="ghost" onClick={handleReset}>
+            <Button size="sm" variant="ghost" disabled={isBlocked} onClick={handleReset}>
               恢复默认设置
             </Button>
           </div>
