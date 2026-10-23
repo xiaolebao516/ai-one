@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectSnapshot, renderText } from '../snapshot.mjs';
+import { collectSnapshot, extractReviewVerdict, renderText } from '../snapshot.mjs';
 import { createGitHubClient } from '../github.mjs';
 import { main, parseArgs } from '../cli.mjs';
 
@@ -348,6 +348,40 @@ test('review verdict resolution parses explicit verdict even when text mentions 
   };
   const s74 = await collect(fixture({ reviews: [sameLineConflict4] }));
   assert.equal(s74.pullRequests[0].review.verdict, 'revise');
+
+  // Explanatory negative mentions and examples must never be falsely recognized as formal PASS
+  const negativeExplanation1 = {
+    id: 1075,
+    user: 'reviewer',
+    body: '不应采用「裁定：PASS」作为最终结论',
+    state: 'commented',
+    commit_id: sha,
+  };
+  assert.equal(extractReviewVerdict(negativeExplanation1.body, negativeExplanation1.state), 'none');
+  const s75 = await collect(fixture({ reviews: [negativeExplanation1] }));
+  assert.equal(s75.pullRequests[0].review, undefined);
+
+  const negativeExplanation2 = {
+    id: 1076,
+    user: 'reviewer',
+    body: '示例（非审查结论）：本轮裁定：PASS，这是旧版本错误地采信的字符串。',
+    state: 'commented',
+    commit_id: sha,
+  };
+  assert.equal(extractReviewVerdict(negativeExplanation2.body, negativeExplanation2.state), 'none');
+  const s76 = await collect(fixture({ reviews: [negativeExplanation2] }));
+  assert.equal(s76.pullRequests[0].review, undefined);
+
+  const inlineCodeMention = {
+    id: 1077,
+    user: 'reviewer',
+    body: '代码中不应有 `**裁定：PASS**` 这样的字样',
+    state: 'commented',
+    commit_id: sha,
+  };
+  assert.equal(extractReviewVerdict(inlineCodeMention.body, inlineCodeMention.state), 'none');
+  const s77 = await collect(fixture({ reviews: [inlineCodeMention] }));
+  assert.equal(s77.pullRequests[0].review, undefined);
 
   // Narrative mentioning previous pass followed by formal BLOCKED on next line
   const narrativeNextLine = {

@@ -19,22 +19,27 @@ export function extractReviewVerdict(body, state) {
     }
 
     const verdictsFound = [];
-    const verdictPattern = /(?:\*\*|##+\s*|#\s*)?(?:(?:本轮|当前|最终|本次)?\s*(?:裁定|verdict))[：:\s*]+\s*(PASS|REVISE|BLOCKED)\b/gi;
-    const standalonePattern = /^(?:\*\*|##+\s*|#\s*)?(PASS|REVISE|BLOCKED)(?:\*\*)?$/i;
+    // Anchored clause verdict markers (e.g. **裁定：PASS**, ## 裁定：BLOCKED, 本轮 **裁定：REVISE**)
+    const clauseVerdictPattern = /^(?:##+\s*|#\s*|[-*]\s*)?(?:\*\*)?(?:(?:本轮|当前|最终|本次)?\s*(?:\*\*)?(?:裁定|verdict))[：:\s*]+\s*(PASS|REVISE|BLOCKED)(?:\*\*)?(?:\b|\s|$|[：:，,；;。|/\n(（])/i;
+    const standalonePattern = /^(?:\*\*|##+\s*|#\s*|[-*]\s*)?(PASS|REVISE|BLOCKED)(?:\*\*)?$/i;
 
     for (const line of unquotedLines) {
+      // Strip inline markdown code snippets so `裁定：PASS` inside backticks is not matched
+      const cleanedLine = line.replace(/`[^`]+`/g, '');
       // Split each line into clauses by punctuation (comma, semicolon, period, pipe, slash, newline)
-      const clauses = line.split(/[，,；;。|/\n]/);
+      const clauses = cleanedLine.split(/[，,；;。|/\n]/);
       for (const rawClause of clauses) {
         const clause = rawClause.trim();
         if (!clause) continue;
-        // Skip clauses explicitly discussing past/historical verdicts
-        if (/(?:上一轮|上一次|历史|前一轮|旧裁定|之前|往期|previous|prior)/i.test(clause)) {
+        // Skip clauses explicitly discussing past/historical verdicts, examples, or negations
+        if (/(?:上一轮|上一次|历史|前一轮|旧裁定|之前|往期|previous|prior|示例|例如|如|例子|example|sample|不应|不能|并非|不是|不得|禁止|未可|不作为|假)/i.test(clause)) {
           continue;
         }
 
-        for (const match of clause.matchAll(verdictPattern)) {
-          verdictsFound.push(match[1].toUpperCase());
+        const cMatch = clause.match(clauseVerdictPattern);
+        if (cMatch) {
+          verdictsFound.push(cMatch[1].toUpperCase());
+          continue;
         }
 
         const sMatch = clause.match(standalonePattern);
