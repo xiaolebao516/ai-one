@@ -106,12 +106,17 @@ describe('FlowStageCard drag source validation', () => {
     expect(onMove).not.toHaveBeenCalled();
   });
 
-  it('keeps Alt+Up keyboard sorting independent of drag payloads', async () => {
+  it('keeps Alt+Up and Alt+Down keyboard sorting independent of drag payloads', async () => {
     const onMove = vi.fn();
     const container = await mount(onMove);
     const handles = [...container.querySelectorAll('button[draggable="true"]')];
-    const event = new KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true, bubbles: true, cancelable: true });
-    await act(async () => { handles[2].dispatchEvent(event); });
+    const up = new KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true, bubbles: true, cancelable: true });
+    await act(async () => { handles[2].dispatchEvent(up); });
     expect(onMove).toHaveBeenCalledWith(2, 1);
+
+    onMove.mockClear();
+    const down = new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true });
+    await act(async () => { handles[0].dispatchEvent(down); });
+    expect(onMove).toHaveBeenCalledWith(0, 1);
   });
 });

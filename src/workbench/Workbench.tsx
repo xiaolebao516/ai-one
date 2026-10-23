@@ -81,6 +81,8 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
     else setRoute(target.route);
   };
   const requestNavigation = (target: WorkbenchLeaveTarget) => {
+    // Do not let a second navigation race the in-flight save-and-leave operation.
+    if (leaveSaving) return;
     const leavesFlows = current.view === 'flows' && (
       target.kind === 'classic' ||
       target.route.view !== current.view ||
