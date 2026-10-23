@@ -20,6 +20,7 @@ export interface ProviderReplyState {
   content: string;
   startedAt?: number;
   forwardedFrom?: AIProvider;
+  truncated?: boolean;
   notSentReason?: NotSentReason;
   error?: string;
 }
