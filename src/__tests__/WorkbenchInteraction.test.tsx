@@ -31,12 +31,12 @@ afterEach(async () => {
   document.body.innerHTML = '';
 });
 
-async function mount(githubLoader?: GitHubLoader) {
+async function mount(githubLoader?: GitHubLoader, onOpenClassic: () => void = () => {}) {
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
   live.push({ root, container });
-  await act(async () => root.render(<Workbench locale="en" onOpenClassic={() => {}} githubLoader={githubLoader} />));
+  await act(async () => root.render(<Workbench locale="en" onOpenClassic={onOpenClassic} githubLoader={githubLoader} />));
   return container;
 }
 
@@ -55,6 +55,29 @@ const h1 = (container: HTMLElement) => container.querySelector('main h1')?.textC
 const dialog = () => document.querySelector('[role="dialog"]');
 const buttonByText = (container: ParentNode, text: string) =>
   [...container.querySelectorAll('button')].find((button) => button.textContent?.trim() === text);
+
+async function settleWorkbench() {
+  await act(async () => {
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  });
+}
+
+async function enterFlowsWithUnsavedDraft(container: HTMLElement) {
+  const flowsNav = [...container.querySelectorAll('nav li button')].find((button) =>
+    button.textContent?.trim().startsWith('Stages & flows'),
+  );
+  await click(flowsNav);
+  await settleWorkbench();
+  await click(buttonByText(container, '＋ New flow'));
+  await settleWorkbench();
+  expect(h1(container)).toBe('Stages & flows');
+}
+
+function navButton(container: HTMLElement, label: string) {
+  return [...container.querySelectorAll('nav li button')].find((button) =>
+    button.textContent?.trim().startsWith(label),
+  );
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -128,6 +151,136 @@ describe('workbench keyboard and palette', () => {
     await key(document.activeElement as Element, { key: '3', ctrlKey: true });
     expect(dialog()).not.toBeNull();
     expect(h1(container)).not.toBe('Chat');
+  });
+});
+
+describe('unsaved flow leave guard across workbench entry points', () => {
+  it('guards sidebar navigation and offers stay or discard without losing the draft silently', async () => {
+    const container = await mount();
+    await enterFlowsWithUnsavedDraft(container);
+
+    await click(navButton(container, 'Tasks'));
+    expect(h1(container)).toBe('Stages & flows');
+    expect(container.textContent).toContain('You have unsaved flow changes');
+
+    await click(buttonByText(container, 'Stay on this page'));
+    expect(h1(container)).toBe('Stages & flows');
+    expect(container.textContent).not.toContain('You have unsaved flow changes');
+
+    await click(navButton(container, 'Tasks'));
+    await click(buttonByText(container, 'Discard and leave'));
+    expect(h1(container)).toBe('Tasks');
+  });
+
+  it('saves only the edited existing flow when navigation interrupts a queued new flow', async () => {
+    const container = await mount();
+    await click(navButton(container, 'Stages & flows'));
+    await settleWorkbench();
+    await click(buttonByText(container, 'Copy to edit'));
+    await click(buttonByText(container, 'Save'));
+    await settleWorkbench();
+    const before = JSON.parse(window.localStorage.getItem('ai-one.local-store.flows') ?? '{}') as {
+      flows?: Array<{ id: string; nameEn?: string }>;
+    };
+    expect(before.flows?.length).toBeGreaterThan(0);
+
+    const input = container.querySelector('#flows-current-title-input') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(input, 'Edited before leaving');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(input.value).toBe('Edited before leaving');
+    await click(buttonByText(container, '＋ New flow'));
+    expect(container.textContent).toContain('Save and continue');
+
+    await click(navButton(container, 'Tasks'));
+    expect(h1(container)).toBe('Stages & flows');
+    await click(buttonByText(container, 'Save and leave'));
+    expect(h1(container)).toBe('Tasks');
+    const onDisk = JSON.parse(window.localStorage.getItem('ai-one.local-store.flows') ?? '{}') as {
+      flows?: Array<{ id: string; nameEn?: string }>;
+    };
+    expect(onDisk.flows).toHaveLength(before.flows?.length ?? 0);
+    expect(onDisk.flows?.some((flow) => flow.nameEn === 'Edited before leaving')).toBe(true);
+
+    await click(navButton(container, 'Stages & flows'));
+    await settleWorkbench();
+    expect(container.textContent).toContain('Edited before leaving');
+  });
+
+  it('saves a valid flow draft before leaving through a keyboard shortcut', async () => {
+    const container = await mount();
+    await enterFlowsWithUnsavedDraft(container);
+
+    await click(buttonByText(container, '＋ Add stage'));
+    await click(buttonByText(container, 'Create new stage'));
+    await settleWorkbench();
+    await key(window, { key: '2', ctrlKey: true });
+    expect(h1(container)).toBe('Stages & flows');
+
+    await click(buttonByText(container, 'Save and leave'));
+    expect(h1(container)).toBe('Tasks');
+  });
+
+  it('guards keyboard shortcuts and stays on the editor when save validation fails', async () => {
+    const container = await mount();
+    await enterFlowsWithUnsavedDraft(container);
+
+    await key(window, { key: '2', ctrlKey: true });
+    expect(h1(container)).toBe('Stages & flows');
+    await click(buttonByText(container, 'Save and leave'));
+
+    expect(h1(container)).toBe('Stages & flows');
+    expect(container.textContent).toContain('You have unsaved flow changes');
+    expect(container.textContent).toContain('A flow must contain at least one stage.');
+  });
+
+  it('guards command-palette navigation instead of unmounting the dirty editor', async () => {
+    const container = await mount();
+    await enterFlowsWithUnsavedDraft(container);
+
+    await key(window, { key: 'k', ctrlKey: true });
+    const input = document.activeElement as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(input, 'go to tasks');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await key(input, { key: 'Enter' });
+
+    expect(dialog()).toBeNull();
+    expect(h1(container)).toBe('Stages & flows');
+    expect(container.textContent).toContain('You have unsaved flow changes');
+    await click(buttonByText(container, 'Discard and leave'));
+    expect(h1(container)).toBe('Tasks');
+  });
+
+  it('guards every classic-UI entry and opens it only after an explicit leave choice', async () => {
+    const onOpenClassic = vi.fn();
+    const container = await mount(undefined, onOpenClassic);
+    await enterFlowsWithUnsavedDraft(container);
+
+    await click(buttonByText(container, 'Classic chat UI'));
+    expect(onOpenClassic).not.toHaveBeenCalled();
+    expect(h1(container)).toBe('Stages & flows');
+    expect(container.textContent).toContain('You have unsaved flow changes');
+
+    await click(buttonByText(container, 'Stay on this page'));
+    await key(window, { key: 'k', ctrlKey: true });
+    const input = document.activeElement as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(input, 'open classic chat UI');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await key(input, { key: 'Enter' });
+    expect(onOpenClassic).not.toHaveBeenCalled();
+    expect(h1(container)).toBe('Stages & flows');
+    expect(container.textContent).toContain('You have unsaved flow changes');
+
+    await click(buttonByText(container, 'Discard and leave'));
+    expect(onOpenClassic).toHaveBeenCalledTimes(1);
   });
 });
 

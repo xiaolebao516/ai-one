@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-local-store-quarantine"
+description = "Enables the local_store_quarantine command without any pre-configured scope."
+commands.allow = ["local_store_quarantine"]
+
+[[permission]]
+identifier = "deny-local-store-quarantine"
+description = "Denies the local_store_quarantine command without any pre-configured scope."
+commands.deny = ["local_store_quarantine"]
