@@ -9,7 +9,7 @@ import { flowsText } from '../workbench/views/flowsText';
 
 const SOURCE = 'flow-a:stage-a|stage-b|stage-c';
 
-const stages: StageDef[] = ['stage-a', 'stage-b', 'stage-c'].map((id) => ({
+const stages: StageDef[] = ['stage-a', 'stage-b', 'stage-c'].map((id): StageDef => ({
   id,
   name: id,
   collaboration: 'solo',
