@@ -217,6 +217,30 @@ describe('flow import/export', () => {
     expect(merged.flows.some((flow) => flow.id === 'flow.existing-import' && flow.stages[0].stageId === 'existing-import')).toBe(true);
   });
 
+  it('overwrites same-name custom items after an explicit choice and remaps stage references', () => {
+    const current: FlowsFile = {
+      schemaVersion: 1,
+      stages: [{ ...customStage('stage-old', 'Shared stage'), description: 'old stage' }],
+      flows: [{ ...customFlow('flow-old', 'Shared flow', 'stage-old'), description: 'old flow' }],
+    };
+    const incoming: FlowsFile = {
+      schemaVersion: 1,
+      stages: [{ ...customStage('stage-new', 'Shared stage'), description: 'incoming stage' }],
+      flows: [{ ...customFlow('flow-new', 'Shared flow', 'stage-new'), description: 'incoming flow' }],
+    };
+
+    const merged = applyImport(current, incoming, 'overwrite');
+    expect(merged.stages).toHaveLength(1);
+    expect(merged.stages[0]).toMatchObject({ id: 'stage-old', description: 'incoming stage', builtin: false });
+    expect(merged.flows).toHaveLength(1);
+    expect(merged.flows[0]).toMatchObject({
+      id: 'flow-old',
+      description: 'incoming flow',
+      stages: [{ stageId: 'stage-old' }],
+      builtin: false,
+    });
+  });
+
   it('overwrites only non-built-in items with matching IDs and never replaces built-ins', () => {
     const current = validFile();
     current.stages.push(customStage('custom', 'Old custom'));
