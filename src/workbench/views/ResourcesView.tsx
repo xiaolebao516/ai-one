@@ -24,9 +24,9 @@ export function ResourcesView({ locale, dispatch, repoPath, onSetRepo, onOpenCla
   const text = workbenchText(locale);
   const channel = channelView(dispatch);
   return (
-    <div className="mx-auto grid max-w-[1180px] gap-v2-lg p-v2-page">
+    <div className="mx-auto grid max-w-[1180px] gap-v2-section p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:p-v2-page">
       <header>
-        <h1 className="text-[24px] font-semibold leading-tight text-v2-ink">{text.t('resourcesTitle')}</h1>
+        <h1 className="font-v2-serif text-v2-title text-v2-ink">{text.t('resourcesTitle')}</h1>
         <p className="mt-v2-xs text-v2-meta text-v2-ink-2">{text.t('resourcesSub')}</p>
       </header>
 

@@ -245,10 +245,10 @@ function GallerySections({ skin, mode, compact }: { skin: V2SkinId; mode: V2Mode
 
       <Section id={ids('type')} title="字号与圆角">
         <div className="flex flex-col gap-1">
-          <span className="text-v2-title">页面标题 24 · 3 个任务在推进</span>
-          <span className="text-v2-heading">任务标题 19 · 讨论结束后必定生成最终报告</span>
+          <span className="text-v2-title">页面标题 28 · 衬线 · 3 个任务在推进</span>
+          <span className="text-v2-heading">任务标题 20 · 衬线 · 讨论结束后必定生成最终报告</span>
           <span className="text-v2-lead">现在 16 · 全部完成，等你验收。</span>
-          <span className="text-v2-body">正文 13 · 审计针对当前完整 HEAD，HEAD 变了就重审。</span>
+          <span className="text-v2-body">正文 14 · 审计针对当前完整 HEAD，HEAD 变了就重审。</span>
           <span className="text-v2-meta text-v2-ink-2">元信息 12 · ai-one #39 · 12 分钟前</span>
           <span className="font-v2-mono text-v2-meta text-v2-ink-2">等宽 · 7be41d2c9a0f3e5b8d1c4a6f2e9b0d3c5a7f1e2d</span>
         </div>
