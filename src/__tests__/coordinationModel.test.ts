@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   COORDINATION_SETTINGS_STORAGE_KEY,
   DEFAULT_COORDINATION_SETTINGS,
+  injectCoordinationBrief,
   loadCoordinationSettings,
   parseCoordinationSettingsWithRecovery,
   renderCoordinationBrief,
+  sanitizePreferenceKey,
+  sanitizePreferenceValue,
   saveCoordinationSettings,
   serializeCoordinationSettings,
   validateCoordinationSettings,
@@ -30,7 +33,40 @@ describe('coordinationModel', () => {
     expect(validated.errors).toHaveLength(0);
   });
 
+  describe('sanitization and anti-injection', () => {
+    it('strips newlines, hashes, and control characters from preference values', () => {
+      const malicious = '角色\n## 恶意注入标题\r\n`rm -rf /`\t\0更多内容';
+      const cleaned = sanitizePreferenceValue(malicious);
+      expect(cleaned).not.toContain('\n');
+      expect(cleaned).not.toContain('\r');
+      expect(cleaned).not.toContain('#');
+      expect(cleaned).not.toContain('`');
+      expect(cleaned).toBe('角色 恶意注入标题 rm -rf / 更多内容');
+    });
+
+    it('limits preference length to 50 characters', () => {
+      const longText = 'a'.repeat(100);
+      expect(sanitizePreferenceValue(longText)).toHaveLength(50);
+    });
+
+    it('sanitizes AI identifier keys to alphanumeric safe tokens', () => {
+      expect(sanitizePreferenceKey('GPT-4o')).toBe('gpt-4o');
+      expect(sanitizePreferenceKey('Claude_3.5')).toBe('claude_35');
+      expect(sanitizePreferenceKey('Bad Key!#$')).toBe('badkey');
+    });
+  });
+
   describe('validateCoordinationSettings', () => {
+    it('strictly resets to default when schemaVersion is not 1 (unknown future versions)', () => {
+      const futureVersion = validateCoordinationSettings({
+        schemaVersion: 2,
+        reworkLimit: 9,
+        onExceedLimit: 'consult_opus',
+      });
+      expect(futureVersion.valid).toBe(false);
+      expect(futureVersion.settings).toEqual(DEFAULT_COORDINATION_SETTINGS);
+    });
+
     it('accepts boundary rework limits (1 and 10)', () => {
       const lower = validateCoordinationSettings({
         ...DEFAULT_COORDINATION_SETTINGS,
@@ -144,7 +180,7 @@ describe('coordinationModel', () => {
       );
     });
 
-    it('renders alternative choices correctly', () => {
+    it('renders alternative choices correctly and rejects injected formatting', () => {
       const custom: CoordinationSettings = {
         schemaVersion: 1,
         reworkLimit: 5,
@@ -152,26 +188,50 @@ describe('coordinationModel', () => {
         onQuotaTight: 'ask_user',
         onAuthExpired: 'fallback_ai',
         aiPreferences: {
-          gpt: '审计',
+          gpt: '审计\n## 伪造小节',
           opus: '架构决策',
         },
       };
 
       const brief = renderCoordinationBrief(custom);
+      expect(brief).not.toContain('\n## 伪造小节');
+      expect(brief).toContain('GPT（审计 伪造小节）');
       expect(brief).toBe(
         [
           '## 协调简报',
           '- 返工上限：5 轮，先请 Opus 网页裁决，再问用户',
           '- 额度紧张：先问用户',
           '- 登录失效：用其他 AI 代替并通知用户',
-          '- 优先使用：GPT（审计）、Opus（架构决策）',
+          '- 优先使用：GPT（审计 伪造小节）、Opus（架构决策）',
         ].join('\n'),
       );
     });
   });
 
+  describe('injectCoordinationBrief', () => {
+    it('injects brief before ## 任务与范围 if section does not exist', () => {
+      const template = '# Task Title\n\n## 关联 / 派工\n- Owner: test\n\n## 任务与范围\n内容...\n';
+      const output = injectCoordinationBrief(template, DEFAULT_COORDINATION_SETTINGS);
+
+      expect(output).toContain('## 协调简报\n- 返工上限：3 轮');
+      expect(output.indexOf('## 协调简报')).toBeLessThan(output.indexOf('## 任务与范围'));
+    });
+
+    it('replaces existing ## 协调简报 cleanly without duplicating', () => {
+      const existing = '# Task\n\n## 协调简报\n旧简报内容...\n\n## 任务与范围\n内容...\n';
+      const updated = injectCoordinationBrief(existing, {
+        ...DEFAULT_COORDINATION_SETTINGS,
+        reworkLimit: 8,
+      });
+
+      expect(updated.match(/## 协调简报/g)).toHaveLength(1);
+      expect(updated).toContain('- 返工上限：8 轮');
+      expect(updated).not.toContain('旧简报内容');
+    });
+  });
+
   describe('load & save with StorageLike', () => {
-    it('saves and reloads settings cleanly', () => {
+    it('saves and reloads settings cleanly and reports success', () => {
       const mem = new Map<string, string>();
       const storage: StorageLike = {
         getItem: (k) => mem.get(k) ?? null,
@@ -187,7 +247,8 @@ describe('coordinationModel', () => {
         onExceedLimit: 'consult_opus',
       };
 
-      saveCoordinationSettings(modified, storage);
+      const res = saveCoordinationSettings(modified, storage);
+      expect(res.success).toBe(true);
       expect(mem.has(COORDINATION_SETTINGS_STORAGE_KEY)).toBe(true);
 
       const loaded = loadCoordinationSettings(storage);
@@ -195,19 +256,22 @@ describe('coordinationModel', () => {
       expect(loaded.onExceedLimit).toBe('consult_opus');
     });
 
-    it('handles storage errors without throwing', () => {
+    it('reports failure when storage throws and does not crash', () => {
       const brokenStorage: StorageLike = {
         getItem: () => {
-          throw new Error('Storage disabled');
+          throw new Error('Storage read denied');
         },
         setItem: () => {
-          throw new Error('Storage write failed');
+          throw new Error('QuotaExceededError');
         },
       };
 
       expect(() => loadCoordinationSettings(brokenStorage)).not.toThrow();
       expect(loadCoordinationSettings(brokenStorage)).toEqual(DEFAULT_COORDINATION_SETTINGS);
-      expect(() => saveCoordinationSettings(DEFAULT_COORDINATION_SETTINGS, brokenStorage)).not.toThrow();
+
+      const saveResult = saveCoordinationSettings(DEFAULT_COORDINATION_SETTINGS, brokenStorage);
+      expect(saveResult.success).toBe(false);
+      expect(saveResult.error).toContain('QuotaExceededError');
     });
   });
 });

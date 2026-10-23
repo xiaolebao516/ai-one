@@ -6,6 +6,7 @@ import {
   QUOTA_TIGHT_OPTIONS,
   loadCoordinationSettings,
   renderCoordinationBrief,
+  sanitizePreferenceValue,
   saveCoordinationSettings,
   type AuthExpiredAction,
   type CoordinationSettings,
@@ -33,27 +34,44 @@ const REWORK_LIMIT_OPTIONS = Array.from({ length: 10 }, (_, i) => ({
  */
 export function CoordinationSettingsView({ storage, onSaved, className }: CoordinationSettingsViewProps) {
   const [settings, setSettings] = useState<CoordinationSettings>(() => loadCoordinationSettings(storage));
-  const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<{ tone: 'done' | 'block'; message: string } | null>(null);
 
   const brief = renderCoordinationBrief(settings);
 
   const updateSetting = <K extends keyof CoordinationSettings>(key: K, value: CoordinationSettings[K]) => {
     const next = { ...settings, [key]: value };
     setSettings(next);
-    saveCoordinationSettings(next, storage);
-    setSaveNotice('已自动保存到本机设置');
-    onSaved?.(next);
+    const result = saveCoordinationSettings(next, storage);
+    if (result.success) {
+      setSaveStatus({ tone: 'done', message: '已自动保存到本机设置' });
+      onSaved?.(next);
+    } else {
+      setSaveStatus({ tone: 'block', message: `保存失败：${result.error ?? '存储不可用'}` });
+    }
+  };
+
+  const updateAiPreference = (ai: string, role: string) => {
+    const nextAi = { ...settings.aiPreferences, [ai]: sanitizePreferenceValue(role) };
+    updateSetting('aiPreferences', nextAi);
   };
 
   const handleReset = () => {
-    setSettings({ ...DEFAULT_COORDINATION_SETTINGS });
-    saveCoordinationSettings({ ...DEFAULT_COORDINATION_SETTINGS }, storage);
-    setSaveNotice('已恢复默认设置');
-    onSaved?.({ ...DEFAULT_COORDINATION_SETTINGS });
+    const reset = { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_COORDINATION_SETTINGS.aiPreferences } };
+    setSettings(reset);
+    const result = saveCoordinationSettings(reset, storage);
+    if (result.success) {
+      setSaveStatus({ tone: 'done', message: '已恢复默认设置' });
+      onSaved?.(reset);
+    } else {
+      setSaveStatus({ tone: 'block', message: `重置失败：${result.error ?? '存储不可用'}` });
+    }
   };
 
   return (
-    <div className={`mx-auto grid max-w-[720px] gap-v2-section p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:p-v2-page ${className ?? ''}`}>
+    <div
+      data-testid="coordination-settings-view"
+      className={`mx-auto grid max-w-[720px] gap-v2-section p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:p-v2-page ${className ?? ''}`}
+    >
       <header className="grid gap-v2-xs">
         <div className="flex flex-wrap items-center gap-v2-sm">
           <h1 className="font-v2-serif text-v2-title text-v2-ink">CC 协调设置</h1>
@@ -64,9 +82,9 @@ export function CoordinationSettingsView({ storage, onSaved, className }: Coordi
         </p>
       </header>
 
-      {saveNotice ? (
-        <Notice tone="done" className="transition-opacity">
-          {saveNotice}
+      {saveStatus ? (
+        <Notice tone={saveStatus.tone} className="transition-opacity">
+          {saveStatus.message}
         </Notice>
       ) : null}
 
@@ -134,17 +152,25 @@ export function CoordinationSettingsView({ storage, onSaved, className }: Coordi
           />
         </Card>
 
-        {/* 优先使用（标注） */}
+        {/* 优先使用（标注）可编辑 */}
         <Card className="grid gap-v2-sm">
           <div>
             <span className="font-semibold text-v2-body text-v2-ink">优先使用（你的标注）</span>
-            <p className="text-v2-meta text-v2-ink-3">标明各 AI 的擅长分工，写进简报供调度参考</p>
+            <p className="text-v2-meta text-v2-ink-3">标明各 AI 的擅长分工（可直接修改），写进简报供调度参考</p>
           </div>
-          <div className="flex flex-wrap gap-v2-xs">
+          <div className="grid gap-v2-xs">
             {Object.entries(settings.aiPreferences).map(([ai, role]) => (
-              <Badge key={ai} tone="neutral" className="text-v2-meta">
-                <span className="font-semibold uppercase">{ai}:</span> {role}
-              </Badge>
+              <div key={ai} className="flex items-center gap-v2-sm">
+                <span className="w-16 font-semibold uppercase text-v2-meta text-v2-ink">{ai}:</span>
+                <input
+                  aria-label={`${ai}偏好标注`}
+                  value={role}
+                  onChange={(e) => updateAiPreference(ai, e.target.value)}
+                  className="h-7 flex-1 rounded-v2-sm border border-v2-line bg-v2-surface px-v2-sm text-v2-meta text-v2-ink"
+                  placeholder="分工或擅长领域，如：执行、审计"
+                  maxLength={50}
+                />
+              </div>
             ))}
           </div>
         </Card>

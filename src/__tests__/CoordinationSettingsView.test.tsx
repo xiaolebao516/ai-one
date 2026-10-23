@@ -44,6 +44,18 @@ describe('CoordinationSettingsView', () => {
     expect(html).toContain('Argon（独立想法）');
   });
 
+  it('renders editable input fields for AI preferences', () => {
+    const storage = createMemoryStorage();
+    const html = renderToStaticMarkup(<CoordinationSettingsView storage={storage} />);
+
+    expect(html).toContain('aria-label="gpt偏好标注"');
+    expect(html).toContain('aria-label="opus偏好标注"');
+    expect(html).toContain('aria-label="argon偏好标注"');
+    expect(html).toContain('value="执行、审计"');
+    expect(html).toContain('value="架构、终审"');
+    expect(html).toContain('value="独立想法"');
+  });
+
   it('reflects custom initial storage values in render', () => {
     const custom: CoordinationSettings = {
       ...DEFAULT_COORDINATION_SETTINGS,
@@ -51,6 +63,10 @@ describe('CoordinationSettingsView', () => {
       onExceedLimit: 'consult_opus',
       onQuotaTight: 'ask_user',
       onAuthExpired: 'fallback_ai',
+      aiPreferences: {
+        gpt: '主力开发',
+        opus: '深度架构',
+      },
     };
     const storage = createMemoryStorage({
       'coordination.json': JSON.stringify(custom),
@@ -61,6 +77,8 @@ describe('CoordinationSettingsView', () => {
     expect(html).toContain('- 返工上限：7 轮，先请 Opus 网页裁决，再问用户');
     expect(html).toContain('- 额度紧张：先问用户');
     expect(html).toContain('- 登录失效：用其他 AI 代替并通知用户');
+    expect(html).toContain('value="主力开发"');
+    expect(html).toContain('value="深度架构"');
   });
 
   it('includes reset button and options for all controls', () => {

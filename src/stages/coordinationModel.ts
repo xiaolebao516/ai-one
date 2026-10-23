@@ -60,6 +60,28 @@ export interface ValidationResult {
   errors: string[];
 }
 
+/** Sanitize and validate preference strings to prevent Markdown/header injection. */
+export function sanitizePreferenceValue(value: string): string {
+  // Strip control chars (0-31 and 127-159), newlines, Markdown headers/backticks, and limit length
+  let cleaned = '';
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if ((code >= 0 && code <= 31) || (code >= 127 && code <= 159)) {
+      cleaned += ' ';
+    } else if (value[i] === '#' || value[i] === '`') {
+      continue;
+    } else {
+      cleaned += value[i];
+    }
+  }
+  return cleaned.replace(/\s+/g, ' ').trim().slice(0, 50);
+}
+
+export function sanitizePreferenceKey(key: string): string {
+  // Only alphanumeric, hyphen and underscore allowed for AI identifiers
+  return key.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 20);
+}
+
 export function validateCoordinationSettings(raw: unknown): ValidationResult {
   const errors: string[] = [];
 
@@ -73,10 +95,13 @@ export function validateCoordinationSettings(raw: unknown): ValidationResult {
 
   const candidate = raw as Record<string, unknown>;
 
-  // schemaVersion
-  const schemaVersion = candidate.schemaVersion === 1 ? 1 : 1;
+  // schemaVersion: if not 1, do not assume fields are forward-compatible; strictly reset to default
   if (candidate.schemaVersion !== 1) {
-    errors.push(`Invalid or missing schemaVersion: expected 1, received ${String(candidate.schemaVersion)}`);
+    return {
+      valid: false,
+      settings: { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_AI_PREFERENCES } },
+      errors: [`Unsupported or missing schemaVersion: expected 1, received ${String(candidate.schemaVersion)}`],
+    };
   }
 
   // reworkLimit: integer between 1 and 10
@@ -116,19 +141,23 @@ export function validateCoordinationSettings(raw: unknown): ValidationResult {
     errors.push(`Invalid onAuthExpired: received ${String(candidate.onAuthExpired)}`);
   }
 
-  // aiPreferences
+  // aiPreferences: validate keys and values with injection defenses
   let aiPreferences: Record<string, string> = { ...DEFAULT_AI_PREFERENCES };
   if (candidate.aiPreferences && typeof candidate.aiPreferences === 'object' && !Array.isArray(candidate.aiPreferences)) {
     const prefs: Record<string, string> = {};
-    for (const [key, val] of Object.entries(candidate.aiPreferences as Record<string, unknown>)) {
-      if (typeof val === 'string' && val.trim().length > 0) {
-        prefs[key.trim()] = val.trim();
+    for (const [rawKey, rawVal] of Object.entries(candidate.aiPreferences as Record<string, unknown>)) {
+      if (typeof rawVal === 'string') {
+        const cleanKey = sanitizePreferenceKey(rawKey);
+        const cleanVal = sanitizePreferenceValue(rawVal);
+        if (cleanKey.length > 0 && cleanVal.length > 0) {
+          prefs[cleanKey] = cleanVal;
+        }
       }
     }
     if (Object.keys(prefs).length > 0) {
       aiPreferences = prefs;
     } else {
-      errors.push('Empty aiPreferences map; falling back to default preferences');
+      errors.push('Empty or invalid aiPreferences map; falling back to default preferences');
     }
   } else if (candidate.aiPreferences !== undefined) {
     errors.push('Invalid aiPreferences format; falling back to defaults');
@@ -137,7 +166,7 @@ export function validateCoordinationSettings(raw: unknown): ValidationResult {
   return {
     valid: errors.length === 0,
     settings: {
-      schemaVersion,
+      schemaVersion: 1,
       reworkLimit,
       onExceedLimit,
       onQuotaTight,
@@ -199,8 +228,8 @@ export function renderCoordinationBrief(settings: CoordinationSettings): string 
 
   const aiEntries = Object.entries(valid.aiPreferences)
     .map(([key, role]) => {
-      const name = aiNameMap[key.toLowerCase()] ?? key;
-      return `${name}（${role}）`;
+      const name = aiNameMap[key.toLowerCase()] ?? (key ? key.toUpperCase() : 'AI');
+      return `${name}（${sanitizePreferenceValue(role)}）`;
     })
     .join('、');
 
@@ -216,6 +245,26 @@ export function renderCoordinationBrief(settings: CoordinationSettings): string 
   }
 
   return lines.join('\n');
+}
+
+/**
+ * Injects or updates the coordination brief section into a Task Issue body markdown.
+ */
+export function injectCoordinationBrief(issueBody: string, settings: CoordinationSettings): string {
+  const brief = renderCoordinationBrief(settings);
+  const briefPattern = /## 协调简报[\s\S]*?(?=\n## |$)/;
+
+  if (briefPattern.test(issueBody)) {
+    return issueBody.replace(briefPattern, brief);
+  }
+
+  // Prepend before ## 任务与范围 or append to the end
+  const taskSectionIndex = issueBody.indexOf('## 任务与范围');
+  if (taskSectionIndex !== -1) {
+    return `${issueBody.slice(0, taskSectionIndex)}${brief}\n\n${issueBody.slice(taskSectionIndex)}`;
+  }
+
+  return `${issueBody.trimEnd()}\n\n${brief}\n`;
 }
 
 function defaultStorage(): StorageLike | undefined {
@@ -238,11 +287,16 @@ export function loadCoordinationSettings(storage: StorageLike | undefined = defa
 export function saveCoordinationSettings(
   settings: CoordinationSettings,
   storage: StorageLike | undefined = defaultStorage(),
-): void {
+): { success: boolean; error?: string } {
+  if (!storage) {
+    return { success: false, error: '本地存储不可用' };
+  }
   try {
     const serialized = serializeCoordinationSettings(settings);
-    storage?.setItem(COORDINATION_SETTINGS_STORAGE_KEY, serialized);
-  } catch {
-    // Graceful fallback for non-writable environments
+    storage.setItem(COORDINATION_SETTINGS_STORAGE_KEY, serialized);
+    return { success: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '写入本地存储失败';
+    return { success: false, error: msg };
   }
 }
