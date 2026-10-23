@@ -1,6 +1,6 @@
 import { AI_PROVIDERS, brainstormPhaseForRound, PROMPTS } from '../../../shared/constants';
 import { hasDeliberationConsensus } from './deliberationConsensus';
-import { newDeliberationReplies } from './deliberationRelay';
+import { formatDeliberationRelaySection, newDeliberationReplies } from './deliberationRelay';
 import { auditRequestsContinuation, parseDeliberationAudit } from './deliberationAudit';
 import type { AIProvider } from '../../../shared/types';
 import type { I18nKey } from '../../i18n/keys';
@@ -127,13 +127,6 @@ function deliberationQuestionBlock(question: string, language: QuestionLanguage 
   ];
 }
 
-function deliberationTranscript(updates: readonly Pick<HistoryItem, 'name' | 'round' | 'text'>[]): string {
-  return updates.map((item) => {
-    const heading = item.round ? '第 ' + item.round + ' 轮 · ' + item.name : '独立初答 · ' + item.name;
-    return heading + '\n' + item.text;
-  }).join('\n\n---\n\n');
-}
-
 export const promptBuilders: Record<string, PromptBuilder> = {
   'brainstorm.buildPrompt': (args, context) =>
     PROMPTS.brainstorm.buildPrompt(
@@ -181,7 +174,7 @@ export const promptBuilders: Record<string, PromptBuilder> = {
       '请在当前这个 AI 对话中继续这场只读讨论。',
       '你是 ' + providerName(context.provider) + '。这是第 ' + round + ' 轮讨论，共 3 轮。',
       '原问题、你之前的回答以及之前转发过的回复都已在本对话中，请在此基础上继续，不要从头重新调研。',
-      '以下是另一位 AI 的新回复（完整内容，本对话尚未收到过）：\n' + deliberationTranscript(updates),
+      formatDeliberationRelaySection(updates),
       ...(auditQuestion && auditQuestion !== 'NONE' ? ['独立审计员请你下一步重点调查这个问题：' + auditQuestion] : []),
       '请用具体证据回应另一位参与者和审计员，说明不确定之处和分歧。不要为了结束讨论而假装同意。不要执行任何外部写操作。',
       ...deliberationQuestionBlock(arg(args, 3), context.responseLanguage),
