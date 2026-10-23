@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(() => Promise.reject(new Error('no tauri'))), isTauri: () => false }));
 
 import type { LocalStoreFs } from '../host/localStore';
-import { builtinStages, type FlowsFile, type StageDef } from '../stages/flowModel';
+import type { FlowsFile, StageDef } from '../stages/flowModel';
 import { FlowFileMenu } from '../stages/flows/FlowFileMenu';
 import { flowsText } from '../workbench/views/flowsText';
 

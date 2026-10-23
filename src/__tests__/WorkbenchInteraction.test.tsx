@@ -172,6 +172,20 @@ describe('unsaved flow leave guard across workbench entry points', () => {
     expect(h1(container)).toBe('Tasks');
   });
 
+  it('saves a valid flow draft before leaving through a keyboard shortcut', async () => {
+    const container = await mount();
+    await enterFlowsWithUnsavedDraft(container);
+
+    await click(buttonByText(container, '＋ Add stage'));
+    await click(buttonByText(container, 'Create new stage'));
+    await settleWorkbench();
+    await key(window, { key: '2', ctrlKey: true });
+    expect(h1(container)).toBe('Stages & flows');
+
+    await click(buttonByText(container, 'Save and leave'));
+    expect(h1(container)).toBe('Tasks');
+  });
+
   it('guards keyboard shortcuts and stays on the editor when save validation fails', async () => {
     const container = await mount();
     await enterFlowsWithUnsavedDraft(container);
@@ -211,6 +225,19 @@ describe('unsaved flow leave guard across workbench entry points', () => {
     await enterFlowsWithUnsavedDraft(container);
 
     await click(buttonByText(container, 'Classic chat UI'));
+    expect(onOpenClassic).not.toHaveBeenCalled();
+    expect(h1(container)).toBe('Stages & flows');
+    expect(container.textContent).toContain('You have unsaved flow changes');
+
+    await click(buttonByText(container, 'Stay on this page'));
+    await key(window, { key: 'k', ctrlKey: true });
+    const input = document.activeElement as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(input, 'open classic chat UI');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await key(input, { key: 'Enter' });
     expect(onOpenClassic).not.toHaveBeenCalled();
     expect(h1(container)).toBe('Stages & flows');
     expect(container.textContent).toContain('You have unsaved flow changes');
