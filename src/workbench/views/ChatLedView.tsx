@@ -70,13 +70,14 @@ const PHASE_TONE: Record<RunPhase, V2StatusTone> = {
   stopped: "block",
 };
 
-const FORWARD_STATUS_COPY: Record<Exclude<ForwardStatus, 'timed-out'>, WorkbenchTextKey> = {
+const FORWARD_STATUS_COPY: Record<ForwardStatus, WorkbenchTextKey> = {
   queued: "chatLedStatusQueued",
   sending: "chatLedStatusSending",
   waiting: "chatLedStatusWaiting",
   done: "chatLedStatusDone",
   failed: "chatLedStatusFailed",
   cancelled: "chatLedStatusCancelled",
+  "timed-out": "chatLedStatusTimedOut",
 };
 
 const FORWARD_STATUS_TONE: Record<ForwardStatus, V2StatusTone> = {
@@ -492,7 +493,7 @@ function ForwardRow({
           })}
         </span>
         <Badge tone={FORWARD_STATUS_TONE[forward.status]}>
-          {forward.status === "timed-out" ? (locale === "zh" ? "超时" : "Timed out") : text.t(FORWARD_STATUS_COPY[forward.status])}
+          {text.t(FORWARD_STATUS_COPY[forward.status])}
         </Badge>
       </div>
       <details className="min-w-0">
