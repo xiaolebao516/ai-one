@@ -66,16 +66,19 @@ export interface ValidationResult {
 /**
  * Sanitize preference text to strictly safe plain text, stripping any Markdown syntax,
  * HTML tags, links, images, code markers, headers, and control characters.
+ * Neutralizes URL schemes and www prefixes to prevent GitHub Markdown autolinking.
  */
 export function sanitizePreferenceValue(value: string): string {
+  // Neutralize URL schemes and www prefixes so GitHub Markdown does not autolink them
+  const preprocessed = value.replace(/https?:\/\//gi, ' ').replace(/\bwww\./gi, ' ');
   let cleaned = '';
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i);
+  for (let i = 0; i < preprocessed.length; i++) {
+    const code = preprocessed.charCodeAt(i);
     // Strip control chars (0-31, 127-159)
     if ((code >= 0 && code <= 31) || (code >= 127 && code <= 159)) {
       cleaned += ' ';
     } else {
-      const ch = value[i];
+      const ch = preprocessed[i];
       // Strip markdown, HTML, and punctuation markers: # ` * _ ~ [ ] ( ) ! < > \ |
       if (
         ch === '#' ||
@@ -275,31 +278,35 @@ export function renderCoordinationBrief(settings: CoordinationSettings): string 
 }
 
 /**
- * Finds the index of a top-level section heading (not inside ``` code blocks).
+ * Finds the exact character index range of a top-level section heading (not inside ``` code blocks).
+ * Matches strictly the exact heading title (no suffix such as "## 协调简报说明").
+ * Accurately tracks CRLF and LF byte/character offsets without drift.
  */
 function findTopLevelSection(markdown: string, headingTitle: string): { start: number; end: number } | null {
-  const lines = markdown.split(/\r?\n/);
+  const lineRegex = /^([^\r\n]*)(\r?\n|$)/gm;
   let inCodeBlock = false;
-  let charPos = 0;
   let targetStart = -1;
   let targetEnd = -1;
+  let match: RegExpExecArray | null;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  while ((match = lineRegex.exec(markdown)) !== null) {
+    const line = match[1];
+    const lineStart = match.index;
     const isFence = line.trimStart().startsWith('```');
 
     if (isFence) {
       inCodeBlock = !inCodeBlock;
     } else if (!inCodeBlock) {
-      if (line.startsWith(`## ${headingTitle}`)) {
-        targetStart = charPos;
-      } else if (targetStart !== -1 && line.startsWith('## ')) {
-        targetEnd = charPos;
+      // Exact match for "## <title>" (trailing whitespace allowed, but no extra suffix letters)
+      if (line.trimEnd() === `## ${headingTitle}`) {
+        targetStart = lineStart;
+      } else if (targetStart !== -1 && /^##\s+\S/.test(line)) {
+        targetEnd = lineStart;
         break;
       }
     }
 
-    charPos += line.length + 1; // + newline
+    if (match[2] === '') break;
   }
 
   if (targetStart !== -1) {
@@ -313,15 +320,19 @@ function findTopLevelSection(markdown: string, headingTitle: string): { start: n
 /**
  * Injects or updates the coordination brief section into a Task Issue body markdown.
  * Safely ignores occurrences inside fenced code blocks.
+ * Accurately preserves original line break style (CRLF / LF) without offset corruption.
  */
 export function injectCoordinationBrief(issueBody: string, settings: CoordinationSettings): string {
   const brief = renderCoordinationBrief(settings);
+  const isCrlf = issueBody.includes('\r\n');
+  const sep = isCrlf ? '\r\n\r\n' : '\n\n';
+  const nl = isCrlf ? '\r\n' : '\n';
   const existingBrief = findTopLevelSection(issueBody, '协调简报');
 
   if (existingBrief) {
     const before = issueBody.slice(0, existingBrief.start);
-    const after = issueBody.slice(existingBrief.end).replace(/^\r?\n/, '');
-    return `${before}${brief}\n\n${after}`.trimEnd() + '\n';
+    const after = issueBody.slice(existingBrief.end).replace(/^(\r?\n)+/, '');
+    return `${before}${brief}${sep}${after}`.trimEnd() + nl;
   }
 
   // Prepend before top-level ## 任务与范围 or append to the end
@@ -329,10 +340,10 @@ export function injectCoordinationBrief(issueBody: string, settings: Coordinatio
   if (taskSection) {
     const before = issueBody.slice(0, taskSection.start);
     const after = issueBody.slice(taskSection.start);
-    return `${before}${brief}\n\n${after}`;
+    return `${before}${brief}${sep}${after}`;
   }
 
-  return `${issueBody.trimEnd()}\n\n${brief}\n`;
+  return `${issueBody.trimEnd()}${sep}${brief}${nl}`;
 }
 
 /**

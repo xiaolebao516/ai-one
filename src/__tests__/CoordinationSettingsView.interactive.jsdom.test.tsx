@@ -192,4 +192,20 @@ describe('CoordinationSettingsView mounted interactive tests', () => {
     expect(container.textContent).toContain('已自动保存到本机设置');
     expect(written).toContain('"reworkLimit": 8');
   });
+
+  it('mounts with no props as in Workbench and defaults to local store fs', async () => {
+    const { container } = await mount(<CoordinationSettingsView />);
+    const select = container.querySelector('#rework-limit-select') as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    expect(select.value).toBe('3');
+
+    await act(async () => {
+      select.value = '6';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const preview = container.querySelector('[data-testid="brief-preview"]');
+    expect(preview?.textContent).toContain('- 返工上限：6 轮');
+    expect(container.textContent).toContain('已自动保存到本机设置');
+  });
 });

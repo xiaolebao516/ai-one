@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   AUTH_EXPIRED_OPTIONS,
+  DEFAULT_AI_PREFERENCES,
   DEFAULT_COORDINATION_SETTINGS,
   EXCEED_LIMIT_OPTIONS,
   QUOTA_TIGHT_OPTIONS,
@@ -16,7 +17,7 @@ import {
   type QuotaTightAction,
   type StorageLike,
 } from '../../stages/coordinationModel';
-import type { LocalStoreFs } from '../../host/localStore';
+import { getLocalStoreFs, type LocalStoreFs } from '../../host/localStore';
 import { Badge, Button, Card, Notice, SegmentedControl, Select } from '../../ui/v2';
 
 export interface CoordinationSettingsViewProps {
@@ -36,14 +37,24 @@ const REWORK_LIMIT_OPTIONS = Array.from({ length: 10 }, (_, i) => ({
  *
  * Local preferences for Claude Code coordination, rendered into task brief markdown.
  */
-export function CoordinationSettingsView({ storage, fs, onSaved, className }: CoordinationSettingsViewProps) {
-  const [settings, setSettings] = useState<CoordinationSettings>(() => loadCoordinationSettings(storage));
+export function CoordinationSettingsView({ storage, fs: propFs, onSaved, className }: CoordinationSettingsViewProps) {
+  // If storage is explicitly provided (for legacy sync tests), use it;
+  // otherwise default to propFs ?? getLocalStoreFs() for production local store file operations
+  const activeFs = useMemo(() => {
+    if (storage) return undefined;
+    return propFs ?? getLocalStoreFs();
+  }, [storage, propFs]);
+
+  const [settings, setSettings] = useState<CoordinationSettings>(() => {
+    if (storage) return loadCoordinationSettings(storage);
+    return { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_AI_PREFERENCES } };
+  });
   const [saveStatus, setSaveStatus] = useState<{ tone: 'done' | 'block'; message: string } | null>(null);
 
   useEffect(() => {
     let active = true;
-    if (fs) {
-      loadCoordination(fs).then((res) => {
+    if (activeFs) {
+      loadCoordination(activeFs).then((res) => {
         if (!active) return;
         setSettings(res.settings);
         if (res.status === 'recovered') {
@@ -57,15 +68,15 @@ export function CoordinationSettingsView({ storage, fs, onSaved, className }: Co
     return () => {
       active = false;
     };
-  }, [fs]);
+  }, [activeFs]);
 
   const brief = renderCoordinationBrief(settings);
 
   const updateSetting = async <K extends keyof CoordinationSettings>(key: K, value: CoordinationSettings[K]) => {
     const next = { ...settings, [key]: value };
     setSettings(next);
-    if (fs) {
-      const result = await saveCoordination(next, fs);
+    if (activeFs) {
+      const result = await saveCoordination(next, activeFs);
       if (result.success) {
         setSaveStatus({ tone: 'done', message: '已自动保存到本机设置' });
         onSaved?.(next);
@@ -91,8 +102,8 @@ export function CoordinationSettingsView({ storage, fs, onSaved, className }: Co
   const handleReset = async () => {
     const reset = { ...DEFAULT_COORDINATION_SETTINGS, aiPreferences: { ...DEFAULT_COORDINATION_SETTINGS.aiPreferences } };
     setSettings(reset);
-    if (fs) {
-      const result = await saveCoordination(reset, fs);
+    if (activeFs) {
+      const result = await saveCoordination(reset, activeFs);
       if (result.success) {
         setSaveStatus({ tone: 'done', message: '已恢复默认设置' });
         onSaved?.(reset);

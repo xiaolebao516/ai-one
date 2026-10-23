@@ -50,8 +50,9 @@ describe('coordinationModel', () => {
     });
 
     it('neutralizes Markdown links, images, HTML tags and formatting into plain text', () => {
-      expect(sanitizePreferenceValue('[链接文字](https://evil.com)')).toBe('链接文字 https://evil.com');
-      expect(sanitizePreferenceValue('![图片描述](https://evil.com/img.png)')).toBe('图片描述 https://evil.com/img.png');
+      expect(sanitizePreferenceValue('[链接文字](https://evil.com)')).toBe('链接文字 evil.com');
+      expect(sanitizePreferenceValue('![图片描述](https://evil.com/img.png)')).toBe('图片描述 evil.com/img.png');
+      expect(sanitizePreferenceValue('http://evil.com/path and www.evil.com')).toBe('evil.com/path and evil.com');
       expect(sanitizePreferenceValue('<script>alert("xss")</script>')).toBe('script alert "xss" /script');
       expect(sanitizePreferenceValue('**粗体**与*斜体*~删除线~')).toBe('粗体 与 斜体 删除线');
     });
@@ -264,6 +265,36 @@ describe('coordinationModel', () => {
       expect(updated.match(/^## 协调简报/gm)).toHaveLength(1);
       expect(updated).toContain('- 返工上限：8 轮');
       expect(updated).not.toContain('旧简报内容');
+    });
+
+    it('does not replace headings with suffixes like ## 协调简报说明 or ## 任务与范围规范', () => {
+      const bodyWithSuffixHeadings = [
+        '# Title',
+        '',
+        '## 协调简报说明与指南',
+        '这里是指南说明，不是真正的协调简报',
+        '',
+        '## 任务与范围规范',
+        '这里是规范说明',
+      ].join('\n');
+
+      const injected = injectCoordinationBrief(bodyWithSuffixHeadings, DEFAULT_COORDINATION_SETTINGS);
+      expect(injected).toContain('## 协调简报说明与指南\n这里是指南说明');
+      expect(injected).toContain('## 任务与范围规范\n这里是规范说明');
+      expect(injected).toContain('## 协调简报\n- 返工上限：3 轮');
+    });
+
+    it('preserves CRLF line endings accurately without character offset drift', () => {
+      const crlfBody = '# Title\r\n\r\n## 关联 / 派工\r\n- Owner: test\r\n\r\n## 协调简报\r\n- 旧简报\r\n\r\n## 任务与范围\r\n描述内容\r\n';
+      const updated = injectCoordinationBrief(crlfBody, {
+        ...DEFAULT_COORDINATION_SETTINGS,
+        reworkLimit: 5,
+      });
+
+      expect(updated).toContain('\r\n');
+      expect(updated).toContain('## 协调简报\n- 返工上限：5 轮');
+      expect(updated).toContain('## 任务与范围\r\n描述内容');
+      expect(updated).not.toContain('旧简报');
     });
 
     it('buildTaskIssueBody creates ready-to-use task issue body containing brief', () => {
