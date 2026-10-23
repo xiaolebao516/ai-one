@@ -1,6 +1,3 @@
-import type { Dispatch, SetStateAction } from 'react';
-import type { LocalStoreFs } from '../host/localStore';
-import type { Locale } from '../i18n/resolve';
 import {
   addStageToFlow,
   canDeleteStage,
@@ -8,13 +5,12 @@ import {
   duplicateStage,
   moveStageRef,
   removeStageRef,
-  type FlowDef,
   type FlowsFile,
   type StageDef,
 } from './flowModel';
 import { applyStageDraft, canOverrideStageDraft, resolveImportChoice, stageForSelection, type StageDraftScope, type StageSelection, type ImportResolution } from './flowEditor';
-import type { UseFlowsResult } from './useFlows';
-import type { FlowsText } from '../workbench/views/flowsText';
+import { createFlowDefinition, createStageDefinition, replaceFlowStage, uniqueFlowEditorId } from './flows/flowEditorFactory';
+import type { FlowsEditorActionContext, FlowsEditorActionHandlers, PendingEditorAction } from './flows/flowEditorTypes';
 
 export interface EditorFeedback {
   tone: 'neutral' | 'block';
@@ -94,50 +90,7 @@ export interface FlowsEditorActionHandlers {
   cancelScope: () => void;
 }
 
-let idCounter = 0;
 
-function uniqueId(prefix: string, existing: readonly string[]): string {
-  const occupied = new Set(existing);
-  let candidate = '';
-  do {
-    idCounter += 1;
-    candidate = prefix + '-' + Date.now().toString(36) + '-' + idCounter.toString(36);
-  } while (occupied.has(candidate));
-  return candidate;
-}
-
-function newStage(locale: Locale, file: FlowsFile): StageDef {
-  const zh = locale.toLowerCase().startsWith('zh');
-  return {
-    id: uniqueId('stage', [...file.stages.map((stage) => stage.id), ...file.flows.map((flow) => flow.id)]),
-    name: zh ? '新阶段' : 'New stage',
-    collaboration: 'solo',
-    participants: [{ resource: 'chatgpt', role: zh ? '执行者' : 'Executor', effort: 'default' }],
-    endCondition: 'user-confirms',
-    onFail: 'stop-and-ask',
-    builtin: false,
-  };
-}
-
-function newFlow(locale: Locale, file: FlowsFile): FlowDef {
-  const zh = locale.toLowerCase().startsWith('zh');
-  return {
-    id: uniqueId('flow', [...file.flows.map((flow) => flow.id), ...file.stages.map((stage) => stage.id)]),
-    name: zh ? '新流程' : 'New flow',
-    stages: [],
-    builtin: false,
-  };
-}
-
-function cloneFlowWithStage(file: FlowsFile, flowId: string, index: number, stageId: string): FlowsFile {
-  return {
-    ...file,
-    flows: file.flows.map((flow) => flow.id !== flowId ? flow : {
-      ...flow,
-      stages: flow.stages.map((ref, refIndex) => refIndex === index ? { stageId } : ref),
-    }),
-  };
-}
 
 export function createFlowsEditorActions(context: FlowsEditorActionContext): FlowsEditorActionHandlers {
   const performAction = (action: PendingEditorAction, source = context.flows.file) => {
@@ -172,7 +125,7 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
     }
 
     if (action.kind === 'create-flow') {
-      const flow = newFlow(context.locale, source);
+      const flow = createFlowDefinition(context.locale, source);
       const next = { ...source, flows: [...source.flows, flow] };
       context.flows.updateFile(() => next);
       context.setSelectedFlowId(flow.id);
@@ -183,7 +136,7 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
     }
 
     if (action.kind === 'create-stage') {
-      const stage = newStage(context.locale, source);
+      const stage = createStageDefinition(context.locale, source);
       const next = { ...source, stages: [...source.stages, stage] };
       context.flows.updateFile(() => next);
       setSelectionFor({ kind: 'library', stageId: stage.id }, next);
@@ -272,7 +225,7 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
     if (!flow) return;
     const copied = duplicateFlow(flow, source.flows);
     const allIds = [...source.stages.map((stage) => stage.id), ...source.flows.map((item) => item.id)];
-    const copy = allIds.includes(copied.id) ? { ...copied, id: uniqueId('flow-copy', allIds) } : copied;
+    const copy = allIds.includes(copied.id) ? { ...copied, id: uniqueFlowEditorId('flow-copy', allIds) } : copied;
     const next = { ...source, flows: [...source.flows, copy] };
     context.flows.updateFile(() => next);
     const nextSelection: StageSelection | null = copy.stages.length ? { kind: 'flow', flowId: copy.id, index: 0 } : null;
@@ -362,13 +315,13 @@ export function createFlowsEditorActions(context: FlowsEditorActionContext): Flo
     if (!context.file || !context.selectedStage || !context.draft || context.mutationsDisabled) return;
     const copied = duplicateStage(context.draft, context.file.stages);
     const allIds = [...context.file.flows.map((flow) => flow.id), ...context.file.stages.map((stage) => stage.id)];
-    const copy = allIds.includes(copied.id) ? { ...copied, id: uniqueId('stage-copy', allIds) } : copied;
+    const copy = allIds.includes(copied.id) ? { ...copied, id: uniqueFlowEditorId('stage-copy', allIds) } : copied;
     let next: FlowsFile = { ...context.file, stages: [...context.file.stages, copy] };
     let nextSelection: StageSelection = { kind: 'library', stageId: copy.id };
     if (context.selection?.kind === 'flow') {
       const flow = context.file.flows.find((item) => item.id === context.selection?.flowId);
       if (flow && !flow.builtin) {
-        next = cloneFlowWithStage(next, flow.id, context.selection.index, copy.id);
+        next = replaceFlowStage(next, flow.id, context.selection.index, copy.id);
         nextSelection = { kind: 'flow', flowId: flow.id, index: context.selection.index };
       }
     }
