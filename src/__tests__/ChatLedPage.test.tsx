@@ -145,7 +145,7 @@ describe('ChatLedPage persistence safety', () => {
     const env = makeEnv();
     mocks.createRealChatLedEnv.mockReturnValue(env);
     const original = window.localStorage.setItem.bind(window.localStorage);
-    vi.spyOn(window.localStorage, 'setItem').mockImplementation((key, value) => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key, value) => {
       if (key === CHAT_LED_STORAGE_KEY) throw new Error('simulated storage quota');
       original(key, value);
     });
@@ -197,7 +197,7 @@ describe('ChatLedPage persistence safety', () => {
     window.localStorage.setItem(CHAT_LED_STORAGE_KEY, JSON.stringify([makeRun()]));
     const original = window.localStorage.setItem.bind(window.localStorage);
     let keyWrites = 0;
-    vi.spyOn(window.localStorage, 'setItem').mockImplementation((key, value) => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key, value) => {
       if (key === CHAT_LED_STORAGE_KEY && ++keyWrites === 2) throw new Error('one transient quota error');
       original(key, value);
     });

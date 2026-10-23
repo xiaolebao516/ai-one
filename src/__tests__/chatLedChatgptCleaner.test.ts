@@ -238,9 +238,17 @@ describe('ChatGPT page scripts: only the registered conversation is touched', ()
       '</ul></nav>',
     ].join('');
     const other = vi.fn();
-    const mine = vi.fn();
-    document.getElementById('other')?.addEventListener('click', other);
-    document.getElementById('mine')?.addEventListener('click', mine);
+    const mine = vi.fn(() => {
+      const trigger = document.getElementById('mine');
+      trigger?.setAttribute('aria-expanded', 'true');
+      trigger?.setAttribute('aria-controls', 'menu-mine');
+      const menu = document.createElement('div');
+      menu.id = 'menu-mine';
+      menu.setAttribute('role', 'menu');
+      document.body.append(menu);
+    });
+    document.getElementById('other')?.addEventListener('pointerdown', other);
+    document.getElementById('mine')?.addEventListener('pointerdown', mine);
 
     expect(JSON.parse(runPageScript(buildOpenMenuScript(CONVERSATION_PATH))).ok).toBe(true);
     expect(mine).toHaveBeenCalledTimes(1);
@@ -362,7 +370,8 @@ describe('ChatGPT page scripts: ownership and readback fail closed', () => {
     // ...but not when part of the previously seen list is missing (still loading)
     document.body.innerHTML = '<aside data-testid="history"><a href="/c/123e4567-e89b-42d3-a456-426614174888">x</a></aside><main><p>Welcome</p></main>';
     expect(JSON.parse(runPageScript(buildConfirmGoneScript(CONVERSATION_ID, [OTHER_ID_PATH]))).ok).toBe(false);
-    // deleted: explicit not-found evidence is enough even with an empty list
+    // deleted: explicit not-found evidence must be bound to the requested target path
+    window.history.replaceState({}, '', CONVERSATION_PATH);
     document.body.innerHTML = '<aside data-testid="history"></aside><main><h1>Conversation not found</h1></main>';
     expect(JSON.parse(runPageScript(buildConfirmGoneScript(CONVERSATION_ID))).ok).toBe(true);
   });
