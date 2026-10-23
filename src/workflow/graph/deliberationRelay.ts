@@ -6,6 +6,20 @@ import { SKIP_RESPONSE } from '../state';
  * not-yet-seen replies from the OTHER provider; never shorten a reply or rely
  * on repeating the full transcript at every turn.
  */
+/** Keep the exact full-reply heading and transcript format shared by deliberation and chat forwarding. */
+export function deliberationTranscript(updates: readonly Pick<HistoryItem, 'name' | 'round' | 'text'>[]): string {
+  return updates.map((item) => {
+    const heading = item.round ? '第 ' + item.round + ' 轮 · ' + item.name : '独立初答 · ' + item.name;
+    return heading + '\n' + item.text;
+  }).join('\n\n---\n\n');
+}
+
+export function formatDeliberationRelaySection(
+  updates: readonly Pick<HistoryItem, 'name' | 'round' | 'text'>[],
+): string {
+  return '以下是另一位 AI 的新回复（完整内容，本对话尚未收到过）：\n' + deliberationTranscript(updates);
+}
+
 export function newDeliberationReplies(
   history: readonly HistoryItem[],
   receiverName: string,
