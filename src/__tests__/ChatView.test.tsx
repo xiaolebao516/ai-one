@@ -4,7 +4,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ALL_AI_PROVIDERS } from '../../shared/constants';
 import type { AIProvider, ProviderState } from '../../shared/types';
-import { createConversationSession } from '../../ui/conversationSessions';
+import { createConversationSession } from '../ui/conversationSessions';
+import { I18nProvider } from '../i18n/context';
 import { ChatView } from '../workbench/views/chat/ChatView';
 import { CHAT_RESPONSE_TIMEOUT_MS } from '../workbench/views/chat/chatModel';
 import type { ChatRuntime } from '../workbench/views/chat/useChatRuntime';
@@ -92,7 +93,9 @@ async function mount(runtime: ChatRuntime) {
   const root = createRoot(container);
   mounted.push({ root, container });
   await act(async () => root.render(
-    <ChatView locale="en" runtime={runtime} onConvertToTask={() => {}} onStartGrill={() => {}} />,
+    <I18nProvider language="en">
+      <ChatView locale="en" runtime={runtime} onConvertToTask={() => {}} onStartGrill={() => {}} />
+    </I18nProvider>,
   ));
   return { root, container };
 }
@@ -123,7 +126,9 @@ describe('ChatView', () => {
       },
     };
     await act(async () => root.render(
-      <ChatView locale="en" runtime={timedOutRuntime} onConvertToTask={() => {}} onStartGrill={() => {}} />,
+      <I18nProvider language="en">
+        <ChatView locale="en" runtime={timedOutRuntime} onConvertToTask={() => {}} onStartGrill={() => {}} />
+      </I18nProvider>,
     ));
     expect(container.textContent).toContain('Timed out · 600s');
   });
@@ -155,7 +160,7 @@ describe('ChatView', () => {
 
   it('offers exactly four presets', async () => {
     const { container } = await mount(fakeRuntime());
-    const options = [...container.querySelectorAll<HTMLSelectElement>('#chat-preset-select option')];
+    const options = [...container.querySelectorAll<HTMLOptionElement>('#chat-preset-select option')];
     expect(options.map((option) => option.value)).toEqual(['free', 'debate', 'consult', 'deliberation']);
   });
 });
