@@ -1,5 +1,6 @@
 import { useState, type DragEvent, type KeyboardEvent } from 'react';
 import type { StageDef } from '../flowModel';
+import { stageMoveTarget } from '../flowEditor';
 import { Badge, Card, cx } from '../../ui/v2';
 import type { FlowsText } from '../../workbench/views/flowsText';
 import type { Locale } from '../../i18n/resolve';
@@ -68,9 +69,10 @@ export function FlowStageCard({
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') || readOnly) return;
+    const target = stageMoveTarget(index, event.key, event.altKey);
+    if (target === null || readOnly) return;
     event.preventDefault();
-    onMove(index, index + (event.key === 'ArrowUp' ? -1 : 1));
+    onMove(index, target);
   };
 
   return (
