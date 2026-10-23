@@ -139,6 +139,7 @@ export function settlePendingTargets(
   targets: readonly AIProvider[],
   current: Partial<Record<AIProvider, ProviderReplyState>>,
   states: Record<AIProvider, ProviderState>,
+  now = Date.now(),
 ): Partial<Record<AIProvider, ProviderReplyState>> {
   const next = { ...current };
   for (const provider of targets) {
@@ -152,8 +153,20 @@ export function settlePendingTargets(
       next[provider] = { status: 'notSent', content: reply.content, notSentReason: 'not-probed' };
     } else if (!isSendable(state)) {
       next[provider] = { status: 'notSent', content: reply.content, notSentReason: 'not-ready' };
+    } else if (reply.startedAt !== undefined && now - reply.startedAt >= CHAT_RESPONSE_TIMEOUT_MS) {
+      next[provider] = {
+        status: 'timedOut',
+        content: reply.content,
+        error: 'No final response was received before the timeout.',
+        startedAt: reply.startedAt,
+      };
     } else {
-      next[provider] = { status: 'failed', content: reply.content, error: 'No final response was received.' };
+      next[provider] = {
+        status: 'failed',
+        content: reply.content,
+        error: 'No final response was received.',
+        ...(reply.startedAt !== undefined ? { startedAt: reply.startedAt } : {}),
+      };
     }
   }
   return next;
