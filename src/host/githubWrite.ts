@@ -87,12 +87,14 @@ const MESSAGES: Record<GithubWriteCode, string> = {
   sub_issue_failed: 'Issue 已创建，但没能挂到父 Spec 下',
 };
 
+const PRE_WRITE_TIMEOUT_MESSAGE = '请求超时，尚未发出写入，可稍后重试';
 const PR_NOT_OPEN_MESSAGE = 'PR 不存在或当前不是开放状态，已拒绝';
 const LABEL_FAILED_MESSAGE = '评论已确认，但标签未能更新';
 const SUB_ISSUE_UNCONFIRMED_MESSAGE = 'Issue 已创建，但子 Issue 关系已发出，暂未确认；请先回读，不要重试';
 
 const ALLOWED_MESSAGES = new Set<string>([
   ...Object.values(MESSAGES),
+  PRE_WRITE_TIMEOUT_MESSAGE,
   PR_NOT_OPEN_MESSAGE,
   LABEL_FAILED_MESSAGE,
   SUB_ISSUE_UNCONFIRMED_MESSAGE,
@@ -158,6 +160,7 @@ function validTitle(value: unknown): value is string {
   const trimmedLength = characterCount(value.trim());
   return trimmedLength >= 1
     && trimmedLength <= 256
+    && characterCount(value) <= 256
     && validString(value, MAX_TEXT_CHARS, false, true);
 }
 
@@ -318,6 +321,18 @@ function normalizeResult(value: unknown): GithubWriteResult {
     return unconfirmedResult();
   }
   if (value.message === PR_NOT_OPEN_MESSAGE && value.status !== 'failed') return unconfirmedResult();
+  // A timeout either happened before any write (failed, nothing sent) or after one started (unconfirmed).
+  if (
+    (value.message === PRE_WRITE_TIMEOUT_MESSAGE)
+    !== (value.code === 'timeout' && value.status === 'failed')
+  ) {
+    return unconfirmedResult();
+  }
+  if (value.code === 'timeout' && value.status !== 'failed' && value.status !== 'unconfirmed') {
+    return unconfirmedResult();
+  }
+  if (value.message === PRE_WRITE_TIMEOUT_MESSAGE && steps.length > 0) return unconfirmedResult();
+  if (value.message === MESSAGES.timeout && value.status !== 'unconfirmed') return unconfirmedResult();
   if (
     (value.code === 'head_mismatch' || value.code === 'pr_issue_mismatch' || value.code === 'invalid_input'
       || value.code === 'not_allowed')

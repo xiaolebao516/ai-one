@@ -411,7 +411,14 @@ fn result(
     }
 }
 
+/// Shown for a read that timed out before any write request was sent (status failed + timeout).
+/// Timeouts after a write started are always `unconfirmed` and keep the "may be uncertain" wording.
+const PRE_WRITE_TIMEOUT_MESSAGE: &str = "请求超时，尚未发出写入，可稍后重试";
+
 fn simple_result(status: GithubWriteState, code: GithubWriteCode) -> GithubWriteResult {
+    if status == GithubWriteState::Failed && code == GithubWriteCode::Timeout {
+        return result(status, code, PRE_WRITE_TIMEOUT_MESSAGE, Vec::new());
+    }
     result(status, code, fixed_message(code), Vec::new())
 }
 
@@ -443,6 +450,7 @@ fn valid_repo_input(repo: &str) -> bool {
 fn valid_title(title: &str) -> bool {
     let trimmed_length = title.trim().chars().count();
     (1..=256).contains(&trimmed_length)
+        && title.chars().count() <= 256
         && !title.chars().any(|ch| matches!(ch, '\n' | '\r' | '\t'))
         && valid_string(title, MAX_TEXT_CHARS, false, true)
 }
@@ -1519,17 +1527,12 @@ async fn create_issue<G: GhApi>(gh: &G, args: &CreateIssueArgs) -> GithubWriteRe
             ));
             return confirmed;
         }
-        if items.len() < 100 {
-            confirmed.status = GithubWriteState::Partial;
-            confirmed.code = GithubWriteCode::SubIssueFailed;
-            confirmed.message = fixed_message(GithubWriteCode::SubIssueFailed).to_string();
-            confirmed.steps.push(step(
-                GithubWriteStepName::SubIssue,
-                GithubWriteStepState::Failed,
-            ));
-            return confirmed;
-        }
-        if page == 10 {
+        let malformed = items
+            .iter()
+            .any(|item| item.get("number").and_then(Value::as_u64).is_none());
+        // The POST itself succeeded, so "not listed" (or an unreadable list) cannot prove the link
+        // was not made: report it as unknown instead of a retry-inviting failure.
+        if malformed || items.len() < 100 || page == 10 {
             confirmed.status = GithubWriteState::Unconfirmed;
             confirmed.code = GithubWriteCode::Unconfirmed;
             confirmed.message = "Issue 已创建，但子 Issue 关系已发出，暂未确认；请先回读，不要重试".to_string();
@@ -1808,6 +1811,8 @@ mod tests {
         assert!(!valid_title("multi\rline"));
         assert!(!valid_title("multi\tline"));
         assert!(!valid_title(&"x".repeat(257)));
+        assert!(!valid_title(&format!(" {} ", "x".repeat(255))), "raw length counts too");
+        assert!(valid_title(&"x".repeat(256)));
         assert!(valid_body(""));
         assert!(!valid_body(&"x".repeat(MAX_TEXT_CHARS + 1)));
         assert!(valid_text("line one\nline two"));
@@ -2067,6 +2072,16 @@ mod tests {
         assert_eq!(failed_result.status, GithubWriteState::Failed);
         assert_eq!(failed_result.steps[0].state, GithubWriteStepState::Failed);
         assert_eq!(failed.write_calls().len(), 1);
+
+        // A read timeout before any write is a clean failure with its own wording and zero writes.
+        let pre_write = FakeGh::new(vec![Err(GhError::Timeout)]);
+        let pre_write_result = accept(&pre_write, &valid_accept_args(SHA)).await;
+        assert_eq!(pre_write_result.status, GithubWriteState::Failed);
+        assert_eq!(pre_write_result.code, GithubWriteCode::Timeout);
+        assert_eq!(pre_write_result.message, PRE_WRITE_TIMEOUT_MESSAGE);
+        assert!(pre_write_result.steps.is_empty());
+        assert!(pre_write.write_calls().is_empty());
+        assert_ne!(PRE_WRITE_TIMEOUT_MESSAGE, fixed_message(GithubWriteCode::Timeout));
     }
 
     #[tokio::test]
