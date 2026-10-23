@@ -25,6 +25,7 @@ export interface UseFlowsResult {
   save: (candidate?: FlowsFile) => Promise<boolean>;
   reload: () => Promise<void>;
   clearIssues: () => void;
+  discardChanges: () => FlowsFile | null;
 }
 
 function builtInFallback(): FlowsFile {
@@ -46,6 +47,7 @@ export function useFlows(fs?: LocalStoreFs): UseFlowsResult {
   const loadRun = useRef(0);
   const [file, setFileState] = useState<FlowsFile | null>(null);
   const [savedJson, setSavedJson] = useState<string | undefined>();
+  const [savedFile, setSavedFile] = useState<FlowsFile | null>(null);
   const [status, setStatus] = useState<FlowsLoadStatus>('loading');
   const [backup, setBackup] = useState<string | undefined>();
   const [loadError, setLoadError] = useState<string | undefined>();
@@ -69,12 +71,14 @@ export function useFlows(fs?: LocalStoreFs): UseFlowsResult {
       if (run !== loadRun.current) return;
       setFile(result.file);
       setSavedJson(JSON.stringify(result.file));
+      setSavedFile(result.file);
       setStatus(result.status);
       setBackup(result.backup);
     } catch (error) {
       if (run !== loadRun.current) return;
       setFile(builtInFallback());
       setSavedJson(undefined);
+      setSavedFile(null);
       setStatus('error');
       setBackup(undefined);
       setLoadError(errorMessage(error));
@@ -108,6 +112,7 @@ export function useFlows(fs?: LocalStoreFs): UseFlowsResult {
       }
       setFile(target);
       setSavedJson(JSON.stringify(target));
+      setSavedFile(target);
       setStatus('ok');
       setIssues([]);
       return true;
@@ -134,5 +139,12 @@ export function useFlows(fs?: LocalStoreFs): UseFlowsResult {
     save,
     reload,
     clearIssues: () => setIssues([]),
+    discardChanges: () => {
+      if (!savedFile) return null;
+      setFile(savedFile);
+      setIssues([]);
+      setOperationError(undefined);
+      return savedFile;
+    },
   };
 }
