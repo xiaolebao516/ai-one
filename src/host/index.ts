@@ -3,6 +3,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { onBridgeMessage } from '../bridge/bus';
+export * from './githubWrite';
 import type { AdapterNotice } from '../ui/reportBroken';
 
 export interface StoredSnapshotInfo {
