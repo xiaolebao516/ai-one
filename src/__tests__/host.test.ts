@@ -351,4 +351,24 @@ describe('host send with outbox draining (#143)', () => {
     expect(plain).not.toContain('peekOutbox');
     expect(plain).toContain('dispatch');
   });
+
+  it('keeps draining until a size-limited peek reports nothing left, then dispatches once', async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await host.provider.send('chatgpt#2', 'task B', { drainOutbox: true });
+    const js = String((invokeMock.mock.calls.at(-1)?.[1] as { js: string }).js);
+
+    // A page whose outbox holds 7 stale entries but only ever shows 2 per peek (the real batch limit).
+    let outbox = Array.from({ length: 7 }, (_, index) => ({ mid: index + 1 }));
+    const dispatched: unknown[] = [];
+    const bridge = {
+      peekOutbox: () => outbox.slice(0, 2),
+      ackBulk: (maxMid: number) => { outbox = outbox.filter((entry) => entry.mid > maxMid); },
+      dispatch: (message: unknown) => { dispatched.push(message); },
+    };
+    new Function('window', js)({ __MAC_BRIDGE__: bridge });
+
+    expect(outbox).toEqual([]);
+    expect(dispatched).toHaveLength(1);
+    expect((dispatched[0] as { payload: { text: string } }).payload.text).toBe('task B');
+  });
 });
