@@ -1,5 +1,6 @@
 import type { Locale } from '../../i18n/resolve';
 import type { FlowDef, FlowsFile, StageDef } from '../flowModel';
+import { isChineseFlowsLocale } from '../../workbench/views/flowsText';
 
 export function uniqueFlowEditorId(prefix: string, existing: readonly string[]): string {
   const occupied = new Set(existing);
@@ -13,7 +14,7 @@ export function uniqueFlowEditorId(prefix: string, existing: readonly string[]):
 }
 
 export function createStageDefinition(locale: Locale, file: FlowsFile): StageDef {
-  const zh = locale.toLowerCase().startsWith('zh');
+  const zh = isChineseFlowsLocale(locale);
   return {
     id: uniqueFlowEditorId('stage', [...file.stages.map((stage) => stage.id), ...file.flows.map((flow) => flow.id)]),
     name: zh ? '新阶段' : 'New stage',
