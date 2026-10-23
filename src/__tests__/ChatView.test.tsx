@@ -117,6 +117,8 @@ describe('ChatView', () => {
     expect(container.textContent).toContain('Replying · 2s');
     expect(container.textContent).toContain('Not selected');
     expect(container.textContent).toContain('Failed');
+    const options = [...container.querySelectorAll<HTMLOptionElement>('#chat-preset-select option')];
+    expect(options.map((option) => option.value)).toEqual(['free', 'debate', 'consult', 'deliberation']);
 
     const timedOutRuntime = {
       ...runtime,
@@ -158,9 +160,4 @@ describe('ChatView', () => {
     expect(runtime.forwardMessage).toHaveBeenCalledWith('chatgpt', original, ['claude'], 'Check the second section');
   });
 
-  it('offers exactly four presets', async () => {
-    const { container } = await mount(fakeRuntime());
-    const options = [...container.querySelectorAll<HTMLOptionElement>('#chat-preset-select option')];
-    expect(options.map((option) => option.value)).toEqual(['free', 'debate', 'consult', 'deliberation']);
-  });
 });
