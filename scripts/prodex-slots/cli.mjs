@@ -19,6 +19,8 @@ export const usage = [
   '                                        -- <args of `prodex pro browser ask`>',
   '  release --slot N [--task N] [--session KEY] [--thread-url URL] [--note "…"]',
   '                                        write the "thread closed, slot reusable" record',
+  '  release ... --request-id ID --handoff-url GITHUB_COMMENT_URL',
+  '                                        also archive the finished chat (needs --task and --thread-url; see scripts/prodex-archive/README.md)',
   'Ownership (run and release): --task 71, --session s1, --thread-url https://chatgpt.com/c/<id>.',
   'They are shown by `list` so another session can see who a slot serves; never reply text.',
   'Use the ask\'s own --session-key after `--`: that one is prodex\'s, this one is ownership.',
@@ -26,7 +28,7 @@ export const usage = [
   '`run` passes the ask output (the reply) through to stdout: redirect it to a file, do not log it.',
 ].join('\n');
 
-const VALUE_OPTIONS = { '--slot': 'slot', '--count': 'count', '--wait-ms': 'waitMs', '--task': 'task', '--session': 'sessionKey', '--thread-url': 'threadUrl', '--note': 'note' };
+const VALUE_OPTIONS = { '--slot': 'slot', '--count': 'count', '--wait-ms': 'waitMs', '--task': 'task', '--session': 'sessionKey', '--thread-url': 'threadUrl', '--note': 'note', '--request-id': 'requestId', '--handoff-url': 'handoffUrl' };
 const OWNERSHIP_FLAGS = { task: '--task', sessionKey: '--session', threadUrl: '--thread-url' };
 const NUMERIC_OPTIONS = new Set(['--slot', '--count', '--wait-ms']);
 // States that are not a problem for the user: the slot works or will work by itself.
@@ -51,7 +53,7 @@ export function parseArgs(args) {
       if (name in VALUE_OPTIONS || name === '--json') {
         throw new Error(`Unknown option: ${name}. Options take their value as the next argument (${name} <value>); the "=" form is not accepted here`);
       }
-      throw new Error('Unknown option. Expected one of: --json, --slot, --count, --wait-ms, --task, --session, --thread-url, each with its value as the next argument; the "=" form is not accepted');
+      throw new Error('Unknown option. Expected one of: --json, --slot, --count, --wait-ms, --task, --session, --thread-url, --note, --request-id, --handoff-url, each with its value as the next argument; the "=" form is not accepted');
     }
     const value = rest[++index];
     if (value === undefined || value.startsWith('--')) throw new Error(`Missing value: ${arg}`);
@@ -89,6 +91,16 @@ export function parseArgs(args) {
   }
   if (options.note !== undefined && command !== 'release') {
     throw new UsageError('--note only applies to release');
+  }
+  const archiveFlags = ['requestId', 'handoffUrl'].filter((key) => options[key] !== undefined);
+  if (archiveFlags.length) {
+    // Archive evidence only makes sense on release, and only as a complete set; rejected before
+    // any state changes. The values are never echoed (they may be pasted tokens).
+    if (command !== 'release') throw new UsageError('--request-id / --handoff-url only apply to release');
+    if (archiveFlags.length !== 2) throw new UsageError('Archiving on release needs both --request-id and --handoff-url');
+    if (options.task === undefined || options.threadUrl === undefined) {
+      throw new UsageError('Archiving on release also needs --task and --thread-url');
+    }
   }
   // Validate the note here, before release touches any state: a rejected note must not take the
   // claim down with it.
@@ -330,6 +342,26 @@ async function runCommand(options, passthrough, deps, err, sweepReport = []) {
   }
 }
 
+// Closing a thread is the one moment the chat is known to be finished, so this is where the
+// archive is started. It never changes the release result: the slot is already free, and an
+// archive that is skipped or fails is reported loudly instead of failing the release.
+async function archiveOnRelease(options, deps, err) {
+  if (options.requestId === undefined) {
+    if (options.ownership.threadUrl) {
+      err('prodex-slots: archive NOT attempted: the chat stays open in ChatGPT. After the Archive-ready Handoff is posted, close it with `release ... --request-id ID --handoff-url URL` (or run scripts/prodex-archive/cli.mjs skip to keep it).');
+    }
+    return;
+  }
+  const autoFinish = deps.autoFinish ?? (async (argv, io) => (await import('../prodex-archive/cli.mjs')).main(argv, { home: deps.home, ...io }));
+  const lines = [];
+  const code = await autoFinish(['auto-finish', '--slot', String(options.slot), '--task', String(options.ownership.task).replace('#', ''),
+    '--thread-url', options.ownership.threadUrl, '--request-id', options.requestId, '--handoff-url', options.handoffUrl],
+  { out: (line) => lines.push(line), err: (line) => lines.push(line) });
+  const detail = lines.join(' ').replace(/https?:\/\/\S+/g, '[url]');
+  if (code === 0) err(`prodex-slots: archive: ${detail}`);
+  else err(`prodex-slots: archive NOT done (the slot is released anyway): ${detail}. Inspect it, then retry with scripts/prodex-archive/cli.mjs retry.`);
+}
+
 export async function main(args, { deps = realDeps(), out = (s) => process.stdout.write(`${s}\n`), err = (s) => process.stderr.write(`${s}\n`) } = {}) {
   try {
     if (!args.length || args[0] === '--help') { out(usage); return EXIT.OK; }
@@ -371,6 +403,7 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
       releaseClaim(deps.home, options.slot);
       const record = writeClosure(deps.home, options.slot, { ownership: options.ownership, note: options.note });
       err(`prodex-slots: released slot ${options.slot}${had ? ' (claim removed)' : ' (no claim was present)'}; closed record written (${record.task ?? 'no task'}${record.note ? `, "${record.note}"` : ''}). The slot is reusable.`);
+      await archiveOnRelease(options, deps, err);
       return EXIT.OK;
     }
     if (command === 'run') return await runCommand(options, passthrough, deps, err, sweepReport);

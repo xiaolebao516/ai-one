@@ -1024,3 +1024,44 @@ test('a closure record without a usable timestamp is dropped', async () => {
   assert.equal(await edited.run(['list', '--json']), EXIT.OK);
   assert.equal(JSON.parse(edited.log.out[0])[0].lastClosed, undefined);
 });
+
+const THREAD = 'https://chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013';
+const HANDOFF = 'https://github.com/xiaolebao516/ai-one/issues/71#issuecomment-1';
+const archiveArgs = ['release', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'req-12345', '--handoff-url', HANDOFF];
+
+test('release with archive evidence frees the slot, then hands the exact thread to auto-finish', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  const calls = [];
+  h.deps.autoFinish = async (argv) => { calls.push(argv); return 0; };
+  assert.equal(await h.run(archiveArgs), EXIT.OK);
+  assert.deepEqual(calls[0], ['auto-finish', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'req-12345', '--handoff-url', HANDOFF]);
+  assert.match(h.log.err.join('\n'), /released slot 1/);
+});
+
+test('a failed archive never fails the release and is reported loudly without URLs', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  h.deps.autoFinish = async (_argv, io) => { io.err(`prodex-archive: Handoff mismatch ${HANDOFF}`); return 1; };
+  assert.equal(await h.run(archiveArgs), EXIT.OK);
+  const stderr = h.log.err.join('\n');
+  assert.match(stderr, /archive NOT done \(the slot is released anyway\)/);
+  assert.doesNotMatch(stderr, /issuecomment/);
+});
+
+test('release with a thread but no archive evidence says the chat was not archived', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  h.deps.autoFinish = async () => { throw new Error('MUST NOT CALL'); };
+  assert.equal(await h.run(['release', '--slot', '1', '--task', '71', '--thread-url', THREAD]), EXIT.OK);
+  assert.match(h.log.err.join('\n'), /archive NOT attempted/);
+});
+
+test('archive evidence must be complete and only applies to release', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  assert.equal(await h.run(['release', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'req-12345']), EXIT.ERROR);
+  assert.equal(await h.run(['release', '--slot', '1', '--request-id', 'req-12345', '--handoff-url', HANDOFF]), EXIT.ERROR);
+  assert.equal(await h.run(['list', '--request-id', 'req-12345']), EXIT.ERROR);
+  assert.ok(!fs.existsSync(path.join(h.home, 'slot-claims', 'slot-1.closed.json')), 'rejected input must not release anything');
+});
