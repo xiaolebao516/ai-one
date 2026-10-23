@@ -1119,3 +1119,28 @@ test('archive release needs a registered slot and an exact claim match, and rele
   assert.ok(!fs.existsSync(closed(1)));
   assert.match(h.log.err.join('\n'), /does not name exactly this task and thread/);
 });
+
+test('a matching claim without an owner id is never deleted unconditionally', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  h.deps.autoFinish = async () => { throw new Error('MUST NOT CALL'); };
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+  const file = path.join(h.home, 'slot-claims', 'slot-1.json');
+  const claim = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete claim.owner;
+  fs.writeFileSync(file, JSON.stringify(claim));
+  assert.equal(await h.run(archiveArgs), EXIT.ERROR);
+  assert.ok(fs.existsSync(file), 'the claim file stays');
+  assert.match(h.log.err.join(' '), /changed or has no owner id/);
+});
+
+test('release with archive evidence and no claim never calls an unconditional release', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  h.deps.autoFinish = async () => 0;
+  assert.equal(await h.run(archiveArgs), EXIT.OK);
+  // a claim taken after the release survives: nothing deletes slot files when none was read
+  const taken = claimSlot(h.home, 1, { pid: 222, alive: () => true, meta: { task: '72' } });
+  assert.ok(readClaim(h.home, 1));
+  taken.release();
+});

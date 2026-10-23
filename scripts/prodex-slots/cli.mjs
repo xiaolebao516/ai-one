@@ -430,8 +430,14 @@ export async function main(args, { deps = realDeps(), out = (s) => process.stdou
         }
       }
       // Release only the claim that was checked above; a claim that appeared in between stays.
-      if (releaseClaim(deps.home, options.slot, had ? had.owner : null) !== true) {
-        throw new Error('The slot claim changed while releasing; nothing was archived. Run `list` and retry');
+      // With no claim read there is nothing to delete: an unconditional release could remove a claim
+      // another agent took a moment ago. A claim without an owner id cannot be released safely.
+      if (had) {
+        if (typeof had.owner !== 'string' || !had.owner || releaseClaim(deps.home, options.slot, had.owner) !== true) {
+          throw new Error('The slot claim changed or has no owner id; nothing was archived. Run `list` and retry');
+        }
+      } else if (!archiving) {
+        releaseClaim(deps.home, options.slot);
       }
       const record = writeClosure(deps.home, options.slot, { ownership: options.ownership, note: options.note });
       err(`prodex-slots: released slot ${options.slot}${had ? ' (claim removed)' : ' (no claim was present)'}; closed record written (${record.task ?? 'no task'}${record.note ? `, "${record.note}"` : ''}). The slot is reusable.`);
