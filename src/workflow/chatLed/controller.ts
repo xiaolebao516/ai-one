@@ -14,6 +14,7 @@ import {
   registerConversation,
   resumeAfterStop,
   resumeRun,
+  resetAutoRemindersAfterForward,
   scheduleAutoReminder,
   settledFeedbackItems,
   setAvailableProviders,
@@ -455,6 +456,7 @@ export class ChatLedController {
         if (!live()) return;
         const items = settledFeedbackItems(this.run, round);
         if (!items) return;
+        this.set(resetAutoRemindersAfterForward(this.run, round, this.env.now()));
         text = buildFeedbackPrompt(items, round, Math.max(0, this.run.roundLimit - this.run.round));
         this.set(resumeAfterForwarding(this.run, this.env.now()));
       }
@@ -499,6 +501,15 @@ export class ChatLedController {
     } catch (error) {
       if (error instanceof ForwardTimeoutError) {
         patch({ status: 'timed-out', error: error.message, finishedAt: this.env.now() });
+        // An unresolved first send cannot prove its conversation address; keep cleanup manual.
+        for (const attempt of [...this.pendingInit].filter((item) => item.provider === forward.to)) {
+          this.finishSessionAttempt(
+            attempt,
+            'manual',
+            undefined,
+            'Forwarding timed out before session registration was confirmed; check this conversation manually.',
+          );
+        }
         if (live()) void Promise.resolve().then(() => this.env.stop(forward.to)).catch(() => undefined);
       } else {
         patch({ status: 'failed', error: errorMessage(error), finishedAt: this.env.now() });

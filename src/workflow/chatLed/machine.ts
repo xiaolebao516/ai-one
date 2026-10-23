@@ -253,7 +253,6 @@ export function applyCoordinatorReply(
         phase: 'forwarding',
         pausedFrom: undefined,
         stop: undefined,
-        autoReminderStreak: 0,
         forwards: [...run.forwards, ...newForwards],
       },
       parsed,
@@ -310,6 +309,14 @@ export function scheduleAutoReminder(run: ChatLedRun, reminder: string, now: num
     stop: undefined,
     updatedAt: now,
   };
+}
+
+/** Only a confirmed successful target reply breaks a streak of automatic reminders. */
+export function resetAutoRemindersAfterForward(run: ChatLedRun, round: number, now: number): ChatLedRun {
+  if (!run.autoReminderStreak) return run;
+  const settled = settledFeedbackItems(run, round);
+  if (!settled || !settled.some((item) => item.reply !== undefined)) return run;
+  return { ...run, autoReminderStreak: 0, updatedAt: now };
 }
 
 export function updateForward(

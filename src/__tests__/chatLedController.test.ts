@@ -898,3 +898,29 @@ describe('chat-led parallel deadlines', () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe('parallel forwarding busy gate', () => {
+  it('lets the ready target finish while another target is still preparing', async () => {
+    const { env } = makeEnv({
+      chatgpt: [SEND(['claude', 'gemini'], 'parallel'), DONE('completed')],
+      claude: ['Claude answered'],
+      gemini: ['Gemini answered'],
+    });
+    const originalPrepare = env.prepare;
+    let geminiPrepares = 0;
+    let releaseGemini: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { releaseGemini = resolve; });
+    env.prepare = vi.fn(async (provider: AIProvider) => {
+      if (provider === 'gemini' && ++geminiPrepares === 2) await gate;
+      return originalPrepare(provider);
+    });
+    const controller = await create(env);
+    const running = controller.start();
+    await vi.waitFor(() => expect(controller.getRun().forwards.find(f => f.to === 'claude')?.status).toBe('done'));
+    expect(controller.getRun().forwards.find(f => f.to === 'gemini')?.status).toBe('waiting');
+    releaseGemini();
+    await running;
+    expect(controller.getRun().forwards.map(f => f.status)).toEqual(['done', 'done']);
+    expect(controller.getRun().phase).toBe('finished');
+  });
+});

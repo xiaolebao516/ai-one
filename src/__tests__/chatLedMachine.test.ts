@@ -21,6 +21,7 @@ import {
   registerConversation,
   resumeAfterStop,
   resumeRun,
+  resetAutoRemindersAfterForward,
   scheduleAutoReminder,
   settledFeedbackItems,
   setAvailableProviders,
@@ -332,7 +333,11 @@ describe('automatic protocol reminders', () => {
       run = applyCoordinatorReply(run, raw, 34).run;
       expect(scheduleAutoReminder(run, 'not sent', 35)).toBe(run);
       const sent = applyCoordinatorReply(resumeAfterStop(run, 36), sendToClaude('different task'), 37).run;
-      expect(sent.autoReminderStreak).toBe(0);
+      expect(sent.autoReminderStreak).toBe(2);
+      const success = updateForward(sent, 'r4-claude', { status: 'done', reply: 'success' }, 38);
+      expect(resetAutoRemindersAfterForward(success, 4, 39).autoReminderStreak).toBe(0);
+      const failed = updateForward(sent, 'r4-claude', { status: 'failed', error: 'offline' }, 38);
+      expect(resetAutoRemindersAfterForward(failed, 4, 39).autoReminderStreak).toBe(2);
     }
     const limited = applyCoordinatorReply(start(makeRun(1)), 'plain reply', 40).run;
     expect(scheduleAutoReminder(limited, 'never', 41)).toBe(limited);
