@@ -7,6 +7,8 @@ import { Badge, Button, Card, Notice, SectionHeader } from '../../ui/v2';
 import { ChatLedController } from '../../workflow/chatLed/controller';
 import { executeCleanup, planCleanup, type CleanupPlanItem } from '../../workflow/chatLed/cleanup';
 import { createChatGptCleaner } from '../../workflow/chatLed/drivers/chatgpt';
+import { createClaudeCleaner } from '../../workflow/chatLed/drivers/claude';
+import { createGeminiCleaner } from '../../workflow/chatLed/drivers/gemini';
 import { createRealChatLedEnv, prepareProviderPage } from '../../workflow/chatLed/env';
 import { exportRunMarkdown } from '../../workflow/chatLed/exportMarkdown';
 import { appendCleanupResult, beginCleanup, closeRun, finishCleanup, interruptCleanup, isRunActive, recordExport } from '../../workflow/chatLed/machine';
@@ -89,6 +91,24 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
         reload: () => host.provider.reload('chatgpt'),
         navigate: async (url) => {
           await host.provider.eval('chatgpt', `location.href = ${JSON.stringify(url)}`);
+          await sleep(4_000);
+        },
+        sleep,
+      }),
+      createClaudeCleaner({
+        evalInPage: (js) => host.provider.evalWithCallback('claude', js),
+        reload: () => host.provider.reload('claude'),
+        navigate: async (url) => {
+          await host.provider.eval('claude', `location.href = ${JSON.stringify(url)}`);
+          await sleep(4_000);
+        },
+        sleep,
+      }),
+      createGeminiCleaner({
+        evalInPage: (js) => host.provider.evalWithCallback('gemini', js),
+        reload: () => host.provider.reload('gemini'),
+        navigate: async (url) => {
+          await host.provider.eval('gemini', `location.href = ${JSON.stringify(url)}`);
           await sleep(4_000);
         },
         sleep,
@@ -277,18 +297,24 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
       setError(text.t('chatLedPersistFailed'));
       return;
     }
+    const prepared = new Set<AIProvider>();
     try {
-      // These are prerequisites, not best-effort hints: no destructive cleaner action may run if
-      // provider preparation or viewport parking fails.
-      await prepareProviderPage('chatgpt');
-      await host.provider.park('chatgpt', offscreenBounds(1280, 900));
-      await sleep(2_500);
-      await executeCleanup(plan, cleaners, {
-        onProgress: (_index, result) => {
-          apply((run) => appendCleanupResult(run, result, Date.now()));
-          if (!persistedRef.current) throw new Error('Cleanup progress checkpoint could not be saved.');
-        },
-      });
+      for (const item of plan) {
+        // Each actionable site must pass its own readiness and viewport gates before any
+        // cleaner script runs. A failure aborts the remaining batch as manual-only.
+        if (item.action !== 'manual') {
+          await prepareProviderPage(item.provider);
+          await host.provider.park(item.provider, offscreenBounds(1280, 900));
+          prepared.add(item.provider);
+          await sleep(2_500);
+        }
+        await executeCleanup([item], cleaners, {
+          onProgress: (_index, result) => {
+            apply((run) => appendCleanupResult(run, result, Date.now()));
+            if (!persistedRef.current) throw new Error('Cleanup progress checkpoint could not be saved.');
+          },
+        });
+      }
       apply((run) => finishCleanup(run, Date.now()));
       if (!persistedRef.current) throw new Error('Cleanup completion checkpoint could not be saved.');
     } catch (cause) {
@@ -301,7 +327,9 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
         message,
       ));
     } finally {
-      await host.provider.park('chatgpt', offscreenBounds()).catch(() => undefined);
+      for (const provider of prepared) {
+        await host.provider.park(provider, offscreenBounds()).catch(() => undefined);
+      }
       setCleanupBusy(false);
     }
   };

@@ -17,6 +17,15 @@ const mocks = vi.hoisted(() => ({
   },
   createRealChatLedEnv: vi.fn(),
   prepareProviderPage: vi.fn(async () => undefined),
+  claudeCleaner: {
+    provider: 'claude',
+    supports: { delete: false, archive: false },
+    matchesConversationUrl: vi.fn((url: string) => /^https:\/\/claude\.ai\/chat\//.test(url)),
+    deleteConversation: vi.fn(async () => ({ ok: true })),
+    archiveConversation: vi.fn(async () => ({ ok: true })),
+    confirmGone: vi.fn(async () => true),
+    confirmArchived: vi.fn(async () => true),
+  },
   cleaner: {
     provider: 'chatgpt',
     supports: { delete: true, archive: true },
@@ -35,6 +44,9 @@ vi.mock('../workflow/chatLed/env', () => ({
 }));
 vi.mock('../workflow/chatLed/drivers/chatgpt', () => ({
   createChatGptCleaner: () => mocks.cleaner,
+}));
+vi.mock('../workflow/chatLed/drivers/claude', () => ({
+  createClaudeCleaner: () => mocks.claudeCleaner,
 }));
 
 const FIRST_URL = 'https://chatgpt.com/c/123e4567-e89b-42d3-a456-426614174000';
@@ -124,6 +136,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.prepareProviderPage.mockResolvedValue(undefined);
   mocks.provider.park.mockResolvedValue(undefined);
+  mocks.claudeCleaner.supports.delete = false;
+  mocks.claudeCleaner.supports.archive = false;
+  mocks.claudeCleaner.deleteConversation.mockResolvedValue({ ok: true });
   mocks.cleaner.deleteConversation.mockResolvedValue({ ok: true, note: 'confirmed' });
   mocks.cleaner.confirmGone.mockResolvedValue(true);
   mocks.cleaner.archiveConversation.mockResolvedValue({ ok: true, note: 'confirmed' });
@@ -141,6 +156,40 @@ afterEach(async () => {
 });
 
 describe('ChatLedPage persistence safety', () => {
+  it('leaves Grok conversations manual without registering a cleaner', async () => {
+    const run = makeRun();
+    run.conversations = [{ provider: 'grok', url: 'https://grok.com/chat/123e4567-e89b-42d3-a456-426614174000', createdByAiOne: true, registrationStatus: 'confirmed', registeredAt: 1 }];
+    window.localStorage.setItem(CHAT_LED_STORAGE_KEY, JSON.stringify([run]));
+    const container = await renderPage();
+    await clickButton(container, 'Open');
+    expect(container.textContent).toContain('Manual');
+    await clickButton(container, 'Clean up');
+    await vi.waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem(CHAT_LED_STORAGE_KEY) || '[]') as ChatLedRun[];
+      expect(stored[0]?.cleanupResults?.[0]?.outcome).toBe('manual');
+    });
+    expect(mocks.prepareProviderPage).not.toHaveBeenCalled();
+    expect(mocks.claudeCleaner.deleteConversation).not.toHaveBeenCalled();
+    expect(mocks.provider.evalWithCallback).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before an enabled non-ChatGPT provider action if preparation fails', async () => {
+    mocks.claudeCleaner.supports.delete = true;
+    const run = makeRun();
+    run.conversations = [{ provider: 'claude', url: 'https://claude.ai/chat/123e4567-e89b-42d3-a456-426614174000', createdByAiOne: true, registrationStatus: 'confirmed', registeredAt: 1 }];
+    window.localStorage.setItem(CHAT_LED_STORAGE_KEY, JSON.stringify([run]));
+    mocks.prepareProviderPage.mockRejectedValueOnce(new Error('Claude readiness failed'));
+    const container = await renderPage();
+    await clickButton(container, 'Open');
+    await clickButton(container, 'Clean up');
+    await vi.waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem(CHAT_LED_STORAGE_KEY) || '[]') as ChatLedRun[];
+      expect(stored[0]?.cleanupResults?.[0]?.outcome).toBe('manual');
+    });
+    expect(mocks.prepareProviderPage).toHaveBeenCalledWith('claude');
+    expect(mocks.claudeCleaner.deleteConversation).not.toHaveBeenCalled();
+  });
+
   it('does not start any provider I/O when the initial run save fails', async () => {
     const env = makeEnv();
     mocks.createRealChatLedEnv.mockReturnValue(env);
