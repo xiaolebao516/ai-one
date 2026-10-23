@@ -68,7 +68,7 @@ async function enterFlowsWithUnsavedDraft(container: HTMLElement) {
   );
   await click(flowsNav);
   await settleWorkbench();
-  await click(buttonByText(container, 'New flow'));
+  await click(buttonByText(container, '＋ New flow'));
   await settleWorkbench();
   expect(h1(container)).toBe('Stages & flows');
 }
