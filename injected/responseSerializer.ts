@@ -218,13 +218,28 @@ function serializeTableCellChildren(element: Element): string {
 
 function protectCodeBlock(element: Element, context: SerializationContext, languageOverride = ''): string {
   const codeElement = firstDescendantByTag(element, 'CODE');
-  const code = preformattedText(codeElement ?? element).replace(/\r\n?/g, '\n');
+  const rawCode = preformattedText(codeElement ?? element).replace(/\r\n?/g, '\n');
+  const code = withoutToolbarLabel(rawCode, languageOverride);
   const language = languageOverride || codeLanguage(codeElement ?? element);
   const longestFence = Math.max(0, ...Array.from(code.matchAll(/`+/g), (match) => match[0].length));
   const fence = '`'.repeat(Math.max(3, longestFence + 1));
   const blockText = `${fence}${language ? language : ''}\n${code}${code.endsWith('\n') ? '' : '\n'}${fence}`;
   const index = context.protectedBlocks.push(blockText) - 1;
   return protectedToken(index);
+}
+
+// Layout-based text (innerText) of a ChatGPT wrapper block can carry the toolbar's language label as
+// its own first or last line; inside a fence it would corrupt the code (a JSON directive stops being
+// JSON). The label is already used as the fence's info string, so drop it from the body.
+function withoutToolbarLabel(code: string, label: string): string {
+  if (!label) return code;
+  const lines = code.split('\n');
+  let start = 0;
+  let end = lines.length;
+  while (end > start && lines[end - 1].trim() === '') end -= 1;
+  if (end - start > 1 && lines[end - 1].trim() === label) end -= 1;
+  if (end - start > 1 && lines[start].trim() === label) start += 1;
+  return end === lines.length && start === 0 ? code : lines.slice(start, end).join('\n');
 }
 
 // A highlighter that gives every code line its own element leaves no newline character behind,
