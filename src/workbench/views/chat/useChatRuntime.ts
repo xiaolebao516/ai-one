@@ -807,8 +807,9 @@ export function useChatRuntime({
     activeSessionIdRef.current = session.id;
     setActiveSessionId(session.id);
     const hydrated = repliesFromSession(session.messages);
-    for (const provider of busyProvidersRef.current) {
-      if (runSessionByProviderRef.current.get(provider) === session.id && activeResponsesRef.current.has(provider)) {
+    const busyForSession = [...busyProvidersRef.current].filter((provider) => runSessionByProviderRef.current.get(provider) === session.id);
+    for (const provider of busyForSession) {
+      if (activeResponsesRef.current.has(provider)) {
         hydrated[provider] = {
           status: 'generating',
           content: hydrated[provider]?.content ?? '',
@@ -818,7 +819,7 @@ export function useChatRuntime({
       }
     }
     setReplyStates(hydrated);
-    setComparisonTargets([...new Set([...Object.keys(hydrated).filter(isProvider), ...busyProvidersRef.current])]);
+    setComparisonTargets([...new Set([...Object.keys(hydrated).filter(isProvider), ...busyForSession])]);
     setNotice(undefined);
   }, []);
 
