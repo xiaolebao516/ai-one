@@ -151,6 +151,7 @@ function repliesFromSession(messages: readonly ConversationSessionMessage[]): Pa
     replies[message.provider] = {
       status,
       content: message.content,
+      ...(message.truncated ? { truncated: true } : {}),
       ...(message.forwardedFrom ? { forwardedFrom: message.forwardedFrom } : {}),
     };
   }
@@ -356,6 +357,7 @@ export function useChatRuntime({
             status,
             content,
             startedAt,
+            ...(truncated ? { truncated: true } : {}),
             ...(forwardedFrom ? { forwardedFrom } : {}),
             ...(status === 'failed' || status === 'timedOut' ? { error: content } : {}),
           },
@@ -749,10 +751,14 @@ export function useChatRuntime({
 
   const forwardMessage = useCallback(
     (source: AIProvider, original: string, targets: AIProvider[], note: string) => {
+      if (replyStates[source]?.truncated) {
+        setNotice({ tone: 'block', message: workbenchText(locale).t('chatForwardTruncated') });
+        return Promise.resolve(false);
+      }
       const message = buildForwardMessage(AI_PROVIDERS[source].name, original, note);
       return runSend(message, targets, 'free', { forwardedFrom: source, preserveComparison: true });
     },
-    [runSend],
+    [locale, replyStates, runSend],
   );
 
   const retryProvider = useCallback((provider: AIProvider) => {
