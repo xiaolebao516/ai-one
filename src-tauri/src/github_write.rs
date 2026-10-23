@@ -1948,6 +1948,32 @@ mod tests {
             .as_u64().expect("comments count");
         assert_eq!(after, before, "blocked accept / request_changes must not add comments");
 
+        // Optional success path: a disposable PR whose body says `Closes #<linked issue>` and that
+        // issue (create both beforehand). accept removes needs-user, request_changes adds needs-review.
+        if let (Ok(linked_pr), Ok(linked_issue)) = (
+            std::env::var("AI_ONE_GH_WRITE_E2E_LINKED_PR"),
+            std::env::var("AI_ONE_GH_WRITE_E2E_LINKED_ISSUE"),
+        ) {
+            let linked_pr = linked_pr.parse::<u64>().expect("LINKED_PR must be an integer");
+            let linked_issue = linked_issue.parse::<u64>().expect("LINKED_ISSUE must be an integer");
+            let head = load_pr(&gh, &repo, linked_pr).await.expect("read linked PR").expect("linked PR").head;
+            let accepted = accept(
+                &gh,
+                &AcceptArgs { repo: repo.clone(), issue: linked_issue, pr: linked_pr, expected_head: head.clone() },
+            ).await;
+            println!("accept linked: {:?}/{:?} steps={:?}", accepted.status, accepted.code, accepted.steps);
+            assert_eq!(accepted.status, GithubWriteState::Confirmed);
+            let changes = request_changes(
+                &gh,
+                &RequestChangesArgs {
+                    repo: repo.clone(), issue: linked_issue, pr: linked_pr,
+                    expected_head: head, text: "e2e: 请修改 / please change".to_string(),
+                },
+            ).await;
+            println!("request_changes linked: {:?}/{:?} steps={:?}", changes.status, changes.code, changes.steps);
+            assert_eq!(changes.status, GithubWriteState::Confirmed);
+        }
+
         if let Ok(parent) = std::env::var("AI_ONE_GH_WRITE_E2E_PARENT") {
             let parent = parent.parse::<u64>().expect("AI_ONE_GH_WRITE_E2E_PARENT must be an integer");
             let child = create_issue(
