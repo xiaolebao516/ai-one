@@ -59,10 +59,6 @@ function presetForSession(runtime: ChatRuntime): ChatPresetId {
   return 'free';
 }
 
-function isProviderTab(value: string): value is AIProvider {
-  return (CHAT_PROVIDERS as readonly string[]).includes(value);
-}
-
 function loginLabel(locale: Locale, state: ReturnType<typeof deriveLoginState>): string {
   const text = workbenchText(locale);
   if (state === 'loggedIn') return text.t('chatLoggedIn');
@@ -318,9 +314,6 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
       <Tabs label={text.t('chatTabsLabel')} idBase="chat-view-tabs" items={tabItems} value={activeTab} onChange={setActiveTab} />
 
       <div className="flex min-h-0 flex-1 gap-v2-md">
-        {sidebarOpen ? (
-          <div className="fixed inset-0 z-10 min-[1100px]:hidden" aria-hidden="true" onClick={() => setSidebarOpen(false)} />
-        ) : null}
         <aside className={`w-[180px] shrink-0 flex-col gap-v2-sm border-r border-v2-line pr-v2-md ${sidebarOpen ? 'flex' : 'hidden'} min-[1100px]:flex max-[1099px]:fixed max-[1099px]:inset-y-16 max-[1099px]:left-0 max-[1099px]:z-20 max-[1099px]:bg-v2-panel max-[1099px]:p-v2-md max-[1099px]:shadow-v2-float`}>
           <div className="flex items-center justify-between gap-v2-xs">
             <span className="text-v2-meta font-semibold text-v2-ink-2">{text.t('chatConversations')}</span>
