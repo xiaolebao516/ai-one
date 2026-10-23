@@ -9,7 +9,6 @@ import { executeCleanup, planCleanup, type CleanupPlanItem } from '../../workflo
 import { createChatGptCleaner } from '../../workflow/chatLed/drivers/chatgpt';
 import { createClaudeCleaner } from '../../workflow/chatLed/drivers/claude';
 import { createGeminiCleaner } from '../../workflow/chatLed/drivers/gemini';
-import { createGrokCleaner } from '../../workflow/chatLed/drivers/grok';
 import { createRealChatLedEnv, prepareProviderPage } from '../../workflow/chatLed/env';
 import { exportRunMarkdown } from '../../workflow/chatLed/exportMarkdown';
 import { appendCleanupResult, beginCleanup, closeRun, finishCleanup, interruptCleanup, isRunActive, recordExport } from '../../workflow/chatLed/machine';
@@ -109,15 +108,6 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
         reload: () => host.provider.reload('gemini'),
         navigate: async (url) => {
           await host.provider.eval('gemini', `location.href = ${JSON.stringify(url)}`);
-          await sleep(4_000);
-        },
-        sleep,
-      }),
-      createGrokCleaner({
-        evalInPage: (js) => host.provider.evalWithCallback('grok', js),
-        reload: () => host.provider.reload('grok'),
-        navigate: async (url) => {
-          await host.provider.eval('grok', `location.href = ${JSON.stringify(url)}`);
           await sleep(4_000);
         },
         sleep,

@@ -27,11 +27,11 @@ export interface ProviderCleanupSelectors {
 }
 
 export interface ProviderCleanerConfig {
-  provider: Extract<AIProvider, 'claude' | 'gemini' | 'grok'>;
+  provider: Extract<AIProvider, 'claude' | 'gemini'>;
   origin: string;
   conversationPath: RegExp;
   selectors: ProviderCleanupSelectors;
-  /** Enable only after a read-only inspection has confirmed the exact target-bound DOM flow. */
+  /** Confirmed menu capabilities; unrecognized confirmations still fail closed. */
   verified: { delete: boolean; archive: boolean };
 }
 
@@ -56,7 +56,7 @@ export function normalizeProviderConversationUrl(
   }
 }
 
-type PageAction = 'snapshot' | 'menu' | 'delete' | 'archive' | 'confirm-delete' | 'confirm-archive' | 'check-delete' | 'check-archive';
+type PageAction = 'snapshot' | 'menu' | 'dismiss-menu' | 'delete' | 'archive' | 'confirm-delete' | 'confirm-archive' | 'check-delete' | 'check-archive';
 
 export function buildProviderCleanerScript(
   config: ProviderCleanerConfig,
@@ -71,11 +71,12 @@ export function buildProviderCleanerScript(
     '  const action = ' + JSON.stringify(action) + ';',
     '  const peers = ' + JSON.stringify(peers) + ';',
     '  const S = ' + JSON.stringify(config.selectors) + ';',
+    '  const provider = ' + JSON.stringify(config.provider) + ';',
     '  const pathPattern = new RegExp(' + JSON.stringify(config.conversationPath.source) + ', ' + JSON.stringify(config.conversationPath.flags) + ');',
     '  const fail = (note) => JSON.stringify({ ok: false, note });',
     '  if (location.origin !== origin || location.pathname !== path || !pathPattern.test(path)) return fail("Conversation origin or path mismatch");',
     '  const one = (root, css) => { if (!root || !css) return null; const matches = root.querySelectorAll(css); return matches.length === 1 ? matches[0] : null; };',
-    '  const text = (node) => (node && (node.innerText || node.textContent || node.getAttribute("aria-label") || "" ) || "").replace(/\\s+/g, " ").trim();',
+    '  const text = (node) => (node && (node.getAttribute("aria-label") || node.innerText || node.textContent || "") || "").replace(/\\s+/g, " ").trim();',
     '  const hrefPath = (node) => {',
     '    try { const url = new URL(node.getAttribute("href") || "", location.origin); return url.origin === origin && pathPattern.test(url.pathname) ? url.pathname : null; } catch { return null; }',
     '  };',
@@ -100,14 +101,24 @@ export function buildProviderCleanerScript(
     '    return { row, title, list };',
     '  };',
     '  const triggerFor = (item) => one(item.row, S.menuTrigger);',
-    '  const ownedMenu = (trigger) => {',
-    '    if (!trigger || trigger.getAttribute("aria-expanded") !== "true") return null;',
-    '    const menu = one(document, S.menu);',
-    '    if (!menu) return null;',
-    '    const controls = trigger.getAttribute("aria-controls");',
-    '    return ((controls && menu.id === controls) || (trigger.id && menu.getAttribute("aria-labelledby") === trigger.id)) ? menu : null;',
-    '  };',
+    '  const menuWatchKey = "__aiOneProviderMenuWatch";',
     '  const watchKey = "__aiOneProviderCleanupWatch";',
+    '  const clearMenuWatch = () => { const old = window[menuWatchKey]; if (old && old.observer) old.observer.disconnect(); delete window[menuWatchKey]; };',
+    '  const triggerLabelValid = (trigger, title) => {',
+    '    const name = text(trigger);',
+    '    return provider === "claude" ? name === title + " 的更多选项" : name === "“" + title + "”的更多选项";',
+    '  };',
+    '  const ownedMenu = (trigger) => {',
+    '    const watch = window[menuWatchKey];',
+    '    const menu = one(document, S.menu);',
+    '    if (!watch || !trigger || !menu || watch.invalid || watch.menu !== menu || watch.trigger !== trigger || watch.path !== path || Date.now() - watch.at > 15000) return null;',
+    '    const owner = trigger.closest("[aria-haspopup=menu]") || trigger;',
+    '    const controls = trigger.getAttribute("aria-controls") || owner.getAttribute("aria-controls");',
+    '    if (controls && menu.id !== controls) return null;',
+    '    const labelledBy = menu.getAttribute("aria-labelledby");',
+    '    if (labelledBy && labelledBy !== trigger.id && labelledBy !== owner.id) return null;',
+    '    return menu;',
+    '  };'
     '  const clearWatch = () => {',
     '    const current = window[watchKey];',
     '    if (current && current.observer) current.observer.disconnect();',
@@ -122,12 +133,33 @@ export function buildProviderCleanerScript(
     '    const item = target();',
     '    if (!item) return fail("Target row or title could not be identified");',
     '    const trigger = triggerFor(item);',
-    '    if (!trigger || trigger.disabled) return fail("Target-specific menu trigger missing");',
+    '    if (!trigger || trigger.disabled || !triggerLabelValid(trigger, item.title)) return fail("Target-specific menu trigger or label missing");',
+    '    if (document.querySelectorAll(S.menu).length || window[menuWatchKey] || window[watchKey]) return fail("A menu or cleanup watch is already active");',
+    '    const watch = { trigger, path, at: Date.now(), menu: null, invalid: false, observer: null };',
+    '    watch.observer = new MutationObserver(() => {',
+    '      const menus = Array.from(document.querySelectorAll(S.menu));',
+    '      if (menus.length > 1) watch.invalid = true;',
+    '      if (menus.length === 1) { if (watch.menu && watch.menu !== menus[0]) watch.invalid = true; else watch.menu = menus[0]; }',
+    '    });',
+    '    watch.observer.observe(document.documentElement, { childList: true, subtree: true });',
+    '    window[menuWatchKey] = watch;',
     '    const Constructor = window.PointerEvent || window.MouseEvent;',
-    '    const event = new Constructor("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerType: "mouse" });',
-    '    if (!("pointerType" in event)) Object.defineProperty(event, "pointerType", { value: "mouse" });',
-    '    trigger.dispatchEvent(event);',
+    '    for (const kind of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {',
+    '      const event = new Constructor(kind, { bubbles: true, cancelable: true, button: 0, pointerType: "mouse" });',
+    '      if (kind.startsWith("pointer") && !("pointerType" in event)) Object.defineProperty(event, "pointerType", { value: "mouse" });',
+    '      trigger.dispatchEvent(event);',
+    '    }',
     '    return JSON.stringify({ ok: true, note: "Target menu activation requested" });',
+    '  }',
+    '  if (action === "dismiss-menu") {',
+    '    const item = target();',
+    '    const trigger = item && triggerFor(item);',
+    '    if (!ownedMenu(trigger) || provider !== "gemini") return fail("No target-owned Gemini menu to dismiss");',
+    '    const backdrop = one(document, ".cdk-overlay-backdrop");',
+    '    if (!backdrop) return fail("Unique menu backdrop missing");',
+    '    clearMenuWatch();',
+    '    backdrop.click();',
+    '    return JSON.stringify({ ok: true });',
     '  }',
     '  if (action === "delete" || action === "archive") {',
     '    const item = target();',
@@ -136,7 +168,7 @@ export function buildProviderCleanerScript(
     '    const menu = ownedMenu(trigger);',
     '    if (!menu) return fail("Open menu is not bound to the target trigger");',
     '    const button = one(menu, action === "delete" ? S.deleteAction : S.archiveAction);',
-    '    if (!button || button.disabled) return fail("Unique target action missing");',
+    '    if (!button || button.disabled || button.getAttribute("role") !== "menuitem") return fail("Unique target action missing");',
     '    if (!S.dialog || document.querySelectorAll(S.dialog).length !== 0 || window[watchKey]) return fail("A dialog or earlier cleanup is already active");',
     '    const watch = { origin, path, action, title: item.title, at: Date.now(), dialog: null, invalid: false, observer: null };',
     '    watch.observer = new MutationObserver(() => {',
@@ -146,6 +178,7 @@ export function buildProviderCleanerScript(
     '    });',
     '    watch.observer.observe(document.documentElement, { childList: true, subtree: true });',
     '    window[watchKey] = watch;',
+    '    clearMenuWatch();',
     '    button.click();',
     '    return JSON.stringify({ ok: true, note: "Target action selected" });',
     '  }',
@@ -157,9 +190,12 @@ export function buildProviderCleanerScript(
     '    if (S.menu && document.querySelectorAll(S.menu).length !== 0) return reject("Options menu still open");',
     '    const dialogs = Array.from(document.querySelectorAll(S.dialog));',
     '    if (dialogs.length !== 1 || watch.dialog !== dialogs[0] || watch.invalid) return reject("Expected exactly one newly observed dialog");',
-    '    if (text(one(dialogs[0], S.dialogTitle)).toLowerCase() !== watch.title.toLowerCase()) return reject("Dialog title is not an exact match for the target conversation");',
-    '    const button = one(dialogs[0], kind === "delete" ? S.confirmDelete : S.confirmArchive);',
-    '    if (!button || button.disabled) return reject("Unique target confirmation button missing");',
+    '    const titles = Array.from(dialogs[0].querySelectorAll(S.dialogTitle)).filter((node) => text(node).toLowerCase() === watch.title.toLowerCase() && !Array.from(node.children).some((child) => text(child).toLowerCase() === watch.title.toLowerCase()));',
+    '    if (titles.length !== 1) return reject("Dialog does not uniquely identify the target title");',
+    '    const expected = kind === "delete" ? /^(?:删除|delete)$/i : /^(?:归档|archive)$/i;',
+    '    const choices = Array.from(dialogs[0].querySelectorAll(kind === "delete" ? S.confirmDelete : S.confirmArchive)).filter((node) => expected.test(text(node)));',
+    '    if (choices.length !== 1 || choices[0].disabled) return reject("Unique action-specific confirmation button missing");',
+    '    const button = choices[0];',
     '    clearWatch();',
     '    button.click();',
     '    return JSON.stringify({ ok: true, note: "Target-bound confirmation clicked" });',
@@ -260,7 +296,12 @@ export function createProviderCleaner(
     if (!open.ok) return open;
     await dependencies.sleep(150);
     const selection = await evaluate(target.path, kind);
-    if (!selection.ok) return selection;
+    if (!selection.ok) {
+      if (config.provider === 'gemini') {
+        try { await evaluate(target.path, 'dismiss-menu'); } catch { /* Leave unverified overlays alone. */ }
+      }
+      return selection;
+    }
     await dependencies.sleep(150);
     return evaluate(target.path, kind === 'delete' ? 'confirm-delete' : 'confirm-archive');
   };

@@ -156,9 +156,9 @@ afterEach(async () => {
 });
 
 describe('ChatLedPage persistence safety', () => {
-  it('shows unverified Claude conversations as manual without touching their page', async () => {
+  it('leaves Grok conversations manual without registering a cleaner', async () => {
     const run = makeRun();
-    run.conversations = [{ provider: 'claude', url: 'https://claude.ai/chat/123e4567-e89b-42d3-a456-426614174000', createdByAiOne: true, registrationStatus: 'confirmed', registeredAt: 1 }];
+    run.conversations = [{ provider: 'grok', url: 'https://grok.com/chat/123e4567-e89b-42d3-a456-426614174000', createdByAiOne: true, registrationStatus: 'confirmed', registeredAt: 1 }];
     window.localStorage.setItem(CHAT_LED_STORAGE_KEY, JSON.stringify([run]));
     const container = await renderPage();
     await clickButton(container, 'Open');
@@ -170,6 +170,7 @@ describe('ChatLedPage persistence safety', () => {
     });
     expect(mocks.prepareProviderPage).not.toHaveBeenCalled();
     expect(mocks.claudeCleaner.deleteConversation).not.toHaveBeenCalled();
+    expect(mocks.provider.evalWithCallback).not.toHaveBeenCalled();
   });
 
   it('fails closed before an enabled non-ChatGPT provider action if preparation fails', async () => {

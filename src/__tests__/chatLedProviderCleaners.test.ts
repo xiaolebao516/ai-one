@@ -8,7 +8,6 @@ import {
 } from '../workflow/chatLed/drivers/providerCleaner';
 import { CLAUDE_CLEANER_CONFIG, createClaudeCleaner, normalizeClaudeConversationUrl } from '../workflow/chatLed/drivers/claude';
 import { GEMINI_CLEANER_CONFIG, createGeminiCleaner, normalizeGeminiConversationUrl } from '../workflow/chatLed/drivers/gemini';
-import { GROK_CLEANER_CONFIG, createGrokCleaner, normalizeGrokConversationUrl } from '../workflow/chatLed/drivers/grok';
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
 const PEER_UUID = '123e4567-e89b-42d3-a456-426614174999';
@@ -25,17 +24,9 @@ const cases = [
     name: 'Gemini',
     config: GEMINI_CLEANER_CONFIG,
     path: '/app/abcdef123456',
-    peer: '/app/xyz123456789',
+    peer: '/app/deadbeef1234',
     normalize: normalizeGeminiConversationUrl,
     factory: createGeminiCleaner,
-  },
-  {
-    name: 'Grok',
-    config: GROK_CLEANER_CONFIG,
-    path: '/chat/' + UUID,
-    peer: '/chat/' + PEER_UUID,
-    normalize: normalizeGrokConversationUrl,
-    factory: createGrokCleaner,
   },
 ] as const;
 
@@ -108,11 +99,14 @@ beforeEach(() => {
   const previous = globals.__aiOneProviderCleanupWatch as { observer?: { disconnect(): void } } | undefined;
   previous?.observer?.disconnect();
   delete globals.__aiOneProviderCleanupWatch;
+  const previousMenu = globals.__aiOneProviderMenuWatch as { observer?: { disconnect(): void } } | undefined;
+  previousMenu?.observer?.disconnect();
+  delete globals.__aiOneProviderMenuWatch;
   document.body.innerHTML = '';
   window.history.replaceState({}, '', '/');
 });
 
-describe.each(cases)('$name cleaner URL and unverified capability', (site) => {
+describe.each(cases)('$name cleaner URL and observed capabilities', (site) => {
   it('matches only the explicit provider conversation path and origin', () => {
     const url = site.config.origin + site.path;
     expect(site.normalize(url)?.path).toBe(site.path);
@@ -126,16 +120,19 @@ describe.each(cases)('$name cleaner URL and unverified capability', (site) => {
     expect(site.normalize(site.config.origin + '/app')).toBeUndefined();
   });
 
-  it('stays manual-only and never navigates or clicks before real DOM read-only calibration', async () => {
-    const evalInPage = vi.fn(async (_script: string) => JSON.stringify({ ok: true }));
-    const navigate = vi.fn(async () => undefined);
-    const cleaner = site.factory({ evalInPage, navigate, sleep: vi.fn(async () => undefined) });
+  it('exposes only the observed menu actions and refuses an unsupported URL without I/O', async () => {
+    const evalInPage = vi.fn(async (_script: string) => JSON.stringify({ ok: false }));
+    const navigate = vi.fn(async (_url: string) => undefined);
+    const cleaner = site.factory({ evalInPage, navigate, sleep: vi.fn(async (_ms: number) => undefined) });
     expect(cleaner.provider).toBe(site.config.provider);
-    expect(cleaner.supports).toEqual({ delete: false, archive: false });
-    expect((await cleaner.deleteConversation(site.config.origin + site.path)).ok).toBe(false);
-    expect((await cleaner.archiveConversation(site.config.origin + site.path)).ok).toBe(false);
-    expect(await cleaner.confirmGone(site.config.origin + site.path)).toBe(false);
-    expect(await cleaner.confirmArchived(site.config.origin + site.path)).toBe(false);
+    expect(cleaner.supports).toEqual(site.name === 'Claude'
+      ? { delete: true, archive: true }
+      : { delete: true, archive: false });
+    expect((await cleaner.deleteConversation(site.config.origin + '/new')).ok).toBe(false);
+    if (site.name === 'Gemini') {
+      expect((await cleaner.archiveConversation(site.config.origin + site.path)).ok).toBe(false);
+    }
+    expect(await cleaner.confirmGone(site.config.origin + '/new')).toBe(false);
     expect(evalInPage).not.toHaveBeenCalled();
     expect(navigate).not.toHaveBeenCalled();
   });
@@ -262,5 +259,132 @@ describe.each(cases)('$name cleaner guarded page scripts (synthetic selectors on
     });
     expect((await cleaner.deleteConversation(window.location.origin + site.path)).ok).toBe(false);
     expect(evalInPage.mock.calls.every(([script]) => script.includes('const action = "snapshot"'))).toBe(true);
+  });
+});
+
+/** Minimal redacted DOM fragments from the coordinator's 2026-10-24 read-only Tauri inspection. */
+function realPage(site: (typeof cases)[number], extraTarget = false) {
+  window.history.replaceState({}, '', site.path);
+  const claude = site.name === 'Claude';
+  const row = (path: string, title: string) => claude
+    ? `<div data-row><a data-row-main-button href="${path}"><span>${title}</span></a><button data-row-action aria-haspopup="menu" aria-label="${title} 的更多选项"></button></div>`
+    : `<gem-nav-list-item data-test-id="conversation"><a href="${path}" aria-label="${title}"></a><gem-icon-button data-test-id="actions-menu-button" aria-haspopup="menu"><button aria-label="“${title}”的更多选项"></button></gem-icon-button></gem-nav-list-item>`;
+  document.body.innerHTML = '<aside>' + row(site.path, 'Mine') + row(site.peer, 'Other')
+    + (extraTarget ? row(site.path, 'Duplicate') : '') + '</aside>';
+}
+
+function realConfig(site: (typeof cases)[number]): ProviderCleanerConfig {
+  return { ...site.config, origin: window.location.origin };
+}
+
+function realMenu(site: (typeof cases)[number]) {
+  return site.name === 'Claude'
+    ? '<div role="menu"><button role="menuitem" data-testid="rename-chat-trigger">重命名R</button><button role="menuitem" data-testid="archive-chat-trigger">归档A</button><button role="menuitem" data-testid="delete-chat-trigger">删除D</button></div>'
+    : '<div class="mat-mdc-menu-panel" role="menu"><button role="menuitem" data-test-id="share-button">分享</button><button role="menuitem" data-test-id="delete-button">删除</button></div>';
+}
+
+describe.each(cases)('$name inspected DOM fixtures', (site) => {
+  it('scopes the target row, rejects duplicates/loading and only opens its own menu with a complete pointer sequence', async () => {
+    realPage(site, true);
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'snapshot')).ok).toBe(false);
+    realPage(site);
+    document.querySelector('aside')?.insertAdjacentHTML('beforeend', '<div aria-busy="true">Loading</div>');
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'snapshot')).ok).toBe(false);
+    document.querySelector('[aria-busy="true"]')?.remove();
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'snapshot'))).toMatchObject({
+      ok: true, targetPresent: true, others: [site.peer],
+    });
+
+    const target = document.querySelector(site.config.selectors.menuTrigger);
+    const events: string[] = [];
+    for (const event of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      target?.addEventListener(event, () => {
+        events.push(event);
+        if (event === 'pointerdown') document.body.insertAdjacentHTML('beforeend', realMenu(site));
+      });
+    }
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'menu')).ok).toBe(true);
+    await Promise.resolve();
+    expect(events).toEqual(['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']);
+    const other = document.querySelectorAll(site.config.selectors.menuTrigger)[1];
+    expect(other).not.toBe(target);
+    const otherClick = vi.fn();
+    other?.addEventListener('click', otherClick);
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'menu')).ok).toBe(false);
+    expect(otherClick).not.toHaveBeenCalled();
+  });
+
+  it('uses the action testid, then confirms only a newly appearing dialog matching title and action', async () => {
+    realPage(site);
+    const target = document.querySelector(site.config.selectors.menuTrigger);
+    target?.addEventListener('pointerdown', () => document.body.insertAdjacentHTML('beforeend', realMenu(site)));
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'menu')).ok).toBe(true);
+    await Promise.resolve();
+    const button = document.querySelector(site.config.selectors.deleteAction);
+    const actionClick = vi.fn();
+    button?.addEventListener('click', () => {
+      actionClick();
+      document.querySelector(site.config.selectors.menu)?.remove();
+      document.body.insertAdjacentHTML('beforeend', site.name === 'Claude'
+        ? '<div role="dialog" aria-modal="true"><h2>Mine</h2><p>删除对话？</p><button>取消</button><button data-confirm="target">删除</button></div>'
+        : '<mat-dialog-container role="dialog"><h2>Mine</h2><p>删除对话？</p><button>取消</button><button data-confirm="target">删除</button></mat-dialog-container>');
+    });
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'delete')).ok).toBe(true);
+    expect(actionClick).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    const confirmClick = vi.fn();
+    document.querySelector('[data-confirm="target"]')?.addEventListener('click', confirmClick);
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'confirm-delete')).ok).toBe(true);
+    expect(confirmClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a foreign, ambiguous or unobserved confirmation (without any confirmation click)', async () => {
+    realPage(site);
+    const target = document.querySelector(site.config.selectors.menuTrigger);
+    target?.addEventListener('pointerdown', () => document.body.insertAdjacentHTML('beforeend', realMenu(site)));
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'menu')).ok).toBe(true);
+    await Promise.resolve();
+    document.querySelector(site.config.selectors.deleteAction)?.addEventListener('click', () => {
+      document.querySelector(site.config.selectors.menu)?.remove();
+      document.body.insertAdjacentHTML('beforeend',
+        '<div role="dialog"><h2>Somebody Else</h2><button data-confirm="target">删除</button></div>');
+    });
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'delete')).ok).toBe(true);
+    await Promise.resolve();
+    const click = vi.fn();
+    document.querySelector('[data-confirm="target"]')?.addEventListener('click', click);
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'confirm-delete')).ok).toBe(false);
+    expect(click).not.toHaveBeenCalled();
+
+    realPage(site);
+    document.body.insertAdjacentHTML('beforeend',
+      '<div role="dialog"><h2>Mine</h2><button data-confirm="target">删除</button></div>');
+    arm(site, 'delete');
+    const globals = window as unknown as Record<string, unknown>;
+    (globals.__aiOneProviderCleanupWatch as { dialog: Element | null }).dialog = null;
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'confirm-delete')).ok).toBe(false);
+    realPage(site);
+    document.body.insertAdjacentHTML('beforeend',
+      '<div role="dialog"><h2>Mine</h2><button>删除</button></div><div role="dialog"><h2>Mine</h2><button>删除</button></div>');
+    arm(site, 'delete');
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'confirm-delete')).ok).toBe(false);
+  });
+
+  it('requires a surviving peer for positive disappearance evidence', () => {
+    realPage(site);
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'check-delete', [site.peer])).ok).toBe(false);
+    document.querySelector(site.config.selectors.row)?.remove();
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'check-delete', [site.peer])).ok).toBe(true);
+    document.querySelector(site.config.selectors.row)?.remove();
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'check-delete', [site.peer])).ok).toBe(false);
+  });
+
+  it('does not act on a pre-existing unrelated menu or target row without a menu button', () => {
+    realPage(site);
+    document.body.insertAdjacentHTML('beforeend', realMenu(site));
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'menu')).ok).toBe(false);
+    realPage(site);
+    document.querySelector(site.config.selectors.menuTrigger)?.remove();
+    expect(run(buildProviderCleanerScript(realConfig(site), site.path, 'menu')).ok).toBe(false);
   });
 });

@@ -7,32 +7,31 @@ import {
   type ProviderCleanupSelectors,
 } from './providerCleaner';
 
-// 待协调者用真实页面只读探查校准。未取证前不填写臆测选择器，也不允许自动删除/归档。
+// Confirmation dialog structure is unverified on the real site; unknown or ambiguous dialogs must fail closed.
 export const SELECTORS: ProviderCleanupSelectors = {
-  historyRoot: '',
-  historyLink: '',
-  loading: '',
-  row: '',
-  rowTitle: '',
-  menuTrigger: '',
-  menu: '',
-  deleteAction: '',
-  archiveAction: '',
-  dialog: '',
-  dialogTitle: '',
-  confirmDelete: '',
-  confirmArchive: '',
-  notFoundHeading: '',
-  notFoundText: '',
+  historyRoot: "aside",
+  historyLink: "gem-nav-list-item[data-test-id=\"conversation\"] a[href^=\"/app/\"]",
+  loading: "[aria-busy=\"true\"],[data-loading=\"true\"]",
+  row: "gem-nav-list-item[data-test-id=\"conversation\"]",
+  rowTitle: "a[href^=\"/app/\"][aria-label]",
+  menuTrigger: "[data-test-id=\"actions-menu-button\"] button[aria-label]",
+  menu: ".mat-mdc-menu-panel",
+  deleteAction: "[role=\"menuitem\"][data-test-id=\"delete-button\"]",
+  archiveAction: "",
+  dialog: "[role=\"dialog\"],[role=\"alertdialog\"],mat-dialog-container",
+  dialogTitle: "h1,h2,h3,[role=\"heading\"],p,span,strong,.mat-mdc-dialog-title",
+  confirmDelete: "button,[role=\"button\"]",
+  confirmArchive: "",
+  notFoundHeading: "",
+  notFoundText: "",
 };
 
 export const GEMINI_CLEANER_CONFIG: ProviderCleanerConfig = {
   provider: 'gemini',
   origin: 'https://gemini.google.com',
-  // Conservative URL form from Spec #144; confirm the real site's path shape before enabling.
-  conversationPath: /^\/app\/[A-Za-z0-9_-]{8,128}$/,
+  conversationPath: /^\/app\/[0-9a-f]{8,32}$/i,
   selectors: SELECTORS,
-  verified: { delete: false, archive: false },
+  verified: { delete: true, archive: false },
 };
 
 export function createGeminiCleaner(dependencies: ProviderCleanerDependencies): ConversationCleaner {
