@@ -63,6 +63,9 @@ describe('host GitHub write bridge', () => {
     const badArgs = [
       { repo: '../repo', title: 'title', body: '' },
       { repo: 'owner/repo', title: '  ', body: '' },
+      { repo: 'owner/repo', title: 'bad\ntitle', body: '' },
+      { repo: 'owner/repo', title: 'bad\rtitle', body: '' },
+      { repo: 'owner/repo', title: 'bad\ttitle', body: '' },
       { repo: 'owner/repo', title: 'x'.repeat(257), body: '' },
       { repo: 'owner/repo', title: 'x', body: 'bad\0body' },
       { repo: 'owner/repo', title: 'x', body: '<!-- ai-one:spoof' },
@@ -121,23 +124,29 @@ describe('host GitHub write bridge', () => {
 });
 
 describe('derivePauseState', () => {
-  const pause = '【ai-one 代用户发出】\n用户已暂停：请停止派发新工作，正在进行的一步可完成。\n<!-- ai-one:set_pause:v1 -->';
-  const running = '【ai-one 代用户发出】\n用户已恢复：可继续派发。\n<!-- ai-one:set_pause:v1 -->';
+  const pausedSentence = '用户已暂停：请停止派发新工作，正在进行的一步可完成。';
+  const resumedSentence = '用户已恢复：可继续派发。';
+  const prefix = '【ai-one 代用户发出】';
+  const marker = '<!-- ai-one:set_pause:v1 -->';
+  const pause = prefix + '\n' + pausedSentence + '\n' + marker;
+  const running = prefix + '\n' + resumedSentence + '\n' + marker;
 
   it('defaults to not paused when there are no comments', () => {
     expect(derivePauseState([])).toEqual({ paused: false });
   });
 
-  it('recognizes a marked pause and the latest marked resume', () => {
+  it('uses the latest valid comment and skips invalid comments without resetting state', () => {
     expect(derivePauseState([{ body: pause }])).toEqual({ paused: true });
     expect(derivePauseState([{ body: pause }, { body: 'ordinary comment' }, { body: running }])).toEqual({ paused: false });
     expect(derivePauseState([{ body: running }, { body: pause }])).toEqual({ paused: true });
+    expect(derivePauseState([{ body: pause }, { body: prefix + '\n' + pausedSentence }])).toEqual({ paused: true });
   });
 
-  it('ignores missing markers, missing prefixes and lookalike comments', () => {
-    expect(derivePauseState([{ body: '【ai-one 代用户发出】\n用户已暂停' }])).toEqual({ paused: false });
-    expect(derivePauseState([{ body: '用户已暂停\n<!-- ai-one:set_pause:v1 -->' }])).toEqual({ paused: false });
-    expect(derivePauseState([{ body: '用户已暂停 <!-- ai-one:set_pause:v1 -->' }])).toEqual({ paused: false });
-    expect(derivePauseState([{ body: '【ai-one 代用户发出】\n用户已恢复' }])).toEqual({ paused: false });
+  it('ignores markers that are not the exact final line and malformed template text', () => {
+    expect(derivePauseState([{ body: prefix + '\n' + pausedSentence + '\nextra\n' + marker }])).toEqual({ paused: false });
+    expect(derivePauseState([{ body: pause + ' extra' }])).toEqual({ paused: false });
+    expect(derivePauseState([{ body: prefix + '\n' + pausedSentence + ' ' + resumedSentence + '\n' + marker }])).toEqual({ paused: false });
+    expect(derivePauseState([{ body: prefix + '\n' + resumedSentence + '\n' + marker + '\nextra' }])).toEqual({ paused: false });
+    expect(derivePauseState([{ body: 'other person says\n' + pausedSentence + '\n' + marker }])).toEqual({ paused: false });
   });
 });

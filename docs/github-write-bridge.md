@@ -26,11 +26,12 @@ Rust 端重新校验所有参数。前端不能指定路径或 HTTP 方法。JSO
 ## 结果状态与安全边界
 
 - `confirmed`：每一步均回读确认。
-- `partial`：至少一步已确认，另一步明确失败；不自动重试。
-- `unconfirmed`：写请求已发出，但回读或超时使结果不确定；后续步骤会跳过。先手动回读，不要重发。
-- `failed`：没有写入，或首个写请求明确失败。
+- `partial`：至少一步已确认，且后续步骤被明确证明未执行或明确失败。
+- `unconfirmed`：任何已启动的写请求无法确认结果，或标签写前读取失败导致标签状态未知；即使前一步已确认，总状态仍是 `unconfirmed`，后续步骤跳过。先手动回读，不要重发。
+- `failed`：没有发送写请求（例如参数/前置校验拒绝、`gh` 缺失、`gh auth status` 证明未登录或进程启动失败）。
+- 子进程启动后的非零退出、stdin 写失败、输出超限、被杀、超时或非法 JSON 都无法证明 GitHub 未写入，写步骤统一标为 `unconfirmed`；不会自动重试。
 
-`accept` / `requestChanges` 会比较 Rust 端刚读取的 PR HEAD 与 `expectedHead`（不区分大小写），并要求 PR 关联指定 Issue。关联可来自 `closingIssuesReferences`，或 PR 正文里的 `Closes/Fixes/Resolves`（含 close/fix/resolve 的时态）后接 `#N`、`repo#N` 或同仓库 `owner/repo#N`。Issue 编号严格匹配，`#12` 不会误匹配 `#1`；PR 必须处于开放状态。
+`accept` / `requestChanges` 会比较 Rust 端刚读取的 PR HEAD 与 `expectedHead`（不区分大小写），并要求 PR 关联指定 Issue。关联可来自 `closingIssuesReferences`，或 PR 正文中未被代码块、行内代码、引用块或 HTML 注释屏蔽的 `Closes/Fixes/Resolves`（含 close/fix/resolve 的时态）后接 `#N` 或同仓库 `owner/repo#N`。编号后必须是非字母数字边界，因此 `#12abc` 与 `#123` 不会匹配 Issue #12；无法确认关联时拒绝写入。PR 必须处于开放状态。
 
 父子关系使用 GitHub 原生 Sub-issue API，创建新 Issue 后才挂到 `parentSpec`。挂接明确失败时返回 `partial`，保留已创建的 Issue 号与 URL，不自动重复建单。
 
@@ -56,15 +57,31 @@ if (status.available) {
 
 ## 真实 gh 端到端测试
 
-默认忽略，不进入 `pnpm verify`。先在隔离的测试仓库完成 `gh auth login`，准备一个与测试 Issue 无关联的现有 PR，再设置环境变量后运行：
+默认忽略，不进入 `pnpm verify`。只在隔离的测试仓库完成 `gh auth login` 后运行。准备一个与测试 Issue 无关联的开放 PR（用于验证关联校验会拦截写入），并设置：
 
 ```powershell
 $env:AI_ONE_GH_WRITE_E2E_REPO = 'owner/repo'
 $env:AI_ONE_GH_WRITE_E2E_PR = '123'
-# 可选：父 Spec 编号
-$env:AI_ONE_GH_WRITE_E2E_PARENT = '45'
-cd src-tauri
-cargo test real_github_write_e2e -- --ignored --nocapture
 ```
 
-测试会真实创建临时 Issue、评论并切换暂停状态，然后验证错误 HEAD 和无关联 PR 都会被拦截；可选的父 Spec 用于验证 Sub-issue 关系。测试 Issue 不会自动删除。
+若还要运行成功关联路径，先在同一测试仓库创建一次性测试 Issue，再创建一个开放的一次性测试 PR，并确保 PR 正文包含真实的 `Closes #<该Issue编号>`（不能只放在代码块、行内代码、引用或 HTML 注释中）。设置这两个变量：
+
+```powershell
+$env:AI_ONE_GH_WRITE_E2E_LINKED_PR = '124'
+$env:AI_ONE_GH_WRITE_E2E_LINKED_ISSUE = '456'
+```
+
+可选的父 Spec / 父 Issue 用于验证原生 Sub-issue 关系：
+
+```powershell
+$env:AI_ONE_GH_WRITE_E2E_PARENT = '45'
+```
+
+变量设置完成后执行：
+
+```powershell
+cd src-tauri
+cargo test --lib real_github_write_e2e -- --ignored --nocapture
+```
+
+流程会创建临时 Issue 并验证评论、暂停/继续；对基础 PR 验证错误 HEAD 与无关联请求会在写入前被拦截。若设置 linked PR/Issue，则对关联 Issue 执行 accept（移除 `needs-user`）和 request_changes（添加 `needs-review`），两者都必须回读为 `confirmed`。若设置 parent，则创建一个子 Issue 并回读原生关系。所有测试对象都应是一次性的；测试创建的 Issue 不会自动删除，测试 PR/Issue 及标签、评论也不会自动清理。

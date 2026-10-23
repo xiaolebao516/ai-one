@@ -23,10 +23,13 @@ const MARKER_PREFIX: &str = "<!-- ai-one:";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GhError {
-    Missing,
-    Timeout,
-    Failed,
-    InvalidJson,
+    Missing, // gh is absent; no process was started.
+    SpawnFailed, // process startup failed; no request was sent.
+    Timeout, // the process started, so a write may have reached GitHub.
+    Failed, // ambiguous process failure, including a non-zero exit.
+    StdinFailed, // the process started but request-body delivery failed.
+    OutputTooLarge, // the process was stopped after exceeding the output cap.
+    InvalidJson, // gh returned a response that could not be parsed.
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -186,7 +189,7 @@ impl GhApi for RealGh {
     fn post<'a>(&'a self, path: &'a str, body: Value) -> GhFuture<'a, Value> {
         Box::pin(async move {
             let args = api_args("POST", path, true);
-            let bytes = serde_json::to_vec(&body).map_err(|_| GhError::Failed)?;
+            let bytes = serde_json::to_vec(&body).map_err(|_| GhError::SpawnFailed)?;
             run_json(GH_PROGRAM, &args, Some(bytes)).await
         })
     }
@@ -290,7 +293,7 @@ async fn run_process(
         if error.kind() == std::io::ErrorKind::NotFound {
             GhError::Missing
         } else {
-            GhError::Failed
+            GhError::SpawnFailed
         }
     })?;
 
@@ -318,24 +321,29 @@ async fn collect_process(
     let child_ref = &mut *child;
     let write_stdin = async move {
         if let Some(body) = stdin_body {
-            let mut stdin = child_ref.stdin.take().ok_or(GhError::Failed)?;
-            stdin.write_all(&body).await.map_err(|_| GhError::Failed)?;
+            let mut stdin = child_ref.stdin.take().ok_or(GhError::StdinFailed)?;
+            stdin.write_all(&body).await.map_err(|_| GhError::StdinFailed)?;
         }
         Ok::<(), GhError>(())
     };
     let (write_result, read_result) = tokio::join!(write_stdin, read_capped(stdout, max_bytes));
     let bytes = match read_result {
         Ok(Some(bytes)) => bytes,
-        _ => {
+        Ok(None) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err(GhError::OutputTooLarge);
+        }
+        Err(_) => {
             let _ = child.start_kill();
             let _ = child.wait().await;
             return Err(GhError::Failed);
         }
     };
-    if write_result.is_err() {
+    if let Err(error) = write_result {
         let _ = child.start_kill();
         let _ = child.wait().await;
-        return Err(GhError::Failed);
+        return Err(error);
     }
     let status = child.wait().await.map_err(|_| GhError::Failed)?;
     Ok(ProcessOutput {
@@ -435,6 +443,7 @@ fn valid_repo_input(repo: &str) -> bool {
 fn valid_title(title: &str) -> bool {
     let trimmed_length = title.trim().chars().count();
     (1..=256).contains(&trimmed_length)
+        && !title.chars().any(|ch| matches!(ch, '\n' | '\r' | '\t'))
         && valid_string(title, MAX_TEXT_CHARS, false, true)
 }
 
@@ -470,7 +479,10 @@ async fn code_for_error<G: GhApi>(gh: &G, error: GhError) -> GithubWriteCode {
         GhError::Missing => GithubWriteCode::GhMissing,
         GhError::Timeout => GithubWriteCode::Timeout,
         GhError::InvalidJson => GithubWriteCode::GithubFailed,
-        GhError::Failed => match gh.auth_status().await {
+        GhError::Failed
+        | GhError::SpawnFailed
+        | GhError::StdinFailed
+        | GhError::OutputTooLarge => match gh.auth_status().await {
             Ok(false) => GithubWriteCode::NoLogin,
             Err(GhError::Missing) => GithubWriteCode::GhMissing,
             _ => GithubWriteCode::GithubFailed,
@@ -478,8 +490,29 @@ async fn code_for_error<G: GhApi>(gh: &G, error: GhError) -> GithubWriteCode {
     }
 }
 
+// Once a process has started, a write may have reached GitHub even if gh later fails.
+// Only failures that prove the process never started can safely be reported as failed.
 fn uncertain_write_error(error: GhError) -> bool {
-    matches!(error, GhError::Timeout | GhError::InvalidJson)
+    !matches!(error, GhError::Missing | GhError::SpawnFailed)
+}
+
+fn uncertain_write_code(error: GhError) -> GithubWriteCode {
+    if error == GhError::Timeout {
+        GithubWriteCode::Timeout
+    } else {
+        GithubWriteCode::Unconfirmed
+    }
+}
+
+// Check local authentication before issuing each write. A false auth status is the only
+// evidence used here to report that the request was not sent due to missing login.
+async fn ensure_write_available<G: GhApi>(gh: &G) -> Result<(), GithubWriteCode> {
+    match gh.auth_status().await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(GithubWriteCode::NoLogin),
+        Err(GhError::Missing) => Err(GithubWriteCode::GhMissing),
+        Err(_) => Err(GithubWriteCode::GithubFailed),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -500,19 +533,19 @@ async fn post_comment_and_confirm<G: GhApi>(
     body: &str,
 ) -> CommentOutcome {
     let path = format!("repos/{repo}/issues/{issue}/comments");
+    if let Err(code) = ensure_write_available(gh).await {
+        return CommentOutcome::Failed(code);
+    }
     let response = match gh.post(&path, json!({ "body": body })).await {
         Ok(response) => response,
         Err(error) => {
-            let code = if uncertain_write_error(error) {
-                if error == GhError::Timeout {
-                    GithubWriteCode::Timeout
-                } else {
-                    GithubWriteCode::Unconfirmed
-                }
+            let uncertain = uncertain_write_error(error);
+            let code = if uncertain {
+                uncertain_write_code(error)
             } else {
                 code_for_error(gh, error).await
             };
-            return if uncertain_write_error(error) {
+            return if uncertain {
                 CommentOutcome::Unconfirmed(code)
             } else {
                 CommentOutcome::Failed(code)
@@ -728,44 +761,180 @@ async fn load_pr<G: GhApi>(gh: &G, repo: &str, number: u64) -> Result<Option<PrI
     }))
 }
 
+fn strip_fenced_code_and_quotes(body: &str) -> String {
+    let mut prose = Vec::new();
+    let mut fence: Option<(u8, usize)> = None;
+
+    for line in body.lines() {
+        let leading_spaces = line.bytes().take_while(|byte| *byte == b' ').count();
+        let candidate = &line[leading_spaces..];
+        let bytes = candidate.as_bytes();
+
+        if let Some((fence_char, fence_len)) = fence {
+            if leading_spaces <= 3 && bytes.first() == Some(&fence_char) {
+                let run = bytes.iter().take_while(|byte| **byte == fence_char).count();
+                if run >= fence_len && candidate[run..].trim().is_empty() {
+                    fence = None;
+                }
+            }
+            continue;
+        }
+
+        if leading_spaces <= 3
+            && (candidate.starts_with("```") || candidate.starts_with("~~~"))
+        {
+            let fence_char = bytes[0];
+            let run = bytes.iter().take_while(|byte| **byte == fence_char).count();
+            if run >= 3 {
+                fence = Some((fence_char, run));
+                continue;
+            }
+        }
+
+        if line.trim_start().starts_with('>') {
+            continue;
+        }
+        prose.push(line);
+    }
+
+    prose.join("\n")
+}
+
+fn strip_html_comments(body: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0;
+    let mut in_comment = false;
+
+    while cursor < body.len() {
+        if in_comment {
+            if let Some(offset) = body[cursor..].find("-->") {
+                cursor += offset + 3;
+                in_comment = false;
+            } else {
+                break;
+            }
+        } else if let Some(offset) = body[cursor..].find("<!--") {
+            let comment_start = cursor + offset;
+            output.push_str(&body[cursor..comment_start]);
+            cursor = comment_start + 4;
+            in_comment = true;
+        } else {
+            output.push_str(&body[cursor..]);
+            break;
+        }
+    }
+
+    output
+}
+
+fn strip_inline_code(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let mut output = String::new();
+    let mut cursor = 0;
+
+    while cursor < line.len() {
+        let Some(offset) = line[cursor..].find('`') else {
+            output.push_str(&line[cursor..]);
+            break;
+        };
+        let opening = cursor + offset;
+        output.push_str(&line[cursor..opening]);
+
+        let mut opening_end = opening;
+        while opening_end < bytes.len() && bytes[opening_end] == b'`' as u8 {
+            opening_end += 1;
+        }
+        let delimiter_len = opening_end - opening;
+        let mut search = opening_end;
+        let mut closing_end = None;
+
+        while search < line.len() {
+            let Some(offset) = line[search..].find('`') else {
+                break;
+            };
+            let closing_start = search + offset;
+            let mut run_end = closing_start;
+            while run_end < bytes.len() && bytes[run_end] == b'`' as u8 {
+                run_end += 1;
+            }
+            if run_end - closing_start == delimiter_len {
+                closing_end = Some(run_end);
+                break;
+            }
+            search = run_end;
+        }
+
+        if let Some(end) = closing_end {
+            cursor = end;
+        } else {
+            output.push_str(&line[opening..opening_end]);
+            cursor = opening_end;
+        }
+    }
+
+    output
+}
+
+fn is_word_character(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
 fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
-    let lower = body.to_ascii_lowercase();
+    let prose = strip_fenced_code_and_quotes(body);
+    let prose = strip_html_comments(&prose);
+    let prose = strip_inline_code(&prose);
+    let lower = prose.to_ascii_lowercase();
     let Some((owner, name)) = repo.split_once('/') else {
         return false;
     };
-    let references = [
-        format!("{owner}/{name}#{issue}"),
-        format!("{name}#{issue}"),
-        format!("#{issue}"),
+    let references = [format!("{owner}/{name}#{issue}").to_ascii_lowercase(), format!("#{issue}")];
+    let verbs = [
+        "closes", "closed", "close", "fixes", "fixed", "fix", "resolves", "resolved", "resolve",
     ];
-    let verbs = ["closes", "closed", "close", "fixes", "fixed", "fix", "resolves", "resolved", "resolve"];
+
     for verb in verbs {
         for (start, _) in lower.match_indices(verb) {
-            let bytes = lower.as_bytes();
-            if start > 0 && bytes[start - 1].is_ascii_alphanumeric() {
+            if lower[..start]
+                .chars()
+                .next_back()
+                .is_some_and(is_word_character)
+            {
                 continue;
             }
+
             let mut cursor = start + verb.len();
-            if cursor < bytes.len() && bytes[cursor].is_ascii_alphanumeric() {
+            if lower[cursor..]
+                .chars()
+                .next()
+                .is_some_and(is_word_character)
+            {
                 continue;
             }
+
             let after_verb = cursor;
-            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            while cursor < lower.len() && lower.as_bytes()[cursor].is_ascii_whitespace() {
                 cursor += 1;
             }
-            let had_space = cursor > after_verb;
-            if cursor < bytes.len() && bytes[cursor] == b':' {
+            let mut has_separator = cursor > after_verb;
+            if cursor < lower.len() && lower.as_bytes()[cursor] == b':' {
                 cursor += 1;
-                while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                has_separator = true;
+                while cursor < lower.len() && lower.as_bytes()[cursor].is_ascii_whitespace() {
                     cursor += 1;
                 }
-            } else if !had_space {
+            }
+            if !has_separator {
                 continue;
             }
+
             for reference in &references {
-                if lower[cursor..].starts_with(reference.as_str()) {
+                if lower[cursor..].starts_with(reference) {
                     let end = cursor + reference.len();
-                    if end == bytes.len() || !bytes[end].is_ascii_digit() {
+                    if lower[end..]
+                        .chars()
+                        .next()
+                        .map_or(true, |ch| !ch.is_alphanumeric())
+                    {
                         return true;
                     }
                 }
@@ -871,12 +1040,16 @@ async fn ensure_label_state<G: GhApi>(
     let before = match gh.get(&path).await {
         Ok(value) => match label_is_present(&value, label) {
             Some(present) => present,
-            None => return LabelOutcome::Failed(GithubWriteCode::GithubFailed),
+            None => return LabelOutcome::Unconfirmed(GithubWriteCode::Unconfirmed),
         },
-        Err(error) => return LabelOutcome::Failed(code_for_error(gh, error).await),
+        Err(_) => return LabelOutcome::Unconfirmed(GithubWriteCode::Unconfirmed),
     };
     if before == should_exist {
         return LabelOutcome::Confirmed;
+    }
+
+    if let Err(code) = ensure_write_available(gh).await {
+        return LabelOutcome::Failed(code);
     }
 
     let write_result = if should_exist {
@@ -885,16 +1058,13 @@ async fn ensure_label_state<G: GhApi>(
         gh.delete(&format!("{path}/{label}")).await
     };
     if let Err(error) = write_result {
-        let code = if uncertain_write_error(error) {
-            if error == GhError::Timeout {
-                GithubWriteCode::Timeout
-            } else {
-                GithubWriteCode::Unconfirmed
-            }
+        let uncertain = uncertain_write_error(error);
+        let code = if uncertain {
+            uncertain_write_code(error)
         } else {
             code_for_error(gh, error).await
         };
-        return if uncertain_write_error(error) {
+        return if uncertain {
             LabelOutcome::Unconfirmed(code)
         } else {
             LabelOutcome::Failed(code)
@@ -1100,6 +1270,21 @@ async fn create_issue<G: GhApi>(gh: &G, args: &CreateIssueArgs) -> GithubWriteRe
     if !validate_create_issue(args) {
         return simple_result(GithubWriteState::Failed, GithubWriteCode::InvalidInput);
     }
+    if let Err(code) = ensure_write_available(gh).await {
+        let mut steps = vec![step(
+            GithubWriteStepName::CreateIssue,
+            GithubWriteStepState::Failed,
+        )];
+        if args.parent_spec.is_some() {
+            steps.push(step(GithubWriteStepName::SubIssue, GithubWriteStepState::Skipped));
+        }
+        return result(
+            GithubWriteState::Failed,
+            code,
+            fixed_message(code),
+            steps,
+        );
+    }
     let response = match gh
         .post(
             &format!("repos/{}/issues", args.repo),
@@ -1111,11 +1296,7 @@ async fn create_issue<G: GhApi>(gh: &G, args: &CreateIssueArgs) -> GithubWriteRe
         Err(error) => {
             let uncertain = uncertain_write_error(error);
             let code = if uncertain {
-                if error == GhError::Timeout {
-                    GithubWriteCode::Timeout
-                } else {
-                    GithubWriteCode::Unconfirmed
-                }
+                uncertain_write_code(error)
             } else {
                 code_for_error(gh, error).await
             };
@@ -1127,7 +1308,7 @@ async fn create_issue<G: GhApi>(gh: &G, args: &CreateIssueArgs) -> GithubWriteRe
                     GithubWriteStepState::Failed
                 },
             )];
-            if uncertain && args.parent_spec.is_some() {
+            if args.parent_spec.is_some() {
                 steps.push(step(GithubWriteStepName::SubIssue, GithubWriteStepState::Skipped));
             }
             return result(
@@ -1228,17 +1409,23 @@ async fn create_issue<G: GhApi>(gh: &G, args: &CreateIssueArgs) -> GithubWriteRe
     };
 
     let parent_path = format!("repos/{}/issues/{parent}/sub_issues", args.repo);
+    if ensure_write_available(gh).await.is_err() {
+        confirmed.status = GithubWriteState::Partial;
+        confirmed.code = GithubWriteCode::SubIssueFailed;
+        confirmed.message = fixed_message(GithubWriteCode::SubIssueFailed).to_string();
+        confirmed.steps.push(step(
+            GithubWriteStepName::SubIssue,
+            GithubWriteStepState::Failed,
+        ));
+        return confirmed;
+    }
     if let Err(error) = gh
         .post(&parent_path, json!({ "sub_issue_id": database_id }))
         .await
     {
         let uncertain = uncertain_write_error(error);
         if uncertain {
-            let code = if error == GhError::Timeout {
-                GithubWriteCode::Timeout
-            } else {
-                GithubWriteCode::Unconfirmed
-            };
+            let code = uncertain_write_code(error);
             confirmed.status = GithubWriteState::Unconfirmed;
             confirmed.code = code;
             confirmed.message = "Issue 已创建，但子 Issue 关系已发出，暂未确认；请先回读，不要重试".to_string();
@@ -1566,6 +1753,9 @@ mod tests {
         assert!(!valid_number(MAX_SAFE_INTEGER + 1));
         assert!(valid_title("  title  "));
         assert!(!valid_title("   "));
+        assert!(!valid_title("multi\nline"));
+        assert!(!valid_title("multi\rline"));
+        assert!(!valid_title("multi\tline"));
         assert!(!valid_title(&"x".repeat(257)));
         assert!(valid_body(""));
         assert!(!valid_body(&"x".repeat(MAX_TEXT_CHARS + 1)));
@@ -1582,7 +1772,9 @@ mod tests {
     }
 
     #[test]
-    fn serde_rejects_extra_fields_and_invalid_enum_values() {
+    fn internal_argument_structs_reject_unknown_fields_and_invalid_enum_values() {
+        // These assertions cover internal serde structs only. Tauri commands accept individual
+        // named parameters; this test does not claim that extra IPC object keys are rejected.
         let extra = json!({ "repo": REPO, "title": "x", "body": "", "extra": "not allowed" });
         assert!(serde_json::from_value::<CreateIssueArgs>(extra).is_err());
         assert!(serde_json::from_value::<PauseState>(json!("paused-ish")).is_err());
@@ -1640,14 +1832,28 @@ mod tests {
     }
 
     #[test]
-    fn closing_body_reference_matches_exact_issue_not_a_prefix_number() {
+    fn closing_body_reference_matches_only_prose_and_exact_issue_tokens() {
         assert!(body_links_issue("Closes #12", REPO, 12));
         assert!(body_links_issue("Fixes: owner/repo#12", REPO, 12));
-        assert!(body_links_issue("RESOLVED repo#12", REPO, 12));
+        assert!(body_links_issue("Closes OWNER/REPO#12", REPO, 12));
+        assert!(body_links_issue("RESOLVED #12", REPO, 12));
+        assert!(body_links_issue("Closes #12.", REPO, 12));
+        assert!(body_links_issue("Closes #12,", REPO, 12));
         assert!(!body_links_issue("Closes #12", REPO, 1));
+        assert!(!body_links_issue("Closes #12abc", REPO, 12));
         assert!(!body_links_issue("Closes #123", REPO, 12));
         assert!(!body_links_issue("Discloses #12", REPO, 12));
+        assert!(!body_links_issue("foo_Closes #12", REPO, 12));
         assert!(!body_links_issue("Closes other/repo#12", REPO, 12));
+        assert!(!body_links_issue("Closes repo#12", REPO, 12));
+        assert!(!body_links_issue("```markdown\nCloses #12\n```", REPO, 12));
+        assert!(!body_links_issue("~~~text\nCloses #12\n~~~", REPO, 12));
+        assert!(!body_links_issue("> Closes #12", REPO, 12));
+        assert!(!body_links_issue("`Closes #12`", REPO, 12));
+        assert!(!body_links_issue("Closes `#12`", REPO, 12));
+        assert!(!body_links_issue("`Closes\n#12`", REPO, 12));
+        assert!(!body_links_issue("<!-- Closes #12 -->", REPO, 12));
+        assert!(!body_links_issue("<!--\nCloses #12\n-->", REPO, 12));
     }
 
     #[tokio::test]
@@ -1662,6 +1868,24 @@ mod tests {
         let result = accept(&unrelated, &valid_accept_args(SHA)).await;
         assert_eq!(result.code, GithubWriteCode::PrIssueMismatch);
         assert!(unrelated.write_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn has_next_page_requires_a_real_returned_link_or_explicit_body_link() {
+        let truncated_unrelated = FakeGh::new(vec![Ok(pr_value(
+            SHA, "", vec![linked_node("other/repo", 12)], true, "OPEN",
+        ))]);
+        let rejected = precheck_pr(&truncated_unrelated, REPO, 12, 4, SHA).await;
+        assert_eq!(rejected.unwrap_err().code, GithubWriteCode::PrIssueMismatch);
+        assert!(truncated_unrelated.write_calls().is_empty());
+
+        let body_linked = FakeGh::new(vec![Ok(pr_value(SHA, "Closes #12", vec![], true, "OPEN"))]);
+        assert!(precheck_pr(&body_linked, REPO, 12, 4, SHA).await.is_ok());
+
+        let node_linked = FakeGh::new(vec![Ok(pr_value(
+            SHA, "", vec![linked_node(REPO, 12)], true, "OPEN",
+        ))]);
+        assert!(precheck_pr(&node_linked, REPO, 12, 4, SHA).await.is_ok());
     }
 
     #[tokio::test]
@@ -1712,7 +1936,7 @@ mod tests {
             Ok(comment_post(61)),
             Ok(comment_read(61, 12, &confirmed_body)),
             Ok(json!([{ "name": "needs-user" }])),
-            Err(GhError::Failed),
+            Err(GhError::SpawnFailed),
         ]);
         let partial_result = accept(&partial, &valid_accept_args(SHA)).await;
         assert_eq!(partial_result.status, GithubWriteState::Partial);
@@ -1732,12 +1956,119 @@ mod tests {
 
         let failed = FakeGh::new(vec![
             Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
-            Err(GhError::Failed),
+            Err(GhError::SpawnFailed),
         ]);
         let failed_result = accept(&failed, &valid_accept_args(SHA)).await;
         assert_eq!(failed_result.status, GithubWriteState::Failed);
         assert_eq!(failed_result.steps[0].state, GithubWriteStepState::Failed);
         assert_eq!(failed.write_calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn comment_post_disconnect_is_unconfirmed_and_never_retried() {
+        let gh = FakeGh::new(vec![Err(GhError::Failed)]);
+        let result = comment(&gh, &valid_comment_args("hello")).await;
+        assert_eq!(result.status, GithubWriteState::Unconfirmed);
+        assert_eq!(result.steps[0].state, GithubWriteStepState::Unconfirmed);
+        assert_eq!(gh.write_calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn ambiguous_create_post_errors_are_unconfirmed_and_never_trigger_sub_issue_write() {
+        for error in [
+            GhError::Failed,       // gh exited non-zero after the request may have reached GitHub
+            GhError::StdinFailed,  // request body pipe failed after process start
+            GhError::OutputTooLarge,
+            GhError::Timeout,
+            GhError::InvalidJson,
+        ] {
+            let args = CreateIssueArgs {
+                repo: REPO.to_string(),
+                title: "Child".to_string(),
+                body: String::new(),
+                parent_spec: Some(5),
+            };
+            let gh = FakeGh::new(vec![Err(error)]);
+            let result = create_issue(&gh, &args).await;
+            assert_eq!(result.status, GithubWriteState::Unconfirmed, "error: {error:?}");
+            assert_eq!(result.steps[0].state, GithubWriteStepState::Unconfirmed);
+            assert_eq!(result.steps[1].state, GithubWriteStepState::Skipped);
+            assert_eq!(gh.write_calls().len(), 1, "must not retry or attempt sub-issue: {error:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_delete_and_label_post_results_are_unconfirmed() {
+        let accept_body = accept_body(SHA);
+        let delete_unknown = FakeGh::new(vec![
+            Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(comment_post(80)),
+            Ok(comment_read(80, 12, &accept_body)),
+            Ok(json!([{ "name": "needs-user" }])),
+            Err(GhError::Failed),
+        ]);
+        let deleted = accept(&delete_unknown, &valid_accept_args(SHA)).await;
+        assert_eq!(deleted.status, GithubWriteState::Unconfirmed);
+        assert_eq!(deleted.steps[0].state, GithubWriteStepState::Confirmed);
+        assert_eq!(deleted.steps[1].state, GithubWriteStepState::Unconfirmed);
+        assert_eq!(delete_unknown.write_calls().len(), 2);
+
+        let changes_body = request_changes_body(SHA, "please fix");
+        let post_unknown = FakeGh::new(vec![
+            Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(comment_post(81)),
+            Ok(comment_read(81, 12, &changes_body)),
+            Ok(json!([])),
+            Err(GhError::Failed),
+        ]);
+        let posted = request_changes(&post_unknown, &RequestChangesArgs {
+            repo: REPO.to_string(), issue: 12, pr: 4, expected_head: SHA.to_string(),
+            text: "please fix".to_string(),
+        }).await;
+        assert_eq!(posted.status, GithubWriteState::Unconfirmed);
+        assert_eq!(posted.steps[0].state, GithubWriteStepState::Confirmed);
+        assert_eq!(posted.steps[1].state, GithubWriteStepState::Unconfirmed);
+        assert_eq!(post_unknown.write_calls().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn label_read_failure_or_invalid_response_is_unconfirmed_before_label_write() {
+        for labels_response in [
+            Err(GhError::Timeout),
+            Ok(json!({ "unexpected": "not an array" })),
+        ] {
+            let body = accept_body(SHA);
+            let gh = FakeGh::new(vec![
+                Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+                Ok(comment_post(82)),
+                Ok(comment_read(82, 12, &body)),
+                labels_response,
+            ]);
+            let result = accept(&gh, &valid_accept_args(SHA)).await;
+            assert_eq!(result.status, GithubWriteState::Unconfirmed);
+            assert_eq!(result.code, GithubWriteCode::Unconfirmed);
+            assert_eq!(result.message, fixed_message(GithubWriteCode::Unconfirmed));
+            assert_eq!(result.steps[0].state, GithubWriteStepState::Confirmed);
+            assert_eq!(result.steps[1].state, GithubWriteStepState::Unconfirmed);
+            assert_eq!(gh.write_calls().len(), 1, "no label write after an unconfirmed GET");
+        }
+    }
+
+    #[tokio::test]
+    async fn no_login_preflight_proves_no_write_was_sent() {
+        let gh = FakeGh::with_auth(vec![Err(GhError::Failed)], Ok(false));
+        let result = comment(&gh, &valid_comment_args("hello")).await;
+        assert_eq!(result.status, GithubWriteState::Failed);
+        assert_eq!(result.code, GithubWriteCode::NoLogin);
+        assert!(gh.write_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn output_cap_is_detected_instead_of_accepting_truncated_output() {
+        let (mut writer, reader) = tokio::io::duplex(16);
+        writer.write_all(b"12345").await.unwrap();
+        drop(writer);
+        assert_eq!(read_capped(reader, 4).await.unwrap(), None);
     }
 
     #[tokio::test]
@@ -1760,7 +2091,7 @@ mod tests {
         assert_eq!(result.issue_number, Some(30));
         assert_eq!(result.url.as_deref(), Some("https://github.com/owner/repo/issues/30"));
         assert_eq!(gh.write_calls().len(), 1);
-        assert!(gh.calls()[0].starts_with("POST repos/owner/repo/issues "));
+        assert!(gh.write_calls()[0].starts_with("POST repos/owner/repo/issues "));
     }
 
     #[tokio::test]
@@ -1802,12 +2133,12 @@ mod tests {
         let result = create_issue(&success, &args).await;
         assert_eq!(result.status, GithubWriteState::Confirmed);
         assert_eq!(result.steps[1].state, GithubWriteStepState::Confirmed);
-        assert!(success.calls()[2].contains("\"sub_issue_id\":3100"));
+        assert!(success.write_calls()[1].contains("\"sub_issue_id\":3100"));
 
         let failure = FakeGh::new(vec![
             Ok(create_response(32, 3200)),
             Ok(issue_read(32, 3200, "Child", "")),
-            Err(GhError::Failed),
+            Err(GhError::SpawnFailed),
         ]);
         let result = create_issue(&failure, &args).await;
         assert_eq!(result.status, GithubWriteState::Partial);

@@ -150,7 +150,7 @@ function validString(
 }
 
 function validTitle(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
+  if (typeof value !== 'string' || /[\n\r\t]/u.test(value)) return false;
   const trimmedLength = characterCount(value.trim());
   return trimmedLength >= 1
     && trimmedLength <= 256
@@ -345,12 +345,11 @@ export function derivePauseState(comments: { body: string }[]): { paused: boolea
   let paused = false;
   for (const comment of comments) {
     if (typeof comment?.body !== 'string') continue;
-    const body = comment.body;
-    const firstLine = body.split(/\r?\n/u, 1)[0];
-    if (firstLine !== COMMENT_PREFIX || !body.includes(PAUSE_MARKER)) continue;
-    if (body.includes('用户已暂停')) paused = true;
-    else if (body.includes('用户已恢复')) paused = false;
-    else paused = false;
+    const lines = comment.body.split(/\r?\n/u);
+    if (lines.length !== 3 || lines[0] !== COMMENT_PREFIX || lines[2] !== PAUSE_MARKER) continue;
+    if (lines[1] === '用户已暂停：请停止派发新工作，正在进行的一步可完成。') paused = true;
+    else if (lines[1] === '用户已恢复：可继续派发。') paused = false;
+    else continue;
   }
   return { paused };
 }
