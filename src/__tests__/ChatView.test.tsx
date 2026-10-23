@@ -90,7 +90,7 @@ function fakeRuntime(overrides: Partial<ChatRuntime> = {}): ChatRuntime {
     clearPersistenceNotice: vi.fn(),
     setPreset: vi.fn(),
   };
-  return { ...runtime, ...overrides };
+  return Object.assign(runtime, overrides);
 }
 
 async function mount(runtime: ChatRuntime) {
