@@ -64,6 +64,8 @@ export class ChatLedController {
   private resumeWaiters: (() => void)[] = [];
   private stopWaiters: (() => void)[] = [];
   private driving = false;
+  /** Session creation / address registration still running; cleanup and close wait for it. */
+  private readonly pendingInit = new Set<Promise<void>>();
 
   constructor(
     private readonly env: ChatLedEnv,
@@ -139,22 +141,41 @@ export class ChatLedController {
     for (const wake of waiters) wake();
   }
 
-  /** Ends the run. In-flight providers are asked to stop; their late replies are ignored. */
+  /**
+   * Ends the run. The run turns stopped and the stop requests go out immediately (an unreadable
+   * page address can never delay them); afterwards in-flight session creation is settled and the
+   * conversations created so far are registered, so cleanup still knows about them.
+   */
   async stop(): Promise<void> {
     const inFlight = this.run.forwards.filter((f) => f.status === 'sending' || f.status === 'waiting').map((f) => f.to);
     const coordinatorBusy =
       this.run.phase === 'coordinator-thinking' ||
       (this.run.phase === 'paused' && this.run.pausedFrom === 'coordinator-thinking');
     this.generation += 1;
-    // Register the conversations created so far before the run turns terminal (a terminal run
-    // refuses new registrations), so cleanup still knows about them.
-    for (const provider of this.started) await this.registerUrl(provider);
     this.set(stopRun(this.run, this.env.now()));
     for (const wake of this.resumeWaiters.splice(0)) wake();
     for (const wake of this.stopWaiters.splice(0)) wake();
     const targets = new Set<AIProvider>(inFlight);
     if (coordinatorBusy) targets.add(this.run.coordinator);
-    await Promise.all([...targets].map((provider) => this.env.stop(provider).catch(() => undefined)));
+    const stops = Promise.all([...targets].map((provider) => this.env.stop(provider).catch(() => undefined)));
+    await this.settleInit();
+    for (const provider of [...this.started]) await this.registerUrl(provider);
+    await stops;
+  }
+
+  /** True while a created session is not yet registered; the UI keeps cleanup/close disabled. */
+  hasPendingSessions(): boolean {
+    return this.pendingInit.size > 0;
+  }
+
+  /** Applies a pure run transition (used by the page for export/cleanup bookkeeping). */
+  apply(transition: (run: ChatLedRun) => ChatLedRun): void {
+    this.set(transition(this.run));
+  }
+
+  private async settleInit(): Promise<void> {
+    const waiting = Promise.allSettled([...this.pendingInit]);
+    await Promise.race([waiting, new Promise<void>((resolve) => globalThis.setTimeout(resolve, 15_000))]);
   }
 
   /** After a protocol violation or failure: remind the coordinator and continue. */
@@ -266,27 +287,47 @@ export class ChatLedController {
    * prepare (idle gate) -> own new session on first use -> send -> complete reply.
    * Every async boundary re-checks "still live" and waits out a pause, so stop/pause during
    * prepare or newSession can never lead to a send. The stop waiter is registered first.
+   * A later send only goes ahead while the page is still on the conversation this run created;
+   * if the user took over and switched, the send is refused (fail closed) instead of writing
+   * into one of their own conversations.
    */
   private async sendOwned(provider: AIProvider, text: string, live: () => boolean): Promise<string> {
     const stopped = new Promise<never>((_, reject) => {
       this.stopWaiters.push(() => reject(new Error('Run stopped by user')));
     });
-    const work = (async (): Promise<string> => {
-      const proceed = async (): Promise<void> => {
-        if (!(await this.waitWhilePaused()) || !live()) throw new Error('Run stopped by user');
-      };
+    const proceed = async (): Promise<void> => {
+      if (!(await this.waitWhilePaused()) || !live()) throw new Error('Run stopped by user');
+    };
+    const init = (async (): Promise<void> => {
       await proceed();
       await this.env.prepare(provider);
       await proceed();
-      if (!this.started.has(provider)) {
-        await this.env.newSession(provider);
-        this.started.add(provider);
-        if (!live()) {
-          // The session exists now: keep it known so cleanup can list it.
-          await this.registerUrl(provider);
+      const owned = this.run.conversations.find((c) => c.provider === provider && hasConversationPath(c.url));
+      if (this.started.has(provider) && owned) {
+        const current = await this.env.readConversationUrl(provider).catch(() => undefined);
+        if (!current || !sameConversation(current, owned.url)) {
+          throw new Error('The page is no longer on the conversation ai-one created; not sending.');
         }
-        await proceed();
+        return;
       }
+      // First use, or the earlier session address was never captured: start a fresh session
+      // rather than trusting whatever the page shows now.
+      await this.env.newSession(provider);
+      this.started.add(provider);
+      if (!live()) {
+        // The session exists now: keep it known so cleanup can list it.
+        await this.registerUrl(provider);
+      }
+      await proceed();
+    })();
+    this.pendingInit.add(init);
+    const initDone = init.finally(() => {
+      this.pendingInit.delete(init);
+      this.notify();
+    });
+    initDone.catch(() => undefined);
+    const work = (async (): Promise<string> => {
+      await initDone;
       try {
         return await this.env.send(provider, text);
       } catch (error) {
@@ -297,6 +338,10 @@ export class ChatLedController {
     })();
     work.catch(() => undefined);
     return Promise.race([work, stopped]);
+  }
+
+  private notify(): void {
+    for (const listener of [...this.listeners]) listener(this.run);
   }
 
   private async registerUrl(provider: AIProvider): Promise<void> {
@@ -331,6 +376,17 @@ function errorMessage(error: unknown): string {
 function hasConversationPath(url: string): boolean {
   try {
     return new URL(url).pathname.length > 1;
+  } catch {
+    return false;
+  }
+}
+
+/** Same conversation = same origin and path; query and hash do not matter. */
+function sameConversation(a: string, b: string): boolean {
+  try {
+    const x = new URL(a);
+    const y = new URL(b);
+    return x.origin === y.origin && x.pathname === y.pathname;
   } catch {
     return false;
   }

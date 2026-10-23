@@ -107,6 +107,21 @@ function guardedScript(path: string, body: string): string {
     '    const anchor = Array.from(window.document.querySelectorAll("a[href]")).find((node) => inSidebar(node) && hrefPath(node) === expectedPath);',
     '    return anchor ? (anchor.closest("li") || anchor.parentElement) : null;',
     '  };',
+    '  // The options trigger of the REGISTERED conversation: its sidebar row, or a header button outside the sidebar.',
+    '  const findTrigger = () => {',
+    '    const row = targetRow();',
+    '    if (row) return findCandidate(["button"], /more|option|menu|对话选项|聊天选项|更多|选项/i, /options|menu/i, row);',
+    '    const buttons = Array.from(window.document.querySelectorAll("button")).filter((node) => !inSidebar(node));',
+    '    return buttons.find((node) => /conversation-options-menu|conversation-menu-trigger/i.test(node.getAttribute("data-testid") || "") || /conversation options|chat options|对话选项|聊天选项/i.test(accessibleName(node))) || null;',
+    '  };',
+    '  // Fail closed: a menu counts only when the target trigger itself says it controls/labels it.',
+    '  const ownedMenu = (trigger) => {',
+    '    if (!trigger || trigger.getAttribute("aria-expanded") !== "true") return null;',
+    '    const controls = trigger.getAttribute("aria-controls") || "";',
+    '    const triggerId = trigger.id || "";',
+    '    const owned = Array.from(window.document.querySelectorAll("[role=\\"menu\\"]")).filter((menu) => (controls && menu.id === controls) || (triggerId && menu.getAttribute("aria-labelledby") === triggerId));',
+    '    return owned.length === 1 ? owned[0] : null;',
+    '  };',
     '  const onlyRoot = (selector) => { const roots = window.document.querySelectorAll(selector); return roots.length === 1 ? roots[0] : null; };',
     '  const findCandidate = (selectors, labelPattern, testIdPattern, root) => {',
     '    const seen = new Set();',
@@ -129,14 +144,7 @@ function guardedScript(path: string, body: string): string {
 
 export function buildOpenMenuScript(path: string): string {
   return guardedScript(path, [
-    '  const row = targetRow();',
-    '  let element = null;',
-    '  if (row) element = findCandidate(["button"], /more|option|menu|对话选项|聊天选项|更多|选项/i, /options|menu/i, row);',
-    '  if (!element) {',
-    '    // Header options of the open conversation: never a button that lives in the sidebar.',
-    '    const buttons = Array.from(window.document.querySelectorAll("button")).filter((node) => !inSidebar(node));',
-    '    element = buttons.find((node) => /conversation-options-menu|conversation-menu-trigger/i.test(node.getAttribute("data-testid") || "") || /conversation options|chat options|对话选项|聊天选项/i.test(accessibleName(node))) || null;',
-    '  }',
+    '  const element = findTrigger();',
     '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Options menu of the registered conversation not found or disabled" });',
     '  element.click();',
     '  return JSON.stringify({ ok: true, note: "Options menu opened" });',
@@ -145,8 +153,8 @@ export function buildOpenMenuScript(path: string): string {
 
 export function buildDeleteScript(path: string): string {
   return guardedScript(path, [
-    '  const menu = onlyRoot("[role=\\"menu\\"]");',
-    '  if (!menu) return JSON.stringify({ ok: false, note: "Expected exactly one open options menu" });',
+    '  const menu = ownedMenu(findTrigger());',
+    '  if (!menu) return JSON.stringify({ ok: false, note: "No open options menu that belongs to the registered conversation" });',
     '  const element = findCandidate(SELECTORS.actionCandidates, /delete|remove|删除/i, /delete/i, menu);',
     '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Delete action not found or disabled" });',
     '  element.click();',
@@ -156,8 +164,8 @@ export function buildDeleteScript(path: string): string {
 
 export function buildArchiveScript(path: string): string {
   return guardedScript(path, [
-    '  const menu = onlyRoot("[role=\\"menu\\"]");',
-    '  if (!menu) return JSON.stringify({ ok: false, note: "Expected exactly one open options menu" });',
+    '  const menu = ownedMenu(findTrigger());',
+    '  if (!menu) return JSON.stringify({ ok: false, note: "No open options menu that belongs to the registered conversation" });',
     '  const element = findCandidate(SELECTORS.actionCandidates, /archive|归档/i, /archive/i, menu);',
     '  if (!element || element.disabled === true) return JSON.stringify({ ok: false, note: "Archive action not found or disabled" });',
     '  element.click();',
@@ -173,6 +181,10 @@ export function buildConfirmScript(path: string, action: 'delete' | 'archive'): 
 
   return guardedScript(path, [
     '  const action = ' + JSON.stringify(action) + ';',
+    '  // The target menu was consumed by our click: no menu may be open, and the target trigger is collapsed.',
+    '  if (window.document.querySelectorAll("[role=\\"menu\\"]").length > 0) return JSON.stringify({ ok: false, note: "A menu is still open; refusing to confirm" });',
+    '  const trigger = findTrigger();',
+    '  if (trigger && trigger.getAttribute("aria-expanded") === "true") return JSON.stringify({ ok: false, note: "Options trigger still expanded; refusing to confirm" });',
     '  const dialogs = window.document.querySelectorAll("[role=\\"dialog\\"], [role=\\"alertdialog\\"]");',
     '  if (dialogs.length === 0 && action === "archive") return JSON.stringify({ ok: true, note: "No archive confirmation dialog required" });',
     '  if (dialogs.length !== 1) return JSON.stringify({ ok: false, note: "Expected exactly one confirmation dialog" });',
@@ -199,15 +211,17 @@ function buildSidebarCheckScript(id: string, requireGonePage: boolean): string {
     : [];
 
   const confirmedExpression = requireGonePage
-    ? '(atHome || notFound) && !stillListed'
+    ? '(notFound || (atHome && links.length > 0)) && !stillListed'
     : '!stillListed';
 
   return [
     '(() => {',
     '  const SELECTORS = ' + JSON.stringify(SELECTORS) + ';',
     '  const targetId = ' + JSON.stringify(id.toLowerCase()) + ';',
-    '  const sidebar = window.document.querySelector(SELECTORS.sidebarRoots.join(","));',
-    '  if (!sidebar) return JSON.stringify({ ok: false, note: "History sidebar not found" });',
+    '  const sidebars = window.document.querySelectorAll(SELECTORS.sidebarRoots.join(","));',
+    '  if (sidebars.length !== 1) return JSON.stringify({ ok: false, note: "Expected exactly one history sidebar; cannot confirm" });',
+    '  const sidebar = sidebars[0];',
+    '  if (sidebar.querySelector("[aria-busy=\\"true\\"], [data-testid*=\\"skeleton\\"], [class*=\\"skeleton\\"]")) return JSON.stringify({ ok: false, note: "History list is still loading; cannot confirm" });',
     '  const links = sidebar.querySelectorAll(SELECTORS.sidebarLinks.join(","));',
     '  const targetPath = "/c/" + targetId;',
     ...(requireGonePage ? [] : ['  if (links.length === 0) return JSON.stringify({ ok: false, note: "History list is empty or not loaded; cannot confirm" });']),
@@ -298,8 +312,12 @@ export function createChatGptCleaner(dependencies: ChatGptCleanerDependencies): 
 
       await dependencies.navigate(normalized.href);
       await dependencies.sleep(400);
-      const step = await evaluateStep(buildConfirmGoneScript(normalized.id));
-      return step.ok;
+      const first = await evaluateStep(buildConfirmGoneScript(normalized.id));
+      if (!first.ok) return false;
+      // The evidence must hold twice, a moment apart, so a half-loaded page cannot pass.
+      await dependencies.sleep(1_500);
+      const second = await evaluateStep(buildConfirmGoneScript(normalized.id));
+      return second.ok;
     },
 
     confirmArchived: async (url: string): Promise<boolean> => {
@@ -312,8 +330,11 @@ export function createChatGptCleaner(dependencies: ChatGptCleanerDependencies): 
       if (!reload.ok) return false;
 
       await dependencies.sleep(500);
-      const step = await evaluateStep(buildConfirmArchivedScript(normalized.id));
-      return step.ok;
+      const first = await evaluateStep(buildConfirmArchivedScript(normalized.id));
+      if (!first.ok) return false;
+      await dependencies.sleep(1_500);
+      const second = await evaluateStep(buildConfirmArchivedScript(normalized.id));
+      return second.ok;
     },
   };
 }

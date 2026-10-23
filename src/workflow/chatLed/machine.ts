@@ -49,6 +49,11 @@ export function isTerminal(run: ChatLedRun): boolean {
   return run.phase === 'finished' || run.phase === 'stopped' || run.closed !== undefined;
 }
 
+/** A run that is using (or about to use) the provider pages. Only one may exist at a time. */
+export function isRunActive(run: ChatLedRun): boolean {
+  return run.phase === 'idle' || run.phase === 'coordinator-thinking' || run.phase === 'forwarding' || run.phase === 'paused';
+}
+
 export function canPause(run: ChatLedRun): boolean {
   return run.phase === 'coordinator-thinking' || run.phase === 'forwarding';
 }
@@ -349,6 +354,42 @@ export function recordExport(run: ChatLedRun, now: number): ChatLedRun {
 export function recordCleanup(run: ChatLedRun, results: CleanupItemResult[], now: number): ChatLedRun {
   if (run.cleanupResults || (run.phase !== 'finished' && run.phase !== 'stopped')) return run;
   return { ...run, cleanupResults: results, updatedAt: now };
+}
+
+/** Cleanup starts once per run; the results list then grows one confirmed item at a time. */
+export function beginCleanup(run: ChatLedRun, now: number): ChatLedRun {
+  if (run.closed || run.cleanupResults || run.cleanupRunning) return run;
+  if (run.phase !== 'finished' && run.phase !== 'stopped') return run;
+  return { ...run, cleanupRunning: true, cleanupResults: [], updatedAt: now };
+}
+
+export function appendCleanupResult(run: ChatLedRun, result: CleanupItemResult, now: number): ChatLedRun {
+  if (!run.cleanupRunning) return run;
+  return { ...run, cleanupResults: [...(run.cleanupResults ?? []), result], updatedAt: now };
+}
+
+export function finishCleanup(run: ChatLedRun, now: number): ChatLedRun {
+  if (!run.cleanupRunning) return run;
+  return { ...run, cleanupRunning: false, updatedAt: now };
+}
+
+/**
+ * A cleanup that was cut off (app closed mid-way): nothing unconfirmed is replayed. Every
+ * registered conversation without a confirmed result is marked manual, including the one that
+ * was in flight when the app stopped.
+ */
+export function interruptCleanup(run: ChatLedRun, now: number): ChatLedRun {
+  if (!run.cleanupRunning) return run;
+  const done = new Set((run.cleanupResults ?? []).map((r) => r.provider + '\n' + (r.url ?? '')));
+  const rest: CleanupItemResult[] = run.conversations
+    .filter((c) => !done.has(c.provider + '\n' + c.url))
+    .map((c) => ({
+      provider: c.provider,
+      url: c.url,
+      outcome: 'manual' as const,
+      note: 'Cleanup was interrupted before this conversation was confirmed; check it by hand.',
+    }));
+  return { ...run, cleanupRunning: false, cleanupResults: [...(run.cleanupResults ?? []), ...rest], updatedAt: now };
 }
 
 export function closeRun(

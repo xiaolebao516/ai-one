@@ -112,6 +112,8 @@ export interface ChatLedRun {
   exportedAt?: number;
   /** Persisted cleanup outcome; once present the run is never offered cleanup again. */
   cleanupResults?: CleanupItemResult[];
+  /** True while a cleanup is executing; a reload in this state marks the rest as manual. */
+  cleanupRunning?: boolean;
 }
 
 /** Cleanup outcome per registered conversation. Only readback-confirmed outcomes count. */

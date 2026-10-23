@@ -360,7 +360,7 @@ export function ChatLedView({
             <Card className="grid gap-v2-sm">
               <SectionHeader title={text.t("chatLedCleanupPlan")} />
               {cleanup.plan === null ? (
-                <Notice tone="unknown" title={text.t("chatLedCleanupPlanPending")} />
+                cleanup.results === null ? <Notice tone="unknown" title={text.t("chatLedCleanupPlanPending")} /> : null
               ) : cleanup.plan.length === 0 ? (
                 <p className="text-v2-meta text-v2-ink-2">{text.t("chatLedCleanupNoItems")}</p>
               ) : (

@@ -37,6 +37,35 @@ async function stateOf(provider: AIProvider): Promise<ProviderState | undefined>
 
 let bridgeStop: (() => void) | undefined;
 
+/**
+ * Makes sure the provider page exists (parked offscreen), is logged in and idle (busy gate, #15).
+ * Does not touch shared workflow state, so cleanup can use it while nothing else is running.
+ */
+export async function prepareProviderPage(provider: AIProvider): Promise<void> {
+  let state = await stateOf(provider);
+  if (!state || state.webview !== 'loaded') {
+    resetProviderBootState(provider);
+    await host.provider.open(provider, parkedBounds());
+    await host.provider.park(provider, parkedBounds());
+  }
+  const readyDeadline = Date.now() + PAGE_READY_TIMEOUT_MS;
+  for (;;) {
+    state = await stateOf(provider);
+    if (state && isSendable(state)) break;
+    if (state?.login === 'logged_out' || state?.login === 'blocked') {
+      throw new Error(`${provider} is not logged in (state: ${state.login}). Log in from the classic UI or Resources page first.`);
+    }
+    if (Date.now() > readyDeadline) throw new Error(`${provider} page did not become ready in time.`);
+    await sleep(POLL_MS);
+  }
+  // Busy gate (#15): never write into a page that is still generating something else.
+  const idleDeadline = Date.now() + IDLE_TIMEOUT_MS;
+  while ((await stateOf(provider))?.thinking) {
+    if (Date.now() > idleDeadline) throw new Error(`${provider} stayed busy; not sending into a generating page.`);
+    await sleep(POLL_MS);
+  }
+}
+
 /** Real environment (UNVERIFIED on a logged-in desktop until the #113 user acceptance run). */
 export function createRealChatLedEnv(): ChatLedEnv {
   // The response bridge (title pull) and the workflow waiter bus are normally started by the
@@ -53,30 +82,7 @@ export function createRealChatLedEnv(): ChatLedEnv {
       const snapshot = await host.connections.get();
       return snapshot.filter(isSendable).map((state) => state.provider);
     },
-    async prepare(provider) {
-      let state = await stateOf(provider);
-      if (!state || state.webview !== 'loaded') {
-        resetProviderBootState(provider);
-        await host.provider.open(provider, parkedBounds());
-        await host.provider.park(provider, parkedBounds());
-      }
-      const readyDeadline = Date.now() + PAGE_READY_TIMEOUT_MS;
-      for (;;) {
-        state = await stateOf(provider);
-        if (state && isSendable(state)) break;
-        if (state?.login === 'logged_out' || state?.login === 'blocked') {
-          throw new Error(`${provider} is not logged in (state: ${state.login}). Log in from the classic UI or Resources page first.`);
-        }
-        if (Date.now() > readyDeadline) throw new Error(`${provider} page did not become ready in time.`);
-        await sleep(POLL_MS);
-      }
-      // Busy gate (#15): never write into a page that is still generating something else.
-      const idleDeadline = Date.now() + IDLE_TIMEOUT_MS;
-      while ((await stateOf(provider))?.thinking) {
-        if (Date.now() > idleDeadline) throw new Error(`${provider} stayed busy; not sending into a generating page.`);
-        await sleep(POLL_MS);
-      }
-    },
+    prepare: prepareProviderPage,
     async newSession(provider) {
       await host.provider.newSession(provider);
       // Give the page a moment to navigate to its blank conversation before the first send.

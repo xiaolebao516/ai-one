@@ -1,3 +1,4 @@
+import { interruptCleanup } from './machine';
 import type { ChatLedRun } from './types';
 
 /**
@@ -13,7 +14,8 @@ export interface ChatLedStorage {
   setItem(key: string, value: string): void;
 }
 
-const IN_FLIGHT = new Set(['idle', 'coordinator-thinking', 'forwarding', 'paused']);
+// Without a live controller none of these can continue; awaiting-user needs the controller too.
+const IN_FLIGHT = new Set(['idle', 'coordinator-thinking', 'forwarding', 'paused', 'awaiting-user']);
 
 function isRunLike(value: unknown): value is ChatLedRun {
   if (!value || typeof value !== 'object') return false;
@@ -36,8 +38,9 @@ export function loadRuns(storage: ChatLedStorage | undefined): ChatLedRun[] {
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isRunLike).map((run) =>
-      IN_FLIGHT.has(run.phase)
+    return parsed.filter(isRunLike).map((loaded) => {
+      const run = interruptCleanup(loaded, Date.now());
+      return IN_FLIGHT.has(run.phase)
         ? {
             ...run,
             phase: 'stopped' as const,
@@ -47,8 +50,8 @@ export function loadRuns(storage: ChatLedStorage | undefined): ChatLedRun[] {
               f.status === 'queued' || f.status === 'sending' || f.status === 'waiting' ? { ...f, status: 'cancelled' as const } : f,
             ),
           }
-        : run,
-    );
+        : run;
+    });
   } catch {
     return [];
   }

@@ -7,11 +7,11 @@ import { Badge, Button, Card, Notice, SectionHeader } from '../../ui/v2';
 import { ChatLedController } from '../../workflow/chatLed/controller';
 import { executeCleanup, planCleanup, type CleanupPlanItem } from '../../workflow/chatLed/cleanup';
 import { createChatGptCleaner } from '../../workflow/chatLed/drivers/chatgpt';
-import { createRealChatLedEnv } from '../../workflow/chatLed/env';
+import { createRealChatLedEnv, prepareProviderPage } from '../../workflow/chatLed/env';
 import { exportRunMarkdown } from '../../workflow/chatLed/exportMarkdown';
-import { closeRun, recordCleanup, recordExport } from '../../workflow/chatLed/machine';
+import { appendCleanupResult, beginCleanup, closeRun, finishCleanup, interruptCleanup, isRunActive, recordExport } from '../../workflow/chatLed/machine';
 import { loadRuns, saveRun } from '../../workflow/chatLed/store';
-import type { ChatLedRun, CleanupItemResult } from '../../workflow/chatLed/types';
+import type { ChatLedRun } from '../../workflow/chatLed/types';
 import { workbenchText } from '../workbenchText';
 import { ChatLedView } from './ChatLedView';
 
@@ -63,14 +63,15 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [takeover, setTakeover] = useState<AIProvider | undefined>();
-  const [cleanup, setCleanup] = useState<Record<string, { results: CleanupItemResult[] | null; running: boolean }>>({});
+  const [cleanupBusy, setCleanupBusy] = useState(false);
   const controllers = useRef(new Map<string, ChatLedController>());
   const runsRef = useRef(runs);
   runsRef.current = runs;
 
   const persist = useCallback(
     (run: ChatLedRun) => {
-      setRuns(saveRun(storage, run, runsRef.current));
+      runsRef.current = saveRun(storage, run, runsRef.current);
+      setRuns(runsRef.current);
     },
     [storage],
   );
@@ -98,9 +99,16 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
     }
   }, []);
 
+  // One active chat-led run at a time: runs share the same provider pages and workflow state.
+  const activeRun = runs.find((run) => controllers.current.has(run.id) && isRunActive(run));
+
   const start = async () => {
     const trimmed = goal.trim();
     if (!trimmed || starting) return;
+    if (activeRun) {
+      setError(text.t('chatLedActiveRunNotice'));
+      return;
+    }
     setStarting(true);
     setError(undefined);
     try {
@@ -148,7 +156,13 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
             </p>
             {error ? <Notice tone="block">{error}</Notice> : null}
             <div>
-              <Button variant="primary" onClick={() => void start()} disabled={!goal.trim() || starting} loading={starting}>
+              <Button
+                variant="primary"
+                onClick={() => void start()}
+                disabled={!goal.trim() || starting || Boolean(activeRun)}
+                disabledReason={activeRun ? text.t('chatLedActiveRunNotice') : undefined}
+                loading={starting}
+              >
                 {starting ? text.t('chatLedStarting') : text.t('chatLedStart')}
               </Button>
             </div>
@@ -182,9 +196,10 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
   }
 
   const controller = controllers.current.get(selected.id);
-  const state = cleanup[selected.id] ?? { results: null, running: false };
+  const pendingSessions = controller?.hasPendingSessions() ?? false;
+  const cleanupRunning = cleanupBusy || Boolean(selected.cleanupRunning) || pendingSessions;
   // A closed run, or one whose cleanup outcome is already stored, is read-only: never offered again.
-  const cleanupDone = Boolean(selected.closed) || selected.cleanupResults !== undefined;
+  const cleanupDone = Boolean(selected.closed) || selected.cleanupResults !== undefined || Boolean(selected.cleanupRunning);
   const plan: CleanupPlanItem[] | null =
     !cleanupDone && (selected.phase === 'finished' || selected.phase === 'stopped') ? planCleanup(selected, cleaners) : null;
   const exportFile = selected.exportedAt ? `ai-one-chat-led-${selected.id}.md` : undefined;
@@ -208,33 +223,40 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
     }
   };
 
-  const doCleanup = async () => {
-    // Cleanup is irreversible: it needs the click, a plan, and an exported log (checked again here).
-    if (!plan || state.running || !selected.exportedAt) return;
-    setCleanup((current) => ({ ...current, [selected.id]: { results: null, running: true } }));
-    let results: CleanupItemResult[] = [];
-    try {
-      // Only the user's click on "Clean up" reaches this point. The page must exist and be idle.
-      await createRealChatLedEnv().prepare('chatgpt').catch(() => undefined);
-      results = await executeCleanup(plan, cleaners);
-    } catch (cause) {
-      // Unexpected failure: nothing is confirmed, so every planned item is left for manual cleanup.
-      results = plan.map((item) => ({
-        provider: item.provider,
-        url: item.url,
-        title: item.title,
-        outcome: 'manual' as const,
-        note: cause instanceof Error ? cause.message : String(cause),
-      }));
-    } finally {
-      setCleanup((current) => ({ ...current, [selected.id]: { results: null, running: false } }));
+  // Applies a pure transition to the live controller's run, or to the stored run (read fresh each
+  // time, so several quick per-item updates never overwrite each other).
+  const apply = (transition: (run: ChatLedRun) => ChatLedRun) => {
+    if (controller) controller.apply(transition);
+    else {
+      const current = runsRef.current.find((run) => run.id === selected.id);
+      if (current) persist(transition(current));
     }
-    // Persist the outcome so a reload or reopen never offers cleanup again.
-    if (controller) controller.recordCleanupResults(results);
-    else persist(recordCleanup(selected, results, Date.now()));
+  };
+
+  const doCleanup = async () => {
+    // Cleanup is irreversible: it needs the click, a plan, an exported log, no other active run
+    // (it drives the same ChatGPT page) and no session still being created. Checked again here.
+    if (!plan || cleanupRunning || !selected.exportedAt || activeRun) return;
+    setCleanupBusy(true);
+    // The run is marked "cleanup running" and every confirmed item is stored right away, so a
+    // reload in the middle never replays a deletion (see interruptCleanup).
+    apply((run) => beginCleanup(run, Date.now()));
+    try {
+      await prepareProviderPage('chatgpt').catch(() => undefined);
+      await executeCleanup(plan, cleaners, {
+        onProgress: (_index, result) => apply((run) => appendCleanupResult(run, result, Date.now())),
+      });
+      apply((run) => finishCleanup(run, Date.now()));
+    } catch {
+      // Unexpected failure: nothing unconfirmed is replayed; the rest is left for manual cleanup.
+      apply((run) => interruptCleanup(run, Date.now()));
+    } finally {
+      setCleanupBusy(false);
+    }
   };
 
   const doClose = () => {
+    if (cleanupRunning) return;
     if (controller) controller.markClosed(Boolean(selected.exportedAt));
     else persist(closeRun(selected, Boolean(selected.exportedAt), Date.now()));
   };
@@ -275,7 +297,7 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
         locale={locale}
         run={selected}
         providerLabels={PROVIDER_LABELS}
-        cleanup={{ plan, results: selected.cleanupResults ?? null, running: state.running }}
+        cleanup={{ plan, results: selected.cleanupResults ?? null, running: cleanupRunning }}
         exportedPath={exportFile}
         onPause={() => controller?.pause()}
         onResume={() => controller?.resume()}
