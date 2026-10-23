@@ -832,8 +832,15 @@ export function applyImport(
         return;
       }
       if (conflicts.length > 0) {
-        // Overwrite is deliberately ID-based; a name-only collision is skipped rather than replacing an unrelated item.
-        stageIdMap.set(item.id, conflicts[0].id);
+        const sameName = conflicts.find((candidate) => normalizeName(candidate.name) === normalizeName(item.name));
+        const replaceByName = Boolean(sameName && !sameName.builtin && !item.builtin);
+        const target = sameName ?? conflicts[0];
+        if (replaceByName && sameName) {
+          const index = stages.findIndex((stage) => stage.id === sameName.id);
+          stages[index] = { ...item, id: sameName.id, builtin: false };
+        }
+        // Built-ins remain code-owned. Custom name-only conflicts are overwritten by the selected choice.
+        stageIdMap.set(item.id, target.id);
         return;
       }
       stages.push({ ...item, builtin: false });
@@ -889,7 +896,16 @@ export function applyImport(
         flows[index] = { ...item, builtin: false };
         return;
       }
-      if (conflicts.length > 0) return;
+      if (conflicts.length > 0) {
+        const sameName = conflicts.find((candidate) => normalizeName(candidate.name) === normalizeName(item.name));
+        const replaceByName = Boolean(sameName && !sameName.builtin && !item.builtin);
+        if (replaceByName && sameName) {
+          const index = flows.findIndex((flow) => flow.id === sameName.id);
+          flows[index] = { ...item, id: sameName.id, builtin: false };
+        }
+        // Built-ins remain code-owned; a custom same-name conflict is replaced only after explicit overwrite.
+        return;
+      }
       flows.push({ ...item, builtin: false });
       occupiedFlowIds.add(item.id);
       return;
