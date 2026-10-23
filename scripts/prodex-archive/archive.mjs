@@ -172,11 +172,12 @@ function otherClaims(home, ownSlot, url) {
     // A claim file that exists but cannot be read is an unknown occupant, not an empty slot.
     if (!claim && claimFilePresent(home, slot.id)) throw new Error('Other slot has an unreadable claim; refuse archive (retry when it is cleared)');
     if (!claim) continue;
-    // Fail closed: a competing claim that names this thread, or no thread at all, may be someone
-    // using it right now, so archiving waits until that claim is gone.
-    const thread = claimOwnership(claim).threadUrl;
-    if (!thread || thread === url)
-      throw new Error('Other slot has active or unknown thread ownership; refuse archive (retry when that slot is idle)');
+    // `prodex-slots run` only accepts a claim without a thread URL for a NEW chat (continuing a thread
+    // needs --target-url + the same --thread-url, and --continue is refused), so such a claim cannot be
+    // using this thread. A claim that names this thread blocks; an unreadable claim file (handled
+    // above) is an unknown occupant and also blocks.
+    if (claimOwnership(claim).threadUrl === url)
+      throw new Error('Other slot has an active claim on this thread; refuse archive (retry when that slot is idle)');
   }
 }
 export function validateFinish({ task, slot, threadUrl, requestId, handoffUrl }) {

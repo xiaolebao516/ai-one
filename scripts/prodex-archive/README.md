@@ -85,7 +85,7 @@ intentionally hold the claim; a failed Handoff check never takes a claim.
   hash, request ID) written by the dispatcher. Persisting a run-to-thread registry is a follow-up.
 - A `run` that still holds a slot claim blocks archive-on-release for that slot; `run` refuses
   `--continue/--continue-task`, and `skip` shares the per-thread lock with the archive.
-- Active/unknown competing claims, held send lock, wrong/hidden tab, unsent draft,
+- A claim on another slot that names the same thread (or an unreadable claim file; a claim with no thread URL is a new chat, since `run` forbids continuing without it), held send lock, wrong/hidden tab, unsent draft,
   pending generation, missing thread row or ambiguous Archive menu block the action.
 - Mouse input is generated using fresh DOM element positions, not fixed coordinates.
   No hidden ChatGPT APIs, cookies, credentials, prompts or responses are read/stored.

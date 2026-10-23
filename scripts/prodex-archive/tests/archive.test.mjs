@@ -83,18 +83,21 @@ test('a concurrent claim on same thread blocks archive', async () => {
     assert.equal(readClaim(home, 1), null);
   } finally { other.release(); }
 });
-test('an unregistered claim on another slot blocks archive, a claim on a different thread does not', async () => {
+test('a new-chat claim (no thread) or a different thread on another slot does not block archive; the same thread does', async () => {
   const home = temp();
   addSlots(home, 2);
-  const unregistered = claimSlot(home, 2, { meta: { task: '99' } });
-  try {
-    await assert.rejects(finish(input(), { home, verify: () => true, archive: async () => {
-      throw new Error('MUST NOT CALL'); } }), /unknown thread ownership/);
-  } finally { unregistered.release(); }
+  const newChat = claimSlot(home, 2, { meta: { task: '99' } });
   const different = claimSlot(home, 3, { meta: { task: '98', threadUrl: B } });
   try {
-    assert.equal((await finish({ ...input(), retry: true }, { home, verify: () => true, archive: async () => {} })).status, 'archived');
-  } finally { different.release(); }
+    assert.equal((await finish(input(), { home, verify: () => true, archive: async () => {} })).status, 'archived');
+  } finally { newChat.release(); different.release(); }
+  const home2 = temp();
+  addSlots(home2, 1);
+  const same = claimSlot(home2, 2, { meta: { task: '97', threadUrl: A } });
+  try {
+    await assert.rejects(finish(input(), { home: home2, verify: () => true, archive: async () => {
+      throw new Error('MUST NOT CALL'); } }), /active claim on this thread/);
+  } finally { same.release(); }
 });
 test('held browser send lock prevents archive (do not steal another process lock)', async () => {
   const home = temp();
