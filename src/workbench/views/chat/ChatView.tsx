@@ -439,7 +439,7 @@ export function ChatView({ locale, runtime, onConvertToTask, onStartGrill }: Cha
 
           {showReplay ? (
             <Card>
-              <ReplayPanel locale={locale} activeProviders={CHAT_PROVIDERS} />
+              <ReplayPanel locale={locale} activeProviders={[...CHAT_PROVIDERS]} />
             </Card>
           ) : null}
 
