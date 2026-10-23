@@ -99,7 +99,7 @@ describe('chat model login and card state', () => {
       gemini: state('gemini'),
       grok: state('grok'),
       meta: state('meta'),
-    });
+    }, 1_000);
     expect(settled.chatgpt).toMatchObject({ status: 'completed', content: 'success' });
     expect(settled.claude).toMatchObject({ status: 'failed', content: 'partial' });
     expect(settlePendingTargets(['claude'], {
