@@ -32,6 +32,7 @@ export interface TaskViewProps {
   onOpenClassic?: () => void;
   onTakeoverAi?: (aiName: string) => void;
   onRefreshData?: () => Promise<void> | void;
+  onNavigateTask?: (task: HudTask) => void;
 }
 
 const EVIDENCE_TONE = { readback: 'done', local: 'run', self: 'neutral', unverified: 'unknown' } as const;
@@ -48,9 +49,10 @@ export function TaskView({
   task,
   onBack,
   dispatchSnapshot,
-  onOpenClassic,
+  onOpenClassic: _onOpenClassic,
   onTakeoverAi,
   onRefreshData,
+  onNavigateTask,
 }: TaskViewProps) {
   const isZh = locale.startsWith('zh');
   const text = workbenchText(locale);
@@ -73,7 +75,6 @@ export function TaskView({
     setTakeoverAi(name);
     setStoredTakeoverAi(name);
     onTakeoverAi?.(name);
-    onOpenClassic?.();
   };
 
   const initialPauseState: PauseState = useMemo(() => {
@@ -86,7 +87,7 @@ export function TaskView({
           time = Date.now() - (item.observedMinutesAgo * 60000);
         }
         if (!time) {
-          const match = item.id.match(/\d{10,}/);
+          const match = String(item.id).match(/\d{10,}/);
           if (match) time = parseInt(match[0], 10);
         }
         pauseComments.push({ body: item.raw, time: time || 0 });
@@ -124,13 +125,24 @@ export function TaskView({
           <TaskTakeoverBanner
             participantName={takeoverAi}
             locale={locale}
-            onExit={() => setTakeoverAi(null)}
+            onExit={() => {
+              setTakeoverAi(null);
+              setStoredTakeoverAi(null);
+            }}
           />
         ) : null}
 
         <div className="mx-auto grid w-full max-w-[920px] content-start gap-v2-section p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:p-v2-page">
           <nav aria-label="breadcrumb" className="flex flex-wrap items-center gap-v2-sm text-v2-meta text-v2-ink-3">
-            <Button size="sm" variant="ghost" onClick={onBack} icon={<Icon name="arrowLeft" size={14} />}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setStoredTakeoverAi(null);
+                onBack();
+              }}
+              icon={<Icon name="arrowLeft" size={14} />}
+            >
               {text.t('backToTasks')}
             </Button>
             <span>{task.repo}</span>
@@ -380,7 +392,9 @@ export function TaskView({
         task={task}
         locale={locale}
         onNavigate={() => {
-          if (typeof window !== 'undefined') {
+          if (onNavigateTask) {
+            onNavigateTask(task);
+          } else if (typeof window !== 'undefined') {
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }
         }}

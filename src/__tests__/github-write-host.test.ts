@@ -129,6 +129,7 @@ describe('host GitHub write bridge', () => {
   });
 
   it('marks createIssue invoke rejection unconfirmed without retrying or exposing error text', async () => {
+    invokeMock.mockClear();
     invokeMock.mockRejectedValueOnce('NETWORK_DISCONNECTED_BEFORE_READBACK');
     const thrown = await host.githubWrite.createIssue({
       repo: 'owner/repo',
@@ -141,6 +142,7 @@ describe('host GitHub write bridge', () => {
       message: '已发出，但没能确认；请先回读，不要重试',
       steps: [],
     });
+    expect(invokeMock).toHaveBeenCalledTimes(1);
     expect(invokeMock).toHaveBeenCalledWith('github_write_create_issue', {
       repo: 'owner/repo',
       title: 'spec task',

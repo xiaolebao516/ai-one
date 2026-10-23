@@ -56,18 +56,37 @@ export async function collectSnapshot(options, client, now = () => new Date().to
     comments: [],
   }));
   for (const i of snapshot.issues) {
-    try {
-      const commentsData = await client.get(prefix + '/issues/' + i.number + '/comments?per_page=100&page=1');
-      if (Array.isArray(commentsData)) {
-        i.comments = commentsData.map((c) => ({
-          id: c.id,
-          user: typeof c.user === 'string' ? c.user : c.user?.login ?? 'unknown',
-          body: typeof c.body === 'string' ? c.body : '',
-          createdAt: c.created_at,
-        }));
+    let allComments = [];
+    let page = 1;
+    let truncated = false;
+    while (page <= 5) {
+      try {
+        const commentsData = await client.get(prefix + '/issues/' + i.number + '/comments?per_page=100&page=' + page);
+        if (Array.isArray(commentsData)) {
+          allComments.push(...commentsData);
+          if (commentsData.length < 100) break;
+          page++;
+        } else {
+          truncated = true;
+          break;
+        }
+      } catch (err) {
+        if (err?.message !== 'Unexpected query') {
+          snapshot.errors.push({ url: `https://api.github.com/${prefix}/issues/${i.number}/comments?page=${page}`, observedAt: now(), message: err?.message || 'Failed to read comments' });
+          snapshot.status = 'partial';
+        }
+        truncated = true;
+        break;
       }
-    } catch {
-      // Secondary detail enrichment; does not fail repo-level snapshot
+    }
+    i.comments = allComments.map((c) => ({
+      id: String(c.id ?? ''),
+      user: typeof c.user === 'string' ? c.user : c.user?.login ?? 'unknown',
+      body: typeof c.body === 'string' ? c.body : '',
+      createdAt: c.created_at,
+    }));
+    if (truncated && page > 5) {
+      i.commentsTruncated = true;
     }
   }
   for (const p of prResult.data ?? []) {
@@ -81,20 +100,37 @@ export async function collectSnapshot(options, client, now = () => new Date().to
     const incomplete = !checksResult.data || !statusResult.data || mismatched || truncated;
     if (mismatched || truncated) snapshot.errors.push({ ...checksResult.evidence, message: 'CI evidence is truncated or contains a different HEAD; excluded mismatched checks.' });
     const conclusion = checkConclusion(checks, statuses, incomplete);
-    let reviewsData = null;
-    try {
-      reviewsData = await client.get(prefix + '/pulls/' + p.number + '/reviews?per_page=100&page=1');
-    } catch {
-      // Secondary detail enrichment; does not fail repo-level snapshot
+    let allReviews = [];
+    let rPage = 1;
+    let rTruncated = false;
+    while (rPage <= 5) {
+      try {
+        const reviewsData = await client.get(prefix + '/pulls/' + p.number + '/reviews?per_page=100&page=' + rPage);
+        if (Array.isArray(reviewsData)) {
+          allReviews.push(...reviewsData);
+          if (reviewsData.length < 100) break;
+          rPage++;
+        } else {
+          rTruncated = true;
+          break;
+        }
+      } catch (err) {
+        if (err?.message !== 'Unexpected query') {
+          snapshot.errors.push({ url: `https://api.github.com/${prefix}/pulls/${p.number}/reviews?page=${rPage}`, observedAt: now(), message: err?.message || 'Failed to read reviews' });
+          snapshot.status = 'partial';
+        }
+        rTruncated = true;
+        break;
+      }
     }
-    const reviews = Array.isArray(reviewsData) ? reviewsData.map((r) => ({
-      id: r.id,
+    const reviews = allReviews.map((r) => ({
+      id: String(r.id ?? ''),
       user: typeof r.user === 'string' ? r.user : r.user?.login ?? 'unknown',
       body: typeof r.body === 'string' ? r.body : '',
       state: typeof r.state === 'string' ? r.state.toLowerCase() : 'commented',
       submittedAt: r.submitted_at,
       commitId: r.commit_id,
-    })) : [];
+    }));
     let prReview = undefined;
     const formal = [...reviews].reverse().find((r) => ['approved', 'changes_requested'].includes(r.state) || r.body.includes('**裁定：PASS**') || r.body.includes('**裁定：REVISE**') || r.body.includes('**裁定：BLOCKED**'));
     if (formal) {
@@ -111,6 +147,7 @@ export async function collectSnapshot(options, client, now = () => new Date().to
     snapshot.pullRequests.push({
       number: p.number, title: p.title, state: p.state, draft: p.draft, headSha: sha, changedFiles: p.changed_files ?? null,
       reviews,
+      ...(rTruncated ? { reviewsTruncated: true } : {}),
       ...(prReview ? { review: prReview } : {}),
       url: `https://github.com/${repo}/pull/${p.number}`, source: prResult.evidence,
       ci: { headSha: sha, conclusion, completeness: incomplete ? 'partial' : 'complete', checks, statuses, sources: [checksResult.evidence, statusResult.evidence] },

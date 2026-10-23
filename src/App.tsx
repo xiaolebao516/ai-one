@@ -118,6 +118,7 @@ import {
   type FreeTargetSelection,
 } from './ui/targets';
 import { useOverlayGuard } from './ui/useOverlayGuard';
+import { getTakeoverAi, setStoredTakeoverAi, switchUiRoot } from './workbench/workbenchStorage';
 import { TaskHud } from './ui/TaskHud';
 import { TaskHudEntry } from './ui/TaskHudEntry';
 import { buildMarkdown, exportFilename, matchingSnapshotForConversation } from './ui/exportMarkdown';
@@ -286,6 +287,15 @@ export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void 
     void Promise.resolve()
       .then(() => host.dev.log('[MAC_AGENT] READY control-pane'))
       .catch(() => undefined);
+    const ai = getTakeoverAi();
+    if (ai) {
+      setTakeoverAi(ai);
+      let target: AIProvider = 'chatgpt';
+      if (/claude/i.test(ai)) target = 'claude';
+      else if (/gemini/i.test(ai)) target = 'gemini';
+      else if (/grok/i.test(ai)) target = 'grok';
+      setScrollFocusedProvider(target);
+    }
   }, []);
   const initialConversation = useMemo(initialConversationState, []);
   const [states, setStates] = useState<Record<AIProvider, ProviderState>>(() =>
@@ -327,6 +337,7 @@ export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void 
   const [reportBusy, setReportBusy] = useState(false);
   const [adapterNotice, setAdapterNotice] = useState<AdapterNotice | null>(null);
   const [sharing, setSharing] = useState(false);
+  const [takeoverAi, setTakeoverAi] = useState<string | null>(() => getTakeoverAi());
   const [appSettings, setAppSettings] = useState<AppSettings>(() => defaultSettings());
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [initialRestoreComplete, setInitialRestoreComplete] = useState(false);
@@ -1929,11 +1940,40 @@ export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void 
     : undefined;
 
   return (
-    <main className="app-shell h-screen overflow-hidden bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+    <main className="app-shell flex h-screen flex-col overflow-hidden bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+      {takeoverAi ? (
+        <aside
+          data-testid="classic-takeover-banner"
+          aria-label={locale.startsWith('zh') ? '接管横幅' : 'Takeover banner'}
+          className="flex flex-shrink-0 items-center justify-between border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 text-sm text-amber-900 dark:text-amber-200"
+        >
+          <div className="flex items-center gap-2">
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+            <span>
+              {locale.startsWith('zh')
+                ? `你正在接管操作 ${takeoverAi}。`
+                : `You are manually controlling ${takeoverAi}.`}
+            </span>
+          </div>
+          <button
+            type="button"
+            data-testid="classic-exit-takeover"
+            className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 transition-colors"
+            onClick={() => {
+              setStoredTakeoverAi(null);
+              setTakeoverAi(null);
+              if (onOpenWorkbench) onOpenWorkbench();
+              else switchUiRoot('workbench');
+            }}
+          >
+            {locale.startsWith('zh') ? '回到任务现场' : 'Return to Task'}
+          </button>
+        </aside>
+      ) : null}
       <div
         ref={gridRef}
         {...(taskHudOpen ? TASK_HUD_HIDDEN_CHAT : undefined)}
-        className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)]"
+        className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)]"
         style={{ gridTemplateColumns: messagesMaximized ? '0px 0px minmax(0,1fr)' : focusGridTemplateColumns(focusPaneWidth) }}
       >
         <div

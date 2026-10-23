@@ -334,7 +334,73 @@ describe('TaskView Controls & Live Inspector integration (Spec #110)', () => {
 
     expect(getTakeoverAi()).toBe('ChatGPT (Pro)');
     expect(onTakeoverAi).toHaveBeenCalledWith('ChatGPT (Pro)');
-    expect(onOpenClassic).toHaveBeenCalled();
+
+    // Banner is rendered
+    expect(container.querySelector('[data-testid="takeover-banner"]')).toBeDefined();
+
+    // Click exit on banner
+    const exitBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('回到任务'));
+    expect(exitBtn).toBeDefined();
+    await act(async () => {
+      exitBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    // Assert stored takeover AI is cleared
+    expect(getTakeoverAi()).toBeNull();
+    expect(container.querySelector('[data-testid="takeover-banner"]')).toBeNull();
+  });
+
+  it('clears stored takeover AI when navigating back to tasks', async () => {
+    setStoredTakeoverAi('ChatGPT (Pro)');
+    expect(getTakeoverAi()).toBe('ChatGPT (Pro)');
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    live.push({ root, container });
+
+    const onBack = vi.fn();
+    await act(async () => {
+      root.render(<TaskView locale="zh-CN" task={baseTask} onBack={onBack} />);
+    });
+
+    const backBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('全部任务') || b.textContent?.includes('All tasks'));
+    expect(backBtn).toBeDefined();
+
+    await act(async () => {
+      backBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(getTakeoverAi()).toBeNull();
+    expect(onBack).toHaveBeenCalled();
+  });
+
+  it('integration: handles numeric comment IDs and ISO timestamps without runtime match error', async () => {
+    const rawPause = ghWriteModule.formatPauseBody('paused');
+    const taskWithNumericComment: HudTask = {
+      ...baseTask,
+      evidence: [
+        {
+          id: 99887766 as unknown as string,
+          kind: 'readback',
+          text: { zh: 'Issue 评论 · testuser', en: 'Issue Comment · testuser' },
+          raw: rawPause,
+          observedMinutesAgo: 5,
+        },
+      ],
+    };
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    live.push({ root, container });
+
+    await act(async () => {
+      root.render(<TaskView locale="zh-CN" task={taskWithNumericComment} onBack={vi.fn()} />);
+    });
+
+    const pauseBtn = container.querySelector('[data-testid="pause-toggle-button"]');
+    expect(pauseBtn?.textContent).toContain('继续');
   });
 
   it('derives pause state chronologically: old resume -> new pause resolves to paused', async () => {

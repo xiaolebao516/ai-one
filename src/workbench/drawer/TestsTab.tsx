@@ -66,7 +66,11 @@ export function TestsTab({ task, locale }: TestsTabProps) {
           ))
         ) : (
           <Card padding="md" className="grid content-start gap-v2-xs text-center text-v2-meta text-v2-ink-3">
-            <p>{isZh ? '暂无 CC 本机运行测试记录（未运行）' : 'No local machine test run recorded (Not run).'}</p>
+            <p>
+              {task.dataSource === 'github'
+                ? (isZh ? '本机运行测试记录不可用（GitHub 任务快照不包含本机执行日志）' : 'Local run records unavailable (GitHub task snapshot does not include local runner logs).')
+                : (isZh ? '暂无本机运行测试记录（未运行）' : 'No local machine test run recorded (Not run).')}
+            </p>
           </Card>
         )}
       </div>

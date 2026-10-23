@@ -107,8 +107,24 @@ pub(crate) fn allowed_get_path(path: &str) -> Option<&str> {
         }
         ["commits", sha, "check-runs"] => is_sha(sha) && query == "filter=latest&per_page=100&page=1",
         ["commits", sha, "status"] => is_sha(sha) && query == "per_page=100&page=1",
-        ["issues", num, "comments"] => bounded_int(num, 1, MAX_SAFE_INTEGER) && (query == "per_page=100&page=1" || query == "per_page=30&page=1"),
-        ["pulls", num, "reviews"] => bounded_int(num, 1, MAX_SAFE_INTEGER) && (query == "per_page=100&page=1" || query == "per_page=30&page=1"),
+        ["issues", num, "comments"] => {
+            if !bounded_int(num, 1, MAX_SAFE_INTEGER) {
+                false
+            } else if let Some(page_str) = query.strip_prefix("per_page=100&page=") {
+                bounded_int(page_str, 1, 10)
+            } else {
+                query == "per_page=30&page=1"
+            }
+        }
+        ["pulls", num, "reviews"] => {
+            if !bounded_int(num, 1, MAX_SAFE_INTEGER) {
+                false
+            } else if let Some(page_str) = query.strip_prefix("per_page=100&page=") {
+                bounded_int(page_str, 1, 10)
+            } else {
+                query == "per_page=30&page=1"
+            }
+        }
         _ => false,
     };
     allowed.then_some(path)
@@ -222,6 +238,8 @@ mod tests {
             &format!("repos/o/r/commits/{SHA}/status?per_page=100&page=1"),
             "repos/xiaolebao516/ai-one/issues/110/comments?per_page=100&page=1",
             "repos/xiaolebao516/ai-one/pulls/130/reviews?per_page=100&page=1",
+            "repos/xiaolebao516/ai-one/issues/110/comments?per_page=100&page=2",
+            "repos/xiaolebao516/ai-one/pulls/130/reviews?per_page=100&page=10",
         ] {
             assert_eq!(allowed_get_path(path), Some(path), "{path}");
         }

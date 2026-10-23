@@ -142,6 +142,7 @@ export function Workbench({ locale, onOpenClassic, onTakeoverAi, githubLoader, d
         onOpenClassic={onOpenClassic}
         onTakeoverAi={onTakeoverAi}
         onRefreshData={data.refresh}
+        onNavigateTask={openTask}
       />
     );
   } else if (current.view === 'chat') {
@@ -204,7 +205,7 @@ export function Workbench({ locale, onOpenClassic, onTakeoverAi, githubLoader, d
           fallbackFocus={mainRef}
         />
       ) : null}
-      {activeNeedsYou && current.view !== 'task' ? (
+      {activeNeedsYou ? (
         <TaskNotificationIsland
           task={activeNeedsYou}
           locale={locale}

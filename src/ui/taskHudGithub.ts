@@ -164,31 +164,35 @@ function makeTask(
       }
     }
   }
-  const prReviews = (prRec?.reviews as Array<{ id?: string; user?: string; body?: string; observedMinutesAgo?: number }>) || [];
+  const prReviews = (prRec?.reviews as Array<{ id?: string | number; user?: string; body?: string; submittedAt?: string; observedMinutesAgo?: number }>) || [];
   if (Array.isArray(prReviews)) {
     for (const r of prReviews) {
       if (r && r.body) {
+        const reviewId = String(r.id ?? (id + ':review:' + evidence.length));
+        const minutesAgo = r.submittedAt ? age(r.submittedAt, now) : (r.observedMinutesAgo ?? undefined);
         evidence.push({
-          id: r.id || (id + ':review:' + evidence.length),
+          id: reviewId,
           kind: 'readback',
           text: { zh: `GitHub 独立审计评论 · ${r.user || 'Reviewer'}`, en: `GitHub Review Comment · ${r.user || 'Reviewer'}` },
           raw: r.body,
-          observedMinutesAgo: r.observedMinutesAgo,
+          observedMinutesAgo: minutesAgo,
         });
       }
     }
   }
   const issueRec = issue as unknown as Record<string, unknown> | undefined;
-  const issueComments = (issueRec?.comments as Array<{ id?: string; user?: string; body?: string; observedMinutesAgo?: number }>) || [];
+  const issueComments = (issueRec?.comments as Array<{ id?: string | number; user?: string; body?: string; createdAt?: string; observedMinutesAgo?: number }>) || [];
   if (Array.isArray(issueComments)) {
     for (const c of issueComments) {
       if (c && c.body) {
+        const commentId = String(c.id ?? (id + ':comment:' + evidence.length));
+        const minutesAgo = c.createdAt ? age(c.createdAt, now) : (c.observedMinutesAgo ?? undefined);
         evidence.push({
-          id: c.id || (id + ':comment:' + evidence.length),
+          id: commentId,
           kind: 'readback',
           text: { zh: `Issue 评论 · ${c.user || 'User'}`, en: `Issue Comment · ${c.user || 'User'}` },
           raw: c.body,
-          observedMinutesAgo: c.observedMinutesAgo,
+          observedMinutesAgo: minutesAgo,
         });
       }
     }

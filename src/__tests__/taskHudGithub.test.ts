@@ -316,4 +316,61 @@ describe('Spec #50 v1: snapshot quality and repository isolation', () => {
       ['associations', 'acme/demo', [7, 8]],
     ]);
   });
+  it('reads comments across multiple pages up to limit and maps numeric IDs and timestamps', async () => {
+    const page1Comments = Array.from({ length: 100 }, (_, idx) => ({
+      id: idx + 1,
+      user: { login: 'user1' },
+      body: `comment ${idx + 1}`,
+      created_at: '2026-10-23T07:00:00Z',
+    }));
+    const page2Comments = [
+      {
+        id: 101,
+        user: { login: 'user2' },
+        body: '用户已暂停',
+        created_at: '2026-10-23T08:00:00Z',
+      },
+    ];
+
+    const api = {
+      async get(path: string): Promise<unknown> {
+        if (path.includes('/issues?')) return [
+          { number: 10, title: 'Issue 10', state: 'open' },
+        ];
+        if (path.includes('/pulls?')) return [];
+        if (path.includes('/issues/10/comments?per_page=100&page=1')) return page1Comments;
+        if (path.includes('/issues/10/comments?per_page=100&page=2')) return page2Comments;
+        return [];
+      },
+      async associations(): Promise<unknown> { return { data: { repository: {} } }; },
+    };
+
+    const [repo] = await loadGitHubTasks(['acme/demo'], api, { now: NOW, limit: 10 });
+    expect(repo.status).toBe('complete');
+    expect(repo.tasks).toHaveLength(1);
+    const task = repo.tasks[0];
+    const commentEv = task.evidence.filter((e) => e.text.en.includes('Issue Comment'));
+    expect(commentEv).toHaveLength(101);
+    expect(typeof commentEv[100].id).toBe('string');
+    expect(commentEv[100].id).toBe('101');
+    expect(typeof commentEv[100].observedMinutesAgo).toBe('number');
+  });
+
+  it('marks snapshot partial when comments fetch fails with a real error', async () => {
+    const api = {
+      async get(path: string): Promise<unknown> {
+        if (path.includes('/issues?')) return [
+          { number: 10, title: 'Issue 10', state: 'open' },
+        ];
+        if (path.includes('/pulls?')) return [];
+        if (path.includes('/issues/10/comments')) throw new Error('API Rate Limit Exceeded');
+        return [];
+      },
+      async associations(): Promise<unknown> { return { data: { repository: {} } }; },
+    };
+
+    const [repo] = await loadGitHubTasks(['acme/demo'], api, { now: NOW, limit: 10 });
+    expect(repo.status).toBe('partial');
+    expect(repo.errors.some((e) => e.message.includes('API Rate Limit'))).toBe(true);
+  });
 });
