@@ -121,7 +121,7 @@ export function buildTaskPrefill(
   const summaryText = summaries
     .map(({ provider, content }) => `## ${AI_PROVIDERS[provider].name}\n\n${truncateReplySummary(content)}`)
     .join('\n\n');
-  return `${question}\n\n---\n\n对比摘要\n\n${summaryText}`;
+  return `${question}\n\n---\n\n${summaryHeading}\n\n${summaryText}`;
 }
 
 export function busyTargets(targets: readonly AIProvider[], busy: ReadonlySet<AIProvider>): AIProvider[] {
