@@ -33,7 +33,7 @@ Rust 端重新校验所有参数。前端不能指定路径或 HTTP 方法。JSO
 - `failed`：没有发送写请求（例如参数/前置校验拒绝、`gh` 缺失、`gh auth status` 证明未登录或进程启动失败）。
 - 子进程启动后的非零退出、stdin 写失败、输出超限、被杀、超时或非法 JSON 都无法证明 GitHub 未写入，写步骤统一标为 `unconfirmed`；不会自动重试。
 
-`accept` / `requestChanges` 会比较 Rust 端刚读取的 PR HEAD 与 `expectedHead`（不区分大小写），并要求 PR 关联指定 Issue。关联可来自 `closingIssuesReferences`，或 PR 正文中未被代码块、行内代码、引用块或 HTML 注释屏蔽的 `Closes/Fixes/Resolves`（含 close/fix/resolve 的时态）后接 `#N` 或同仓库 `owner/repo#N`。编号后必须是非字母数字边界，因此 `#12abc` 与 `#123` 不会匹配 Issue #12；无法确认关联时拒绝写入。PR 必须处于开放状态。
+`accept` / `requestChanges` 会比较 Rust 端刚读取的 PR HEAD 与 `expectedHead`（不区分大小写），并要求 PR 关联指定 Issue。关联可来自 `closingIssuesReferences`，或 PR 正文的一行以 `Closes/Fixes/Resolves`（含 close/fix/resolve 的时态，可带 `- `/`* ` 列表符）开头并紧跟 `#N` 或同仓库 `owner/repo#N`。正文只是后备证据，解析按“无法确定就拒绝”处理：正文中出现任何反引号、`<`（HTML）或 `~~~` 围栏，或语句不在行首，正文一律不作为关联证据；缩进代码块与引用块（含续行）里的语句也不算。编号后必须是非字母数字边界，因此 `#12abc` 与 `#123` 不会匹配 Issue #12；无法确认关联时拒绝写入。仅靠 PR 正文（而非 `closingIssuesReferences`）建立关联时，Rust 还会先读取目标 `repos/{repo}/issues/{issue}`，目标不存在、编号不符或是 Pull Request 一律拒绝（正文里的 `#N` 可能指向另一个 PR）。PR 必须处于开放状态。
 
 父子关系使用 GitHub 原生 Sub-issue API，创建新 Issue 后才挂到 `parentSpec`。挂接明确失败时返回 `partial`，保留已创建的 Issue 号与 URL，不自动重复建单。
 

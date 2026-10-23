@@ -411,7 +411,14 @@ fn result(
     }
 }
 
+/// Shown for a read that timed out before any write request was sent (status failed + timeout).
+/// Timeouts after a write started are always `unconfirmed` and keep the "may be uncertain" wording.
+const PRE_WRITE_TIMEOUT_MESSAGE: &str = "请求超时，尚未发出写入，可稍后重试";
+
 fn simple_result(status: GithubWriteState, code: GithubWriteCode) -> GithubWriteResult {
+    if status == GithubWriteState::Failed && code == GithubWriteCode::Timeout {
+        return result(status, code, PRE_WRITE_TIMEOUT_MESSAGE, Vec::new());
+    }
     result(status, code, fixed_message(code), Vec::new())
 }
 
@@ -443,6 +450,7 @@ fn valid_repo_input(repo: &str) -> bool {
 fn valid_title(title: &str) -> bool {
     let trimmed_length = title.trim().chars().count();
     (1..=256).contains(&trimmed_length)
+        && title.chars().count() <= 256
         && !title.chars().any(|ch| matches!(ch, '\n' | '\r' | '\t'))
         && valid_string(title, MAX_TEXT_CHARS, false, true)
 }
@@ -595,7 +603,7 @@ fn issue_number_from_url(url: &str) -> Option<u64> {
 }
 
 fn comment_body(text: &str) -> String {
-    format!("{COMMENT_PREFIX}\n\n{}\n\n<!-- ai-one:comment:v1 -->", text.trim())
+    format!("{COMMENT_PREFIX}\n{text}\n<!-- ai-one:comment:v1 -->")
 }
 
 fn pause_body(state: PauseState) -> String {
@@ -603,21 +611,20 @@ fn pause_body(state: PauseState) -> String {
         PauseState::Paused => "用户已暂停：请停止派发新工作，正在进行的一步可完成。",
         PauseState::Running => "用户已恢复：可继续派发。",
     };
-    format!("{COMMENT_PREFIX}\n\n{sentence}\n\n<!-- ai-one:set_pause:v1 -->")
+    format!("{COMMENT_PREFIX}\n{sentence}\n<!-- ai-one:set_pause:v1 -->")
 }
 
 fn accept_body(head: &str) -> String {
     format!(
-        "{COMMENT_PREFIX}\n\n【ai-one】用户验收通过（针对 HEAD {}）。\n\n<!-- ai-one:accept:v1 -->",
+        "{COMMENT_PREFIX}\n【ai-one】用户验收通过（针对 HEAD {}）。\n<!-- ai-one:accept:v1 -->",
         head.to_ascii_lowercase()
     )
 }
 
 fn request_changes_body(head: &str, text: &str) -> String {
     format!(
-        "{COMMENT_PREFIX}\n\n【ai-one】用户要求修改（针对 HEAD {}）：\n\n{}\n\n<!-- ai-one:request_changes:v1 -->",
-        head.to_ascii_lowercase(),
-        text.trim()
+        "{COMMENT_PREFIX}\n【ai-one】用户要求修改（针对 HEAD {}）：\n{text}\n<!-- ai-one:request_changes:v1 -->",
+        head.to_ascii_lowercase()
     )
 }
 
@@ -909,10 +916,10 @@ fn is_word_character(ch: char) -> bool {
 }
 
 fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
-    // Conservative gate: backslash-escaped backticks or an odd number of backticks make code-span
-    // pairing ambiguous, so a keyword inside real code could leak out. Treat the body as no evidence
-    // (closingIssuesReferences stays the primary source) instead of guessing.
-    if body.contains("\\`") || body.matches('`').count() % 2 != 0 {
+    // Fail-closed gate (the body is only a fallback; closingIssuesReferences stays the primary
+    // source): any backtick, HTML (`<`) or tilde fence makes Markdown code/comment/attribute context
+    // ambiguous, so the body is not evidence at all instead of being parsed heuristically.
+    if body.contains('`') || body.contains('<') || body.contains("~~~") {
         return false;
     }
     let prose = strip_fenced_code_and_quotes(body);
@@ -932,11 +939,8 @@ fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
         let lower = line.to_ascii_lowercase();
         for verb in verbs.iter().copied() {
             for (start, _) in lower.match_indices(verb) {
-                if lower[..start]
-                    .chars()
-                    .next_back()
-                    .is_some_and(is_word_character)
-                {
+                // The closing statement must open the line (optionally as a "- " / "* " bullet).
+                if !matches!(&lower[..start], "" | "- " | "* ") {
                     continue;
                 }
 
@@ -949,19 +953,15 @@ fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
                     continue;
                 }
 
-                let after_verb = cursor;
+                // Only "verb<space>" or "verb:<space>" are accepted; a bare colon is not a separator.
+                if lower.as_bytes().get(cursor) == Some(&b':') {
+                    cursor += 1;
+                }
+                let after_separator = cursor;
                 while cursor < lower.len() && lower.as_bytes()[cursor].is_ascii_whitespace() {
                     cursor += 1;
                 }
-                let mut has_separator = cursor > after_verb;
-                if cursor < lower.len() && lower.as_bytes()[cursor] == b':' {
-                    cursor += 1;
-                    has_separator = true;
-                    while cursor < lower.len() && lower.as_bytes()[cursor].is_ascii_whitespace() {
-                        cursor += 1;
-                    }
-                }
-                if !has_separator {
+                if cursor == after_separator {
                     continue;
                 }
 
@@ -971,7 +971,7 @@ fn body_links_issue(body: &str, repo: &str, issue: u64) -> bool {
                         if lower[end..]
                             .chars()
                             .next()
-                            .map_or(true, |ch| !ch.is_alphanumeric())
+                            .map_or(true, |ch| !is_word_character(ch))
                         {
                             return true;
                         }
@@ -1042,6 +1042,28 @@ async fn precheck_pr<G: GhApi>(
             GithubWriteState::Failed,
             GithubWriteCode::PrIssueMismatch,
         )));
+    }
+    if !closing_ref_matches {
+        // Body-only evidence is just text: `#N` may name another PR or nothing at all. GitHub's own
+        // closingIssuesReferences only ever lists real issues, the body does not, so confirm the
+        // target really is this repository's issue (not a pull request) before any write.
+        match gh.get(&issue_path(repo, issue)).await {
+            Ok(target) => {
+                let is_issue = target.is_object()
+                    && target.get("number").and_then(Value::as_u64) == Some(issue)
+                    && target.get("pull_request").is_none();
+                if !is_issue {
+                    return Err(Box::new(simple_result(
+                        GithubWriteState::Failed,
+                        GithubWriteCode::PrIssueMismatch,
+                    )));
+                }
+            }
+            Err(error) => {
+                let code = code_for_error(gh, error).await;
+                return Err(Box::new(simple_result(GithubWriteState::Failed, code)));
+            }
+        }
     }
     Ok(())
 }
@@ -1527,17 +1549,12 @@ async fn create_issue<G: GhApi>(gh: &G, args: &CreateIssueArgs) -> GithubWriteRe
             ));
             return confirmed;
         }
-        if items.len() < 100 {
-            confirmed.status = GithubWriteState::Partial;
-            confirmed.code = GithubWriteCode::SubIssueFailed;
-            confirmed.message = fixed_message(GithubWriteCode::SubIssueFailed).to_string();
-            confirmed.steps.push(step(
-                GithubWriteStepName::SubIssue,
-                GithubWriteStepState::Failed,
-            ));
-            return confirmed;
-        }
-        if page == 10 {
+        let malformed = items
+            .iter()
+            .any(|item| item.get("number").and_then(Value::as_u64).is_none());
+        // The POST itself succeeded, so "not listed" (or an unreadable list) cannot prove the link
+        // was not made: report it as unknown instead of a retry-inviting failure.
+        if malformed || items.len() < 100 || page == 10 {
             confirmed.status = GithubWriteState::Unconfirmed;
             confirmed.code = GithubWriteCode::Unconfirmed;
             confirmed.message = "Issue 已创建，但子 Issue 关系已发出，暂未确认；请先回读，不要重试".to_string();
@@ -1768,6 +1785,14 @@ mod tests {
         })
     }
 
+    fn issue_value(number: u64) -> Value {
+        json!({ "number": number, "title": "target" })
+    }
+
+    fn pull_request_value(number: u64) -> Value {
+        json!({ "number": number, "title": "other pr", "pull_request": { "url": "x" } })
+    }
+
     fn linked_node(repo: &str, issue: u64) -> Value {
         json!({ "number": issue, "repository": { "nameWithOwner": repo } })
     }
@@ -1804,6 +1829,16 @@ mod tests {
         AcceptArgs { repo: REPO.to_string(), issue: 12, pr: 4, expected_head: expected_head.to_string() }
     }
 
+    fn valid_changes_args(expected_head: &str) -> RequestChangesArgs {
+        RequestChangesArgs {
+            repo: REPO.to_string(),
+            issue: 12,
+            pr: 4,
+            expected_head: expected_head.to_string(),
+            text: "please fix".to_string(),
+        }
+    }
+
     #[test]
     fn validates_number_text_head_and_all_control_characters() {
         assert!(valid_number(1));
@@ -1816,6 +1851,8 @@ mod tests {
         assert!(!valid_title("multi\rline"));
         assert!(!valid_title("multi\tline"));
         assert!(!valid_title(&"x".repeat(257)));
+        assert!(!valid_title(&format!(" {} ", "x".repeat(255))), "raw length counts too");
+        assert!(valid_title(&"x".repeat(256)));
         assert!(valid_body(""));
         assert!(!valid_body(&"x".repeat(MAX_TEXT_CHARS + 1)));
         assert!(valid_text("line one\nline two"));
@@ -1870,23 +1907,23 @@ mod tests {
     #[test]
     fn formats_every_comment_template_with_prefix_and_final_marker() {
         let comment = comment_body("hello\nworld");
-        assert!(comment.starts_with("【ai-one 代用户发出】\n\nhello\nworld\n\n"));
+        assert!(comment.starts_with("【ai-one 代用户发出】\nhello\nworld\n"));
         assert!(comment.ends_with("<!-- ai-one:comment:v1 -->"));
         assert_eq!(
             pause_body(PauseState::Paused),
-            "【ai-one 代用户发出】\n\n用户已暂停：请停止派发新工作，正在进行的一步可完成。\n\n<!-- ai-one:set_pause:v1 -->"
+            "【ai-one 代用户发出】\n用户已暂停：请停止派发新工作，正在进行的一步可完成。\n<!-- ai-one:set_pause:v1 -->"
         );
         assert_eq!(
             pause_body(PauseState::Running),
-            "【ai-one 代用户发出】\n\n用户已恢复：可继续派发。\n\n<!-- ai-one:set_pause:v1 -->"
+            "【ai-one 代用户发出】\n用户已恢复：可继续派发。\n<!-- ai-one:set_pause:v1 -->"
         );
         assert_eq!(
             accept_body(&SHA.to_ascii_uppercase()),
-            format!("【ai-one 代用户发出】\n\n【ai-one】用户验收通过（针对 HEAD {SHA}）。\n\n<!-- ai-one:accept:v1 -->")
+            format!("【ai-one 代用户发出】\n【ai-one】用户验收通过（针对 HEAD {SHA}）。\n<!-- ai-one:accept:v1 -->")
         );
         assert_eq!(
             request_changes_body(SHA, "keep\nexact"),
-            format!("【ai-one 代用户发出】\n\n【ai-one】用户要求修改（针对 HEAD {SHA}）：\n\nkeep\nexact\n\n<!-- ai-one:request_changes:v1 -->")
+            format!("【ai-one 代用户发出】\n【ai-one】用户要求修改（针对 HEAD {SHA}）：\nkeep\nexact\n<!-- ai-one:request_changes:v1 -->")
         );
     }
 
@@ -1901,6 +1938,10 @@ mod tests {
         assert!(!body_links_issue("Closes #12", REPO, 1));
         assert!(!body_links_issue("Closes #12abc", REPO, 12));
         assert!(!body_links_issue("Closes #123", REPO, 12));
+        assert!(!body_links_issue("Closes:#12", REPO, 12));
+        assert!(!body_links_issue("Closes:owner/repo#12", REPO, 12));
+        assert!(body_links_issue("Closes: #12", REPO, 12));
+        assert!(!body_links_issue("Closes #12_foo", REPO, 12));
         assert!(!body_links_issue("Discloses #12", REPO, 12));
         assert!(!body_links_issue("foo_Closes #12", REPO, 12));
         assert!(!body_links_issue("Closes other/repo#12", REPO, 12));
@@ -1921,6 +1962,10 @@ mod tests {
         assert!(!body_links_issue("escaped \\` literal and `Closes #12`", REPO, 12));
         assert!(!body_links_issue("\\` x\n`start\nCloses #12\nend`", REPO, 12));
         assert!(!body_links_issue("stray ` backtick\nCloses #12", REPO, 12));
+        assert!(!body_links_issue("<span title=\"Closes #12\">text</span>", REPO, 12));
+        assert!(!body_links_issue("`Closes <!-- ` --> #12", REPO, 12));
+        assert!(!body_links_issue("This PR closes #12", REPO, 12));
+        assert!(body_links_issue("Summary\n- Closes #12\n* Fixes #13", REPO, 12));
         assert!(!body_links_issue("<!-- Closes #12 -->", REPO, 12));
         assert!(!body_links_issue("<!--\nCloses #12\n-->", REPO, 12));
     }
@@ -1948,8 +1993,36 @@ mod tests {
         assert_eq!(rejected.unwrap_err().code, GithubWriteCode::PrIssueMismatch);
         assert!(truncated_unrelated.write_calls().is_empty());
 
-        let body_linked = FakeGh::new(vec![Ok(pr_value(SHA, "Closes #12", vec![], true, "OPEN"))]);
+        let body_linked = FakeGh::new(vec![
+            Ok(pr_value(SHA, "Closes #12", vec![], true, "OPEN")),
+            Ok(issue_value(12)),
+        ]);
         assert!(precheck_pr(&body_linked, REPO, 12, 4, SHA).await.is_ok());
+
+        // Body-only evidence must name a real issue: a pull request (or unreadable/odd target) is
+        // rejected before any write, for both review actions.
+        for target in [
+            Ok(pull_request_value(12)),
+            Ok(issue_value(13)),
+            Ok(json!([])),
+            Err(GhError::Failed),
+        ] {
+            let accept_gh = FakeGh::new(vec![
+                Ok(pr_value(SHA, "Closes #12", vec![], true, "OPEN")),
+                target.clone(),
+            ]);
+            let accepted = accept(&accept_gh, &valid_accept_args(SHA)).await;
+            assert_eq!(accepted.status, GithubWriteState::Failed);
+            assert!(accept_gh.write_calls().is_empty(), "accept wrote for target {target:?}");
+
+            let changes_gh = FakeGh::new(vec![
+                Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+                target.clone(),
+            ]);
+            let changed = request_changes(&changes_gh, &valid_changes_args(SHA)).await;
+            assert_eq!(changed.status, GithubWriteState::Failed);
+            assert!(changes_gh.write_calls().is_empty(), "request_changes wrote for target {target:?}");
+        }
 
         let node_linked = FakeGh::new(vec![Ok(pr_value(
             SHA, "", vec![linked_node(REPO, 12)], true, "OPEN",
@@ -1976,6 +2049,10 @@ mod tests {
             "escaped \\` literal and `Closes #12`",
             "\\` x\n`start\nCloses #12\nend`",
             "stray ` backtick\nCloses #12",
+            "Closes #12_foo",
+            "Closes:#12",
+            "<span title=\"Closes #12\">text</span>",
+            "`Closes <!-- ` --> #12",
         ] {
             let accept_gh = FakeGh::new(vec![Ok(pr_value(SHA, body, vec![], true, "OPEN"))]);
             let accepted = accept(&accept_gh, &args).await;
@@ -2011,6 +2088,7 @@ mod tests {
 
         let body_linked = FakeGh::new(vec![
             Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(51)),
             Ok(comment_read(51, 12, &body)),
             Ok(json!([])),
@@ -2025,6 +2103,7 @@ mod tests {
         let confirmed_body = accept_body(SHA);
         let confirmed = FakeGh::new(vec![
             Ok(pr_value(SHA, "Fixes owner/repo#12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(60)),
             Ok(comment_read(60, 12, &confirmed_body)),
             Ok(json!([])),
@@ -2034,6 +2113,7 @@ mod tests {
 
         let partial = FakeGh::new(vec![
             Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(61)),
             Ok(comment_read(61, 12, &confirmed_body)),
             Ok(json!([{ "name": "needs-user" }])),
@@ -2046,6 +2126,7 @@ mod tests {
 
         let uncertain = FakeGh::new(vec![
             Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(62)),
             Err(GhError::Timeout),
         ]);
@@ -2057,12 +2138,23 @@ mod tests {
 
         let failed = FakeGh::new(vec![
             Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Err(GhError::SpawnFailed),
         ]);
         let failed_result = accept(&failed, &valid_accept_args(SHA)).await;
         assert_eq!(failed_result.status, GithubWriteState::Failed);
         assert_eq!(failed_result.steps[0].state, GithubWriteStepState::Failed);
         assert_eq!(failed.write_calls().len(), 1);
+
+        // A read timeout before any write is a clean failure with its own wording and zero writes.
+        let pre_write = FakeGh::new(vec![Err(GhError::Timeout)]);
+        let pre_write_result = accept(&pre_write, &valid_accept_args(SHA)).await;
+        assert_eq!(pre_write_result.status, GithubWriteState::Failed);
+        assert_eq!(pre_write_result.code, GithubWriteCode::Timeout);
+        assert_eq!(pre_write_result.message, PRE_WRITE_TIMEOUT_MESSAGE);
+        assert!(pre_write_result.steps.is_empty());
+        assert!(pre_write.write_calls().is_empty());
+        assert_ne!(PRE_WRITE_TIMEOUT_MESSAGE, fixed_message(GithubWriteCode::Timeout));
     }
 
     #[tokio::test]
@@ -2119,6 +2211,7 @@ mod tests {
         let accept_body = accept_body(SHA);
         let delete_unknown = FakeGh::new(vec![
             Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(80)),
             Ok(comment_read(80, 12, &accept_body)),
             Ok(json!([{ "name": "needs-user" }])),
@@ -2133,6 +2226,7 @@ mod tests {
         let changes_body = request_changes_body(SHA, "please fix");
         let post_unknown = FakeGh::new(vec![
             Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(81)),
             Ok(comment_read(81, 12, &changes_body)),
             Ok(json!([])),
@@ -2159,6 +2253,7 @@ mod tests {
             let body = accept_body(SHA);
             let gh = FakeGh::new(vec![
                 Ok(pr_value(SHA, "Closes #12", vec![], false, "OPEN")),
+                Ok(issue_value(12)),
                 Ok(comment_post(82)),
                 Ok(comment_read(82, 12, &body)),
                 labels_response,
@@ -2218,6 +2313,7 @@ mod tests {
         let body = request_changes_body(SHA, "please fix");
         let gh = FakeGh::new(vec![
             Ok(pr_value(SHA, "Fixes: owner/repo#12", vec![], false, "OPEN")),
+            Ok(issue_value(12)),
             Ok(comment_post(70)),
             Ok(comment_read(70, 12, &body)),
             Ok(json!([])),

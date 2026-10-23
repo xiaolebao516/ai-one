@@ -465,13 +465,13 @@ test('two slots can be told apart by the task and the thread they serve', async 
 
 test('run records the ownership it was given and forwards nothing extra to ask', async () => {
   const h = harness();
-  const args = ['run', '--task', '71', '--session', 's1', '--thread-url', THREAD_A, '--', '--new-chat', '--effort', 'high'];
+  const args = ['run', '--task', '71', '--session', 's1', '--thread-url', THREAD_A, '--', '--target-url', THREAD_A, '--effort', 'high'];
   assert.equal(await h.run(args), EXIT.OK);
   const ask = h.log.asks[0];
   assert.equal(ask.claimed.task, '#71');
   assert.equal(ask.claimed.sessionKey, 's1');
   assert.equal(ask.claimed.threadUrl, THREAD_A);
-  assert.deepEqual(ask.args, ['--new-chat', '--effort', 'high'], 'ownership flags are consumed, not forwarded to ask');
+  assert.deepEqual(ask.args, ['--target-url', THREAD_A, '--effort', 'high'], 'ownership flags are consumed, not forwarded to ask');
   assert.match(h.log.err.join('\n'), /using slot 1 \(port 9333\) for #71 s1/);
 });
 
@@ -1023,4 +1023,244 @@ test('a closure record without a usable timestamp is dropped', async () => {
   fs.writeFileSync(path.join(edited.home, 'slot-claims', 'slot-1.closed.json'), `${JSON.stringify({ task: '#71' })}\n`);
   assert.equal(await edited.run(['list', '--json']), EXIT.OK);
   assert.equal(JSON.parse(edited.log.out[0])[0].lastClosed, undefined);
+});
+
+const THREAD = 'https://chatgpt.com/c/6ad9e501-da24-83e9-81f9-8b5aae1f7013';
+const HANDOFF = 'https://github.com/xiaolebao516/ai-one/issues/71#issuecomment-1';
+const archiveArgs = ['release', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'req-12345', '--handoff-url', HANDOFF];
+
+test('release with archive evidence frees a real claim, then hands the exact thread to auto-finish', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+  h.deps.alive = () => false; // the run that held the claim has exited; self-heal clears it
+  const calls = [];
+  h.deps.autoFinish = async (argv) => { calls.push(argv); return 0; };
+  assert.equal(await h.run(archiveArgs), EXIT.OK);
+  assert.equal(readClaim(h.home, 1), null, 'the real claim is gone');
+  assert.deepEqual(calls[0], ['auto-finish', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'req-12345', '--handoff-url', HANDOFF]);
+  assert.match(h.log.err.join('\n'), /released slot 1/);
+});
+
+test('a failed or throwing archive never fails the release and is reported loudly without URLs', async () => {
+  for (const autoFinish of [
+    async (_argv, io) => { io.err(`prodex-archive: Handoff mismatch ${HANDOFF}`); return 1; },
+    async () => { throw new Error(`module load failed ${HANDOFF}`); },
+  ]) {
+    const h = harness();
+    addSlots(h.home, 1);
+    claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+    h.deps.alive = () => false;
+    h.deps.autoFinish = autoFinish;
+    assert.equal(await h.run(archiveArgs), EXIT.OK);
+    const stderr = h.log.err.join('\n');
+    assert.match(stderr, /archive NOT done \(the slot is released anyway\)/);
+    assert.doesNotMatch(stderr, /issuecomment/);
+    assert.equal(readClaim(h.home, 1), null);
+  }
+});
+
+test('release with a thread but no archive evidence says the chat was not archived', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  h.deps.autoFinish = async () => { throw new Error('MUST NOT CALL'); };
+  assert.equal(await h.run(['release', '--slot', '1', '--task', '71', '--thread-url', THREAD]), EXIT.OK);
+  assert.match(h.log.err.join('\n'), /archive NOT attempted/);
+});
+
+test('archive evidence is validated before any state changes', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+  const closed = path.join(h.home, 'slot-claims', 'slot-1.closed.json');
+  const bad = [
+    ['release', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'req-12345'],
+    ['release', '--slot', '1', '--request-id', 'req-12345', '--handoff-url', HANDOFF],
+    ['list', '--request-id', 'req-12345'],
+    ['release', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'x', '--handoff-url', HANDOFF],
+    ['release', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--request-id', 'req-12345', '--handoff-url', 'invalid-url'],
+    ['release', '--slot', '1', '--task', '72', '--thread-url', THREAD, '--request-id', 'req-12345', '--handoff-url', HANDOFF],
+  ];
+  for (const args of bad) assert.equal(await h.run(args), EXIT.ERROR, args.join(' '));
+  assert.ok(readClaim(h.home, 1), 'the claim is untouched');
+  assert.ok(!fs.existsSync(closed), 'nothing was released');
+  assert.doesNotMatch(h.log.err.join('\n'), /invalid-url|issuecomment/);
+});
+
+test('a live claim (an active run) blocks the archive release', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '99', threadUrl: THREAD } });
+  h.deps.autoFinish = async () => { throw new Error('MUST NOT CALL'); };
+  assert.equal(await h.run(archiveArgs), EXIT.ERROR);
+  assert.ok(readClaim(h.home, 1), 'the other task keeps its claim');
+  assert.match(h.log.err.join('\n'), /still active/);
+});
+
+test('with the real archive tool and a manual policy, release frees the slot and archives nothing', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  const { setArchivePolicy } = await import('../../prodex-archive/archive.mjs');
+  await setArchivePolicy(h.home, 'manual');
+  assert.equal(await h.run(archiveArgs), EXIT.OK);
+  assert.match(h.log.err.join('\n'), /archive: archive policy is manual; no archive attempted/);
+});
+
+test('archive release needs a registered slot and an exact claim match, and releases conditionally', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  h.deps.autoFinish = async () => { throw new Error('MUST NOT CALL'); };
+  const closed = (n) => path.join(h.home, 'slot-claims', `slot-${n}.closed.json`);
+  // slot that is not registered
+  assert.equal(await h.run(archiveArgs.map((x) => (x === '1' ? '9' : x))), EXIT.ERROR);
+  assert.ok(!fs.existsSync(closed(9)));
+  // claim without a thread is not an exact match
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71' } });
+  assert.equal(await h.run(archiveArgs), EXIT.ERROR);
+  assert.ok(readClaim(h.home, 1), 'partial ownership keeps its claim');
+  assert.ok(!fs.existsSync(closed(1)));
+  assert.match(h.log.err.join('\n'), /still active/);
+});
+
+test('a matching claim without an owner id is never deleted unconditionally', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  h.deps.autoFinish = async () => { throw new Error('MUST NOT CALL'); };
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+  const file = path.join(h.home, 'slot-claims', 'slot-1.json');
+  const claim = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete claim.owner;
+  fs.writeFileSync(file, JSON.stringify(claim));
+  assert.equal(await h.run(archiveArgs), EXIT.ERROR);
+  assert.ok(fs.existsSync(file), 'the claim file stays');
+  assert.match(h.log.err.join(' '), /still active/);
+});
+
+test('release with archive evidence and no claim never calls an unconditional release', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  h.deps.autoFinish = async () => 0;
+  assert.equal(await h.run(archiveArgs), EXIT.OK);
+  // a claim taken after the release survives: nothing deletes slot files when none was read
+  const taken = claimSlot(h.home, 1, { pid: 222, alive: () => true, meta: { task: '72' } });
+  assert.ok(readClaim(h.home, 1));
+  taken.release();
+});
+
+test('a run never starts on a thread whose archive is pending, and gives its claim back', async () => {
+  const h = harness();
+  const { setStatus } = await import('../../prodex-archive/archive.mjs');
+  await setStatus(h.home, THREAD, { status: 'pending', task: '71', slot: 1 });
+  assert.equal(await h.run(['run', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--', '--target-url', THREAD]), EXIT.ERROR);
+  assert.equal(h.log.asks.length, 0, 'no ask was sent');
+  assert.equal(readClaim(h.home, 1), null, 'the claim was released');
+  assert.match(h.log.err.join(' '), /being archived right now/);
+});
+
+test('a plain release with no claim read leaves a claim that appears afterwards alone', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  assert.equal(await h.run(['release', '--slot', '1', '--task', '71']), EXIT.OK);
+  const taken = claimSlot(h.home, 1, { pid: 222, alive: () => true, meta: { task: '72' } });
+  assert.ok(readClaim(h.home, 1));
+  taken.release();
+});
+
+test('run needs --thread-url and --target-url to be the same thread, or neither', async () => {
+  const other = 'https://chatgpt.com/c/7bd8e501-1234-83e9-9ad7-429cd3782b79';
+  for (const args of [
+    ['run', '--task', '71', '--thread-url', THREAD, '--', '--new-chat'],
+    ['run', '--task', '71', '--', '--target-url', THREAD],
+    ['run', '--task', '71', '--thread-url', THREAD, '--', '--target-url', other],
+    ['run', '--task', '71', '--thread-url', THREAD, '--', '--target-url', THREAD, '--target-url', THREAD],
+  ]) {
+    const h = harness();
+    assert.equal(await h.run(args), EXIT.ERROR, args.join(' '));
+    assert.equal(h.log.asks.length, 0);
+    assert.equal(readClaim(h.home, 1), null);
+  }
+});
+
+test('a run backs off when the per-thread archive lock is held or the thread is archived', async () => {
+  const { withLock, digest, setStatus } = await import('../../prodex-archive/archive.mjs');
+  const askArgs = ['run', '--slot', '1', '--task', '71', '--thread-url', THREAD, '--', '--target-url', THREAD];
+  const h = harness();
+  const lock = path.join(h.home, 'archive', `thread-${digest(THREAD)}.lock`);
+  let code;
+  await withLock(lock, async () => { code = await h.run(askArgs); });
+  assert.equal(code, EXIT.ERROR);
+  assert.equal(h.log.asks.length, 0);
+  assert.equal(readClaim(h.home, 1), null);
+  await setStatus(h.home, THREAD, { status: 'archived', task: '71', slot: 1 });
+  assert.equal(await h.run(askArgs), EXIT.ERROR);
+  assert.match(h.log.err.join(' '), /already archived/);
+  assert.equal(h.log.asks.length, 0);
+});
+
+test('run rejects --continue and --continue-task because their thread cannot be locked', async () => {
+  for (const flag of [['--continue'], ['--continue-task', 'task_1'], ['--continue=1']]) {
+    const h = harness();
+    assert.equal(await h.run(['run', '--', ...flag, '--effort', 'high']), EXIT.ERROR, flag.join(' '));
+    assert.equal(h.log.asks.length, 0);
+  }
+});
+
+test('release over an unreadable claim file refuses and writes no closure', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  fs.mkdirSync(path.join(h.home, 'slot-claims'), { recursive: true });
+  fs.writeFileSync(path.join(h.home, 'slot-claims', 'slot-1.json'), '{not json');
+  assert.equal(await h.run(['release', '--slot', '1', '--task', '71']), EXIT.ERROR);
+  assert.ok(!fs.existsSync(path.join(h.home, 'slot-claims', 'slot-1.closed.json')));
+  assert.match(h.log.err.join(' '), /cannot be read/);
+});
+
+test('a stale-heartbeat claim whose process is alive still blocks archive-on-release', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  h.deps.autoFinish = async () => { throw new Error('MUST NOT CALL'); };
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+  const file = path.join(h.home, 'slot-claims', 'slot-1.json');
+  const old = new Date(Date.now() - 10 * 60 * 1000);
+  fs.utimesSync(file, old, old);
+  h.deps.now = () => Date.now();
+  assert.equal(await h.run(archiveArgs), EXIT.ERROR);
+  assert.ok(fs.existsSync(file), 'the claim was not swept away');
+  assert.match(h.log.err.join(' '), /still active/);
+});
+
+test('an archiving release does not sweep other slots, so a stale-heartbeat live claim survives it', async () => {
+  const h = harness();
+  addSlots(h.home, 1);
+  h.deps.autoFinish = async () => 0;
+  claimSlot(h.home, 2, { pid: 222, alive: () => true, meta: { task: '72', threadUrl: THREAD } });
+  const file = path.join(h.home, 'slot-claims', 'slot-2.json');
+  const old = new Date(Date.now() - 10 * 60 * 1000);
+  fs.utimesSync(file, old, old);
+  assert.equal(await h.run(archiveArgs), EXIT.OK);
+  assert.ok(fs.existsSync(file), 'the other slot claim was not swept away');
+});
+
+test('self-heal keeps a live thread claim past the heartbeat window but still reaps a plain stale one', async () => {
+  const h = harness();
+  addSlots(h.home, 2);
+  claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+  claimSlot(h.home, 2, { pid: 222, alive: () => true, meta: { task: '72' } });
+  const old = new Date(Date.now() - 10 * 60 * 1000);
+  for (const n of [1, 2]) fs.utimesSync(path.join(h.home, 'slot-claims', `slot-${n}.json`), old, old);
+  assert.equal(await h.run(['list']), EXIT.OK);
+  assert.ok(readClaim(h.home, 1), 'the live thread claim survives the sweep that a normal command runs');
+  assert.equal(readClaim(h.home, 2), null, 'a stale claim without a thread is still reaped');
+});
+
+test('a new run cannot take over a slot whose live thread claim has a stale heartbeat', async () => {
+  const h = harness();
+  const thread = claimSlot(h.home, 1, { pid: 111, alive: () => true, meta: { task: '71', threadUrl: THREAD } });
+  const file = path.join(h.home, 'slot-claims', 'slot-1.json');
+  const old = new Date(Date.now() - 10 * 60 * 1000);
+  fs.utimesSync(file, old, old);
+  const attempt = claimSlot(h.home, 1, { pid: 222, alive: () => true, meta: { task: '72' } });
+  assert.equal(attempt.ok, false, 'the slot stays with the live thread claim');
+  assert.equal(readClaim(h.home, 1).threadUrl, THREAD);
+  thread.release();
 });

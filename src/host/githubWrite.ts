@@ -1,14 +1,11 @@
-import { invoke } from '@tauri-apps/api/core';
+import { hostInvoke } from './invoke';
 
-export type GithubWriteStatus = {
-  available: boolean;
-  reason: 'ok' | 'gh_missing' | 'not_logged_in' | 'failed';
-};
+export type GithubWriteState = 'confirmed' | 'partial' | 'unconfirmed' | 'failed';
 
 export type GithubWriteCode =
   | 'ok'
-  | 'not_allowed'
   | 'invalid_input'
+  | 'not_allowed'
   | 'head_mismatch'
   | 'pr_issue_mismatch'
   | 'gh_missing'
@@ -18,65 +15,74 @@ export type GithubWriteCode =
   | 'unconfirmed'
   | 'sub_issue_failed';
 
-export type GithubWriteStep = {
-  step: 'comment' | 'label' | 'create_issue' | 'sub_issue';
-  state: 'confirmed' | 'unconfirmed' | 'failed' | 'skipped';
-};
+export interface GithubWriteStep {
+  readonly step: 'comment' | 'label' | 'create_issue' | 'sub_issue';
+  readonly state: 'confirmed' | 'unconfirmed' | 'failed' | 'skipped';
+}
 
-export type GithubWriteResult = {
-  status: 'confirmed' | 'partial' | 'unconfirmed' | 'failed';
-  code: GithubWriteCode;
-  message: string;
-  steps: GithubWriteStep[];
-  issueNumber?: number;
-  url?: string;
-  commentUrl?: string;
-  currentHead?: string;
-};
+export interface GithubWriteResult {
+  readonly status: GithubWriteState;
+  readonly code: GithubWriteCode;
+  readonly message: string;
+  readonly steps: readonly GithubWriteStep[];
+  readonly issueNumber?: number;
+  readonly url?: string;
+  readonly commentUrl?: string;
+  readonly currentHead?: string;
+}
 
-export type GithubWriteCreateIssueArgs = {
-  repo: string;
-  title: string;
-  body: string;
-  parentSpec?: number;
-};
+export interface GithubWriteStatus {
+  readonly installed: boolean;
+  readonly loggedIn: boolean;
+  readonly reason: 'ok' | 'gh_missing' | 'not_logged_in' | 'failed';
+  readonly message: string;
+}
 
-export type GithubWriteCommentArgs = {
-  repo: string;
-  issue: number;
-  text: string;
-};
+export interface CreateIssueArgs {
+  readonly repo: string;
+  readonly title: string;
+  readonly body: string;
+  readonly parentSpec?: number;
+}
 
-export type GithubWriteSetPauseArgs = {
-  repo: string;
-  issue: number;
-  state: 'paused' | 'running';
-};
+export interface CommentArgs {
+  readonly repo: string;
+  readonly issue: number;
+  readonly text: string;
+}
 
-export type GithubWriteAcceptArgs = {
-  repo: string;
-  issue: number;
-  pr: number;
-  expectedHead: string;
-};
+export interface SetPauseArgs {
+  readonly repo: string;
+  readonly issue: number;
+  readonly paused: boolean;
+}
 
-export type GithubWriteRequestChangesArgs = GithubWriteAcceptArgs & {
-  text: string;
-};
+export interface AcceptArgs {
+  readonly repo: string;
+  readonly pr: number;
+  readonly issue: number;
+  readonly expectedHead: string;
+}
 
-const MAX_SAFE_INTEGER = 9_007_199_254_740_991;
-const MAX_TEXT_CHARS = 60_000;
-const MARKER_PREFIX = '<!-- ai-one:';
-const COMMENT_PREFIX = '【ai-one 代用户发出】';
+export interface RequestChangesArgs {
+  readonly repo: string;
+  readonly pr: number;
+  readonly issue: number;
+  readonly expectedHead: string;
+  readonly text: string;
+}
+
+const COMMENT_PREFIX = '> 【ai-one】由用户在本地 AI 协作工作台触发并确认。';
 const PAUSE_MARKER = '<!-- ai-one:set_pause:v1 -->';
-// eslint-disable-next-line no-control-regex -- rejecting control characters is the point
+const MARKER_PREFIX = '<!-- ai-one:';
+const MAX_TEXT_CHARS = 10_000;
 const CONTROL_CHAR_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
-const SHA_RE = /^[0-9a-fA-F]{40}$/u;
+const SHA_RE = /^[0-9a-f]{40}$/iu;
 
 const MESSAGES: Record<GithubWriteCode, string> = {
   ok: '已确认写入 GitHub',
-  not_allowed: '仅控制面窗口可执行此操作',
-  invalid_input: '参数无效，已拒绝',
+  invalid_input: '输入参数不合法',
+  not_allowed: '当前配置不允许该操作',
   head_mismatch: 'HEAD 已更新，先刷新',
   pr_issue_mismatch: '该 PR 与这个 Issue 没有关联，已拒绝',
   gh_missing: '未安装 GitHub CLI',
@@ -87,11 +93,17 @@ const MESSAGES: Record<GithubWriteCode, string> = {
   sub_issue_failed: 'Issue 已创建，但没能挂到父 Spec 下',
 };
 
+const PRE_WRITE_TIMEOUT_MESSAGE = '请求超时，尚未发出写入，可稍后重试';
+const PR_NOT_OPEN_MESSAGE = 'PR 不存在或当前不是开放状态，已拒绝';
+const LABEL_FAILED_MESSAGE = '评论已确认，但标签未能更新';
+const SUB_ISSUE_UNCONFIRMED_MESSAGE = 'Issue 已创建，但子 Issue 关系已发出，暂未确认；请先回读，不要重试';
+
 const ALLOWED_MESSAGES = new Set<string>([
   ...Object.values(MESSAGES),
-  'PR 不存在或当前不是开放状态，已拒绝',
-  '评论已确认，但标签未能更新',
-  'Issue 已创建，但子 Issue 关系已发出，暂未确认；请先回读，不要重试',
+  PRE_WRITE_TIMEOUT_MESSAGE,
+  PR_NOT_OPEN_MESSAGE,
+  LABEL_FAILED_MESSAGE,
+  SUB_ISSUE_UNCONFIRMED_MESSAGE,
 ]);
 
 const STEP_NAMES = new Set<GithubWriteStep['step']>(['comment', 'label', 'create_issue', 'sub_issue']);
@@ -118,21 +130,22 @@ function characterCount(value: string): number {
   return Array.from(value).length;
 }
 
-function validNumber(value: unknown): value is number {
-  return typeof value === 'number'
-    && Number.isSafeInteger(value)
-    && value >= 1
-    && value <= MAX_SAFE_INTEGER;
-}
-
 function validRepo(value: unknown): value is string {
-  if (typeof value !== 'string' || CONTROL_CHAR_RE.test(value)) return false;
+  if (typeof value !== 'string') return false;
   const parts = value.split('/');
   if (parts.length !== 2) return false;
   const [owner, name] = parts;
-  return /^[A-Za-z0-9][A-Za-z0-9-]*$/u.test(owner)
-    && /^[A-Za-z0-9_.-]+$/u.test(name)
-    && !/^\.+$/u.test(name);
+  if (!owner || !name || owner.length > 39 || name.length > 100) return false;
+  const segRe = /^[a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
+  return segRe.test(owner) && segRe.test(name);
+}
+
+function validNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 && Number.isSafeInteger(value);
+}
+
+function validSha(value: unknown): value is string {
+  return typeof value === 'string' && SHA_RE.test(value);
 }
 
 function validString(
@@ -154,6 +167,7 @@ function validTitle(value: unknown): value is string {
   const trimmedLength = characterCount(value.trim());
   return trimmedLength >= 1
     && trimmedLength <= 256
+    && characterCount(value) <= 256
     && validString(value, MAX_TEXT_CHARS, false, true);
 }
 
@@ -162,69 +176,18 @@ function validBody(value: unknown): value is string {
 }
 
 function validText(value: unknown): value is string {
-  return typeof value === 'string'
-    && value.trim().length > 0
-    && validString(value, MAX_TEXT_CHARS, false, true);
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  return characterCount(trimmed) >= 1 && validString(value, MAX_TEXT_CHARS, false, true);
 }
 
-function validSha(value: unknown): value is string {
-  return typeof value === 'string' && SHA_RE.test(value);
-}
-
-function validCreateIssueArgs(value: unknown): value is GithubWriteCreateIssueArgs {
-  if (!isRecord(value) || !hasExactKeys(value, ['repo', 'title', 'body'], ['parentSpec'])) return false;
-  return validRepo(value.repo)
-    && validTitle(value.title)
-    && validBody(value.body)
-    && (value.parentSpec === undefined || validNumber(value.parentSpec));
-}
-
-function validCommentArgs(value: unknown): value is GithubWriteCommentArgs {
-  return isRecord(value)
-    && hasExactKeys(value, ['repo', 'issue', 'text'])
-    && validRepo(value.repo)
-    && validNumber(value.issue)
-    && validText(value.text);
-}
-
-function validPauseArgs(value: unknown): value is GithubWriteSetPauseArgs {
-  return isRecord(value)
-    && hasExactKeys(value, ['repo', 'issue', 'state'])
-    && validRepo(value.repo)
-    && validNumber(value.issue)
-    && (value.state === 'paused' || value.state === 'running');
-}
-
-function validAcceptArgs(value: unknown): value is GithubWriteAcceptArgs {
-  return isRecord(value)
-    && hasExactKeys(value, ['repo', 'issue', 'pr', 'expectedHead'])
-    && validRepo(value.repo)
-    && validNumber(value.issue)
-    && validNumber(value.pr)
-    && validSha(value.expectedHead);
-}
-
-function validRequestChangesArgs(value: unknown): value is GithubWriteRequestChangesArgs {
-  return isRecord(value)
-    && hasExactKeys(value, ['repo', 'issue', 'pr', 'expectedHead', 'text'])
-    && validRepo(value.repo)
-    && validNumber(value.issue)
-    && validNumber(value.pr)
-    && validSha(value.expectedHead)
-    && validText(value.text);
-}
-
-function failedResult(code: GithubWriteCode = 'github_failed'): GithubWriteResult {
+function invalidInputResult(): GithubWriteResult {
   return {
     status: 'failed',
-    code,
-    message: MESSAGES[code],
+    code: 'invalid_input',
+    message: MESSAGES.invalid_input,
     steps: [],
   };
-}
-
-function invalidResult(): GithubWriteResult {
-  return failedResult('invalid_input');
 }
 
 function unconfirmedResult(): GithubWriteResult {
@@ -233,6 +196,58 @@ function unconfirmedResult(): GithubWriteResult {
     code: 'unconfirmed',
     message: MESSAGES.unconfirmed,
     steps: [],
+  };
+}
+
+function normalizeStatus(value: unknown): GithubWriteStatus {
+  if (
+    !isRecord(value)
+    || !hasExactKeys(value, ['installed', 'loggedIn', 'reason', 'message'])
+    || typeof value.installed !== 'boolean'
+    || typeof value.loggedIn !== 'boolean'
+    || typeof value.reason !== 'string'
+    || !STATUS_REASONS.has(value.reason as GithubWriteStatus['reason'])
+    || typeof value.message !== 'string'
+  ) {
+    return {
+      installed: false,
+      loggedIn: false,
+      reason: 'failed',
+      message: 'GitHub 写入桥状态未知',
+    };
+  }
+
+  // Consistent status invariant: ok means installed and logged in.
+  if (value.reason === 'ok' && (!value.installed || !value.loggedIn)) {
+    return {
+      installed: false,
+      loggedIn: false,
+      reason: 'failed',
+      message: 'GitHub 写入桥状态异常',
+    };
+  }
+  if (value.reason === 'gh_missing' && value.installed) {
+    return {
+      installed: false,
+      loggedIn: false,
+      reason: 'failed',
+      message: 'GitHub 写入桥状态异常',
+    };
+  }
+  if (value.reason === 'not_logged_in' && (!value.installed || value.loggedIn)) {
+    return {
+      installed: false,
+      loggedIn: false,
+      reason: 'failed',
+      message: 'GitHub 写入桥状态异常',
+    };
+  }
+
+  return {
+    installed: value.installed,
+    loggedIn: value.loggedIn,
+    reason: value.reason as GithubWriteStatus['reason'],
+    message: value.message,
   };
 }
 
@@ -265,11 +280,12 @@ function normalizeResult(value: unknown): GithubWriteResult {
   if (value.commentUrl !== undefined && typeof value.commentUrl !== 'string') return unconfirmedResult();
   if (value.currentHead !== undefined && !validSha(value.currentHead)) return unconfirmedResult();
 
+  // Self-contradictory results must never read as success: confirmed needs ok plus at least one step,
+  // all confirmed; failed cannot contain a confirmed step; partial needs a confirmed and a failed step.
   const steps = value.steps as GithubWriteStep[];
   const hasConfirmed = steps.some((step) => step.state === 'confirmed');
   const hasFailed = steps.some((step) => step.state === 'failed');
-
-  // A confirmed result must have non-empty, all-confirmed steps.
+  if ((value.code === 'ok') !== (value.status === 'confirmed')) return unconfirmedResult();
   if (value.status === 'confirmed' && (steps.length === 0 || !steps.every((step) => step.state === 'confirmed'))) {
     return unconfirmedResult();
   }
@@ -290,6 +306,49 @@ function normalizeResult(value: unknown): GithubWriteResult {
   ) {
     return unconfirmedResult();
   }
+  // Fixed wordings carry a contract: an uncertain wording only travels with an unconfirmed total,
+  // "comment confirmed, label failed" only with a matching partial, and so on. Anything else is a
+  // contradiction and is reported as unconfirmed (never as a safe-to-retry failure).
+  const hasStep = (name: GithubWriteStep['step'], state: GithubWriteStep['state']) =>
+    steps.some((step) => step.step === name && step.state === state);
+  if (
+    (value.message === MESSAGES.unconfirmed || value.message === SUB_ISSUE_UNCONFIRMED_MESSAGE)
+    && value.status !== 'unconfirmed'
+  ) {
+    return unconfirmedResult();
+  }
+  if (
+    value.message === SUB_ISSUE_UNCONFIRMED_MESSAGE
+    && !(hasStep('create_issue', 'confirmed') && hasStep('sub_issue', 'unconfirmed'))
+  ) {
+    return unconfirmedResult();
+  }
+  if (
+    value.message === LABEL_FAILED_MESSAGE
+    && !(value.status === 'partial' && hasStep('comment', 'confirmed') && hasStep('label', 'failed'))
+  ) {
+    return unconfirmedResult();
+  }
+  if (value.message === PR_NOT_OPEN_MESSAGE && value.status !== 'failed') return unconfirmedResult();
+  // A timeout either happened before any write (failed, nothing sent) or after one started (unconfirmed).
+  if (
+    (value.message === PRE_WRITE_TIMEOUT_MESSAGE)
+    !== (value.code === 'timeout' && value.status === 'failed')
+  ) {
+    return unconfirmedResult();
+  }
+  if (value.code === 'timeout' && value.status !== 'failed' && value.status !== 'unconfirmed') {
+    return unconfirmedResult();
+  }
+  if (value.message === PRE_WRITE_TIMEOUT_MESSAGE && steps.length > 0) return unconfirmedResult();
+  if (value.message === MESSAGES.timeout && value.status !== 'unconfirmed') return unconfirmedResult();
+  if (
+    (value.code === 'head_mismatch' || value.code === 'pr_issue_mismatch' || value.code === 'invalid_input'
+      || value.code === 'not_allowed')
+    && value.status !== 'failed'
+  ) {
+    return unconfirmedResult();
+  }
   // The success wording is reserved for confirmed results.
   if ((value.message === MESSAGES.ok) !== (value.status === 'confirmed')) return unconfirmedResult();
 
@@ -297,82 +356,109 @@ function normalizeResult(value: unknown): GithubWriteResult {
     status: value.status as GithubWriteResult['status'],
     code: value.code as GithubWriteCode,
     message: value.message,
-    steps: value.steps as GithubWriteStep[],
-    ...(value.issueNumber === undefined ? {} : { issueNumber: value.issueNumber as number }),
-    ...(value.url === undefined ? {} : { url: value.url as string }),
-    ...(value.commentUrl === undefined ? {} : { commentUrl: value.commentUrl as string }),
-    ...(value.currentHead === undefined ? {} : { currentHead: (value.currentHead as string).toLowerCase() }),
+    steps: steps.map((s) => ({ step: s.step, state: s.state })),
+    ...(value.issueNumber !== undefined ? { issueNumber: value.issueNumber as number } : {}),
+    ...(value.url !== undefined ? { url: value.url as string } : {}),
+    ...(value.commentUrl !== undefined ? { commentUrl: value.commentUrl as string } : {}),
+    ...(value.currentHead !== undefined ? { currentHead: value.currentHead as string } : {}),
   };
 }
 
-async function invokeResult(command: string, args: Record<string, unknown>): Promise<GithubWriteResult> {
+async function invokeBridge(cmd: string, args: Record<string, unknown>): Promise<GithubWriteResult> {
   try {
-    return normalizeResult(await invoke<unknown>(command, args));
+    const raw = await hostInvoke(cmd, args);
+    return normalizeResult(raw);
   } catch {
+    // If the Tauri IPC fails after the Rust command was dispatched, the process may have completed
+    // the write on GitHub before IPC response failed. Return unconfirmed to avoid blind retries.
     return unconfirmedResult();
   }
 }
 
-async function status(): Promise<GithubWriteStatus> {
+export async function status(): Promise<GithubWriteStatus> {
   try {
-    const value = await invoke<unknown>('github_write_status');
-    if (
-      !isRecord(value)
-      || !hasExactKeys(value, ['available', 'reason'])
-      || typeof value.available !== 'boolean'
-      || typeof value.reason !== 'string'
-      || !STATUS_REASONS.has(value.reason as GithubWriteStatus['reason'])
-      || value.available !== (value.reason === 'ok')
-    ) {
-      return { available: false, reason: 'failed' };
-    }
-    return { available: value.available, reason: value.reason as GithubWriteStatus['reason'] };
+    const raw = await hostInvoke('github_write_status');
+    return normalizeStatus(raw);
   } catch {
-    return { available: false, reason: 'failed' };
+    return {
+      installed: false,
+      loggedIn: false,
+      reason: 'failed',
+      message: 'GitHub 写入桥状态未知',
+    };
   }
 }
 
-async function createIssue(args: GithubWriteCreateIssueArgs): Promise<GithubWriteResult> {
-  if (!validCreateIssueArgs(args)) return invalidResult();
-  const payload: Record<string, unknown> = { repo: args.repo, title: args.title, body: args.body };
-  if (args.parentSpec !== undefined) payload.parentSpec = args.parentSpec;
-  return invokeResult('github_write_create_issue', payload);
+export async function createIssue(args: CreateIssueArgs): Promise<GithubWriteResult> {
+  if (
+    !validRepo(args.repo)
+    || !validTitle(args.title)
+    || !validBody(args.body)
+    || (args.parentSpec !== undefined && !validNumber(args.parentSpec))
+  ) {
+    return invalidInputResult();
+  }
+  return invokeBridge('github_write_create_issue', {
+    repo: args.repo,
+    title: args.title,
+    body: args.body,
+    ...(args.parentSpec !== undefined ? { parentSpec: args.parentSpec } : {}),
+  });
 }
 
-async function comment(args: GithubWriteCommentArgs): Promise<GithubWriteResult> {
-  if (!validCommentArgs(args)) return invalidResult();
-  return invokeResult('github_write_comment', {
+export async function comment(args: CommentArgs): Promise<GithubWriteResult> {
+  if (!validRepo(args.repo) || !validNumber(args.issue) || !validText(args.text)) {
+    return invalidInputResult();
+  }
+  return invokeBridge('github_write_comment', {
     repo: args.repo,
     issue: args.issue,
     text: args.text,
   });
 }
 
-async function setPause(args: GithubWriteSetPauseArgs): Promise<GithubWriteResult> {
-  if (!validPauseArgs(args)) return invalidResult();
-  return invokeResult('github_write_set_pause', {
+export async function setPause(args: SetPauseArgs): Promise<GithubWriteResult> {
+  if (!validRepo(args.repo) || !validNumber(args.issue) || typeof args.paused !== 'boolean') {
+    return invalidInputResult();
+  }
+  return invokeBridge('github_write_set_pause', {
     repo: args.repo,
     issue: args.issue,
-    state: args.state,
+    paused: args.paused,
   });
 }
 
-async function accept(args: GithubWriteAcceptArgs): Promise<GithubWriteResult> {
-  if (!validAcceptArgs(args)) return invalidResult();
-  return invokeResult('github_write_accept', {
+export async function accept(args: AcceptArgs): Promise<GithubWriteResult> {
+  if (
+    !validRepo(args.repo)
+    || !validNumber(args.pr)
+    || !validNumber(args.issue)
+    || !validSha(args.expectedHead)
+  ) {
+    return invalidInputResult();
+  }
+  return invokeBridge('github_write_accept', {
     repo: args.repo,
-    issue: args.issue,
     pr: args.pr,
+    issue: args.issue,
     expectedHead: args.expectedHead,
   });
 }
 
-async function requestChanges(args: GithubWriteRequestChangesArgs): Promise<GithubWriteResult> {
-  if (!validRequestChangesArgs(args)) return invalidResult();
-  return invokeResult('github_write_request_changes', {
+export async function requestChanges(args: RequestChangesArgs): Promise<GithubWriteResult> {
+  if (
+    !validRepo(args.repo)
+    || !validNumber(args.pr)
+    || !validNumber(args.issue)
+    || !validSha(args.expectedHead)
+    || !validText(args.text)
+  ) {
+    return invalidInputResult();
+  }
+  return invokeBridge('github_write_request_changes', {
     repo: args.repo,
-    issue: args.issue,
     pr: args.pr,
+    issue: args.issue,
     expectedHead: args.expectedHead,
     text: args.text,
   });
