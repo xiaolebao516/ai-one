@@ -737,7 +737,9 @@ export function useChatRuntime({
     } finally {
       const owned = runTargets.filter((provider) => runIdByProviderRef.current.get(provider) === runId);
       if (owned.length > 0) {
-        setReplyStates((current) => settlePendingTargets(owned, current, latestStates));
+        setReplyStates((current) => activeSessionIdRef.current === sessionId
+          ? settlePendingTargets(owned, current, providerStatesRef.current)
+          : current);
       }
       const successful = [...(successfulByRunRef.current.get(runId) ?? new Set<AIProvider>())];
       if (successful.length > 0) {
