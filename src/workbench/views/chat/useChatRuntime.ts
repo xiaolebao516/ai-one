@@ -220,6 +220,7 @@ export function useChatRuntime({
   const pullBridgeRef = useRef(new Map<AIProvider, PullBridgeState>());
   const activeResponsesRef = useRef(new Map<AIProvider, ActiveProviderResponse>());
   const busyProvidersRef = useRef(new Set<AIProvider>());
+  const activeWorkflowRunRef = useRef<string>();
   const busyStartedAtRef = useRef(new Map<AIProvider, number>());
   const runSessionByProviderRef = useRef(new Map<AIProvider, string>());
   const runIdByProviderRef = useRef(new Map<AIProvider, string>());
@@ -462,11 +463,22 @@ export function useChatRuntime({
       return false;
     }
 
+    if (activeWorkflowRunRef.current) {
+      const currentBusy = [...busyProvidersRef.current];
+      setNotice({
+        tone: 'unknown',
+        message: workbenchText(locale).t('chatBusyNotice', {
+          providers: currentBusy.map((provider) => AI_PROVIDERS[provider].name).join(', '),
+        }),
+      });
+      return false;
+    }
     const sessionId = activeSessionId;
     const session = sessions.find((candidate) => candidate.id === sessionId) ?? activeSession;
     const context = options.forwardedFrom ? undefined : buildConversationReplayContext(session.messages);
     const startedAt = Date.now();
     const runId = createConversationMessageId('chat-run');
+    activeWorkflowRunRef.current = runId;
     successfulByRunRef.current.set(runId, new Set());
     for (const provider of participants) {
       busyProvidersRef.current.add(provider);
@@ -711,6 +723,7 @@ export function useChatRuntime({
       }
       successfulByRunRef.current.delete(runId);
       clearRun(runId, participants);
+      if (activeWorkflowRunRef.current === runId) activeWorkflowRunRef.current = undefined;
     }
   }, [activeSession, activeSessionId, appendMessage, clearRun, executeWorkflow, locale, providerStates, runtimeHost, sessions]);
 
