@@ -83,6 +83,16 @@ test('a concurrent claim on same thread blocks archive', async () => {
     assert.equal(readClaim(home, 1), null);
   } finally { other.release(); }
 });
+test('another slot busy with a different or unregistered chat does not block archive', async () => {
+  const home = temp();
+  addSlots(home, 2);
+  const unregistered = claimSlot(home, 2, { meta: { task: '99' } });
+  const different = claimSlot(home, 3, { meta: { task: '98', threadUrl: B } });
+  try {
+    const r = await finish(input(), { home, verify: () => true, archive: async () => {} });
+    assert.equal(r.status, 'archived');
+  } finally { unregistered.release(); different.release(); }
+});
 test('held browser send lock prevents archive (do not steal another process lock)', async () => {
   const home = temp();
   const lock = path.join(home, 'browser-send.lock');
