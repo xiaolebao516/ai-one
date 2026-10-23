@@ -152,7 +152,7 @@ export function Workbench({ locale, onOpenClassic, initialRoute, githubLoader, d
         <div className="grid gap-v2-section">
           <PlannedView title={text.t('flowsTitle')} body={text.t('flowsBody')} badge={text.t('plannedBadge')} />
           <div className="border-t border-v2-line">
-            <CoordinationSettingsView />
+            <CoordinationSettingsView locale={locale} />
           </div>
         </div>
       );

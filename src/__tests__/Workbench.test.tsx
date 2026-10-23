@@ -105,3 +105,25 @@ describe('Task page', () => {
     expect(text).toMatch(/\(example\)/);
   });
 });
+
+describe('Workbench flows and coordination settings', () => {
+  it('renders flows view with coordination settings in English when locale is en', () => {
+    const html = renderToStaticMarkup(<Workbench locale="en" initialRoute={{ view: 'flows' }} onOpenClassic={noop} />);
+    const text = visibleText(html);
+    expect(html).toContain('data-testid="coordination-settings-view"');
+    expect(text).toContain('CC coordination settings');
+    expect(text).toContain('Rework limit');
+    expect(text).toContain('When limit exceeded');
+    expect(text).toContain('Live preview');
+  });
+
+  it('renders flows view with coordination settings in Chinese when locale is zh-CN', () => {
+    const html = renderToStaticMarkup(<Workbench locale="zh-CN" initialRoute={{ view: 'flows' }} onOpenClassic={noop} />);
+    const text = visibleText(html);
+    expect(html).toContain('data-testid="coordination-settings-view"');
+    expect(text).toContain('CC 协调设置');
+    expect(text).toContain('返工上限');
+    expect(text).toContain('超限后');
+    expect(text).toContain('实时预览');
+  });
+});

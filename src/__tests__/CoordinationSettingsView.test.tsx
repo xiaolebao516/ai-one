@@ -110,5 +110,7 @@ describe('CoordinationSettingsView', () => {
     expect(html).toContain('Local settings');
     expect(html).toContain('Live preview');
     expect(html).toContain('3 rounds');
+    expect(html).toContain('aria-label="gpt preference label"');
+    expect(html).toContain('aria-label="opus preference label"');
   });
 });

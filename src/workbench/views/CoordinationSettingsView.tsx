@@ -281,7 +281,7 @@ export function CoordinationSettingsView({
               <div key={ai} className="flex items-center gap-v2-sm">
                 <span className="w-16 font-semibold uppercase text-v2-meta text-v2-ink">{ai}:</span>
                 <input
-                  aria-label={`${ai}偏好标注`}
+                  aria-label={text.t('coordinationAiPrefAria', { ai })}
                   value={role}
                   disabled={isBlocked}
                   onChange={(e) => updateAiPreference(ai, e.target.value)}
