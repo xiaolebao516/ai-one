@@ -92,7 +92,7 @@ pub(crate) fn bounded_int(value: &str, min: u64, max: u64) -> bool {
     value.parse::<u64>().is_ok_and(|n| (min..=max).contains(&n))
 }
 
-/// Returns the path unchanged when it is one of the four endpoints collectSnapshot reads.
+/// Fixed read-only routes: snapshot endpoints plus an all-state Issue list for user acceptance.
 pub(crate) fn allowed_get_path(path: &str) -> Option<&str> {
     let (route, query) = path.split_once('?')?;
     let parts: Vec<&str> = route.split('/').collect();
@@ -101,7 +101,14 @@ pub(crate) fn allowed_get_path(path: &str) -> Option<&str> {
     }
     let allowed = match &parts[3..] {
         ["issues"] | ["pulls"] => {
-            let rest = query.strip_prefix("state=open&sort=created&direction=desc&per_page=")?;
+            // Closed Spec Issues can still carry needs-user after merge. This one extra GET shape
+            // reads existing Issues; it never adds a write action or an arbitrary query.
+            let rest = if parts[3] == "issues" {
+                query.strip_prefix("state=all&sort=created&direction=desc&per_page=")
+                    .or_else(|| query.strip_prefix("state=open&sort=created&direction=desc&per_page="))
+            } else {
+                query.strip_prefix("state=open&sort=created&direction=desc&per_page=")
+            }?;
             let (per_page, page) = rest.split_once("&page=")?;
             bounded_int(per_page, 1, 30) && bounded_int(page, 1, 10_000)
         }
@@ -212,9 +219,10 @@ mod tests {
     const SHA: &str = "03a234f4d472137fac40c9d58b5b474f78796f22";
 
     #[test]
-    fn allows_exactly_the_snapshot_endpoints() {
+    fn allows_snapshot_and_acceptance_read_endpoints() {
         for path in [
             "repos/xiaolebao516/ai-one/issues?state=open&sort=created&direction=desc&per_page=10&page=1",
+            "repos/xiaolebao516/ai-one/issues?state=all&sort=created&direction=desc&per_page=30&page=1",
             "repos/xiaolebao516/ai-one/pulls?state=open&sort=created&direction=desc&per_page=30&page=10000",
             &format!("repos/o/r.name_x-1/commits/{SHA}/check-runs?filter=latest&per_page=100&page=1"),
             &format!("repos/o/r/commits/{SHA}/status?per_page=100&page=1"),
@@ -229,7 +237,8 @@ mod tests {
             "",
             "user",
             "repos/o/r/issues",
-            "repos/o/r/issues?state=all&sort=created&direction=desc&per_page=10&page=1",
+            "repos/o/r/issues?state=all&sort=created&direction=desc&per_page=31&page=1",
+            "repos/o/r/pulls?state=all&sort=created&direction=desc&per_page=10&page=1",
             "repos/o/r/issues?state=open&sort=created&direction=desc&per_page=31&page=1",
             "repos/o/r/issues?state=open&sort=created&direction=desc&per_page=0&page=1",
             "repos/o/r/issues?state=open&sort=created&direction=desc&per_page=010&page=1",

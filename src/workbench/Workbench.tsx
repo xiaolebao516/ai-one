@@ -28,6 +28,9 @@ import {
 } from './workbenchModel';
 import { workbenchText, type WorkbenchText } from './workbenchText';
 import { HomeView } from './views/HomeView';
+import { acceptanceIssueKeys, pendingAcceptanceCount } from './views/UserAcceptanceSection';
+import { useUserAcceptance, type AcceptanceLoader, type AcceptanceState } from './useUserAcceptance';
+import type { AcceptanceWriter } from './userAcceptance';
 import { ChatLedPage } from './views/ChatLedPage';
 import { FlowsView, type FlowsLeaveGuard } from './views/FlowsView';
 import { PlannedView } from './views/PlannedView';
@@ -45,6 +48,8 @@ export interface WorkbenchProps {
   onOpenClassic: () => void;
   /** Reads GitHub; tests pass a controllable one. Must be a stable reference. */
   githubLoader?: GitHubLoader;
+  acceptanceLoader?: AcceptanceLoader;
+  acceptanceWriter?: AcceptanceWriter;
   /** Reads local Prodex metadata; tests pass a controllable one. Must be a stable reference. */
   dispatchLoader?: DispatchLoader;
   /** Overrides the desktop check for local reads (tests). */
@@ -52,9 +57,10 @@ export interface WorkbenchProps {
 }
 
 /** The new ai-one front end (Spec #79 v2). The classic chat UI is only a capability library now. */
-export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader, isDesktop }: WorkbenchProps) {
+export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoader, acceptanceWriter, dispatchLoader, isDesktop }: WorkbenchProps) {
   const text = workbenchText(locale);
   const data = useWorkbenchData(githubLoader);
+  const acceptance = useUserAcceptance(data.prefs.source, data.prefs.repos, data.github.results, acceptanceLoader, acceptanceWriter);
   const dispatch = useDispatchData({ source: data.prefs.source, repoPath: data.prefs.dispatchRepo, loader: dispatchLoader, isDesktop });
   const channel = channelView(dispatch);
   const [route, setRoute] = useState<WorkbenchRoute>(HOME_ROUTE);
@@ -167,6 +173,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
         locale={locale}
         tasks={data.tasks}
         health={data.health}
+        acceptance={acceptance}
         channel={channel}
         onOpenTask={openTask}
         onShowTasks={() => go({ view: 'tasks' })}
@@ -214,9 +221,11 @@ export function Workbench({ locale, onOpenClassic, githubLoader, dispatchLoader,
         text={text}
         tasks={data.tasks}
         health={data.health}
+        acceptance={acceptance}
         channel={channel}
         onPalette={() => setPaletteOpen(true)}
         onShowTasks={() => go({ view: 'tasks' })}
+        onShowAcceptances={() => go({ view: 'home' })}
         onShowResources={() => go({ view: 'resources' })}
       />
       <div className="flex min-h-0 flex-1">
@@ -259,8 +268,10 @@ interface TitleBarProps {
   /** Loading or failed: counts would read as "nothing to do", so they show as "?". Partial: "at least". */
   health: DataHealth;
   channel: ChannelView;
+  acceptance: AcceptanceState;
   onPalette: () => void;
   onShowTasks: () => void;
+  onShowAcceptances: () => void;
   onShowResources: () => void;
 }
 
@@ -273,17 +284,22 @@ const CHANNEL_DOT: Record<ChannelView['tone'], string> = {
   failed: 'bg-v2-block',
 };
 
-function TitleBar({ text, tasks, health, channel, onPalette, onShowTasks, onShowResources }: TitleBarProps) {
+function TitleBar({ text, tasks, health, acceptance, channel, onPalette, onShowTasks, onShowAcceptances, onShowResources }: TitleBarProps) {
   const summary = summarize(tasks);
   // The island shows counts by state, so unreadable task states make them "at least" too.
   const byState = categoryHealth(health, tasks);
   const count = (n: number) => countLabel(n, byState);
-  const values = { inProgress: summary.inProgress, needsYou: summary.needsYou };
-  const islandLabel = isExact(byState)
-    ? text.t('islandAria', values)
-    : byState === 'partial'
-      ? text.t('islandPartial', values)
-      : text.t('islandUnknown');
+  const keys = acceptanceIssueKeys(acceptance);
+  const decisions = tasks.filter((task) => (task.status === 'decide' || task.status === 'blocked') &&
+    !(task.issue && keys.has(task.repo.toLowerCase() + ':' + task.issue))).length;
+  const accepts = pendingAcceptanceCount(acceptance);
+  const acceptCount = acceptance.loading || health === 'loading' ? '?' :
+    countLabel(accepts, acceptance.partial ? 'partial' : health);
+  const decisionLabel = text.t('islandDecision', { n: count(decisions) });
+  const acceptLabel = text.t('islandAcceptance', { n: acceptCount });
+  const islandLabel = text.t('islandAriaSplit', {
+    inProgress: count(summary.inProgress), decisions: count(decisions), acceptances: acceptCount,
+  });
   return (
     <header className="grid h-11 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-v2-md px-v2-md">
       <div className="flex min-w-0 items-center gap-v2-md">
@@ -300,23 +316,21 @@ function TitleBar({ text, tasks, health, channel, onPalette, onShowTasks, onShow
           <kbd className="rounded-v2-sm border border-v2-line px-1 font-v2-mono text-v2-micro">Ctrl K</kbd>
         </button>
       </div>
-      <button
-        type="button"
-        onClick={onShowTasks}
-        aria-label={islandLabel}
-        title={islandLabel}
-        className="flex h-7 items-center gap-v2-md rounded-v2-pill bg-v2-island px-v2-md text-v2-meta font-semibold text-v2-on-island"
-      >
-        <span className="flex items-center gap-1.5">
+      <div className="flex h-7 items-center gap-v2-sm rounded-v2-pill bg-v2-island px-v2-sm text-v2-meta font-semibold text-v2-on-island" title={islandLabel}>
+        <button type="button" onClick={onShowTasks}
+          className="flex items-center gap-v2-sm rounded-v2-pill px-v2-xs focus-visible:outline focus-visible:outline-2">
           <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-v2-run" />
           {text.t('islandInProgress', { n: count(summary.inProgress) })}
-        </span>
-        <span aria-hidden="true" className="h-3 w-px bg-v2-on-island opacity-30" />
-        <span className="flex items-center gap-1.5">
+          <span aria-hidden="true" className="h-3 w-px bg-v2-on-island opacity-30" />
           <span aria-hidden="true" className="h-1.5 w-1.5 rotate-45 bg-v2-you" />
-          {text.t('islandNeedsYou', { n: count(summary.needsYou) })}
-        </span>
-      </button>
+          {decisionLabel}
+        </button>
+        <span aria-hidden="true" className="h-3 w-px bg-v2-on-island opacity-30" />
+        <button type="button" onClick={onShowAcceptances} aria-label={acceptLabel}
+          className="rounded-v2-pill px-v2-xs focus-visible:outline focus-visible:outline-2">
+          {acceptLabel}
+        </button>
+      </div>
       <div className="flex justify-end">
         <ChannelButton text={text} channel={channel} onClick={onShowResources} />
       </div>
