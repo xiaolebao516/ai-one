@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Locale } from '../i18n/resolve';
-import { dispatchLaunch, type DispatchAgent, type DispatchCode, type DispatchLaunchApi, type DispatchLaunchResult, type DispatchMode, type DispatchRun } from '../host/dispatchLaunch';
+import { DISPATCH_AGENTS, dispatchLaunch, type DispatchAgent, type DispatchCode, type DispatchLaunchApi, type DispatchLaunchResult, type DispatchMode, type DispatchRun } from '../host/dispatchLaunch';
 import { Button, Notice } from '../ui/v2';
 import { copyToClipboard } from './clipboard';
 import { workbenchText } from './workbenchText';
@@ -15,7 +15,7 @@ function readPrefs(): LaunchPrefs {
     if (value && typeof value === 'object') {
       const row = value as Partial<LaunchPrefs>;
       return {
-        agent: row.agent === 'codex' ? 'codex' : 'claude',
+        agent: DISPATCH_AGENTS.includes(row.agent as DispatchAgent) ? (row.agent as DispatchAgent) : 'claude',
         mode: row.mode === 'cli' ? 'cli' : 'desktop',
         workdir: typeof row.workdir === 'string' ? row.workdir.slice(0, 1024) : '',
       };
@@ -26,6 +26,14 @@ function readPrefs(): LaunchPrefs {
 function savePrefs(prefs: LaunchPrefs): void {
   try { window.localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
 }
+
+/** What each agent can do. Only Claude and Codex take the prompt in a link or run on the command line. */
+const AGENT_INFO: Record<DispatchAgent, { label: string; cli: boolean; prefills: boolean }> = {
+  claude: { label: 'Claude Code', cli: true, prefills: true },
+  codex: { label: 'Codex', cli: true, prefills: true },
+  antigravity: { label: 'Antigravity', cli: false, prefills: false },
+  workbuddy: { label: 'WorkBuddy', cli: false, prefills: false },
+};
 
 const FAILURE_TEXT: Record<Exclude<DispatchCode, 'launched' | 'opened'>, 'launchInvalid' | 'launchWorkdirInvalid' | 'launchNoProgram' | 'launchSpawnFailed' | 'launchOpenFailed' | 'launchAlreadyRunning' | 'launchIssueUnverified' | 'launchUnknown'> = {
   invalid_input: 'launchInvalid', workdir_invalid: 'launchWorkdirInvalid', program_not_found: 'launchNoProgram',
@@ -64,7 +72,7 @@ export function DispatchPanel({ locale, repo, issue, api = dispatchLaunch, onCop
     setBusy(true);
     setResult(undefined);
     try {
-      const outcome = await api.launch({ agent: prefs.agent, mode: prefs.mode, repo, issue, workdir: prefs.workdir.trim() });
+      const outcome = await api.launch({ agent: prefs.agent, mode, repo, issue, workdir: prefs.workdir.trim() });
       let copied: boolean | undefined;
       if (outcome.ok && outcome.code === 'opened' && outcome.prompt) {
         copied = await onCopy(outcome.prompt).then(() => true, () => false);
@@ -74,7 +82,10 @@ export function DispatchPanel({ locale, repo, issue, api = dispatchLaunch, onCop
     } finally { sending.current = false; setBusy(false); }
   };
 
-  const name = prefs.agent === 'claude' ? 'Claude Code' : 'Codex';
+  const info = AGENT_INFO[prefs.agent];
+  const name = info.label;
+  // An agent without a command line can only be opened, whatever was chosen for another agent.
+  const mode: DispatchMode = info.cli ? prefs.mode : 'desktop';
   return (
     <div className="grid gap-v2-sm">
       <div>
@@ -86,22 +97,25 @@ export function DispatchPanel({ locale, repo, issue, api = dispatchLaunch, onCop
         <div className="grid gap-v2-sm rounded-v2-md border border-v2-line bg-v2-bg p-v2-sm" role="group" aria-label={text.t('launchTitle')}>
           <fieldset className="flex flex-wrap items-center gap-v2-md">
             <legend className="mb-v2-xs text-v2-meta font-semibold text-v2-ink">{text.t('launchAgent')}</legend>
-            {(['claude', 'codex'] as const).map((agent) => (
+            {DISPATCH_AGENTS.map((agent) => (
               <label key={agent} className="flex items-center gap-v2-xs text-v2-body text-v2-ink">
                 <input type="radio" name={`launch-agent-${repo}-${issue}`} checked={prefs.agent === agent} onChange={() => update({ agent })} />
-                {agent === 'claude' ? 'Claude Code' : 'Codex'}
+                {AGENT_INFO[agent].label}
               </label>
             ))}
           </fieldset>
           <fieldset className="grid gap-v2-xs">
             <legend className="mb-v2-xs text-v2-meta font-semibold text-v2-ink">{text.t('launchMode')}</legend>
-            {(['desktop', 'cli'] as const).map((mode) => (
-              <label key={mode} className="flex items-center gap-v2-xs text-v2-body text-v2-ink">
-                <input type="radio" name={`launch-mode-${repo}-${issue}`} checked={prefs.mode === mode} onChange={() => update({ mode })} />
-                {text.t(mode === 'desktop' ? 'launchModeDesktop' : 'launchModeCli')}
+            {(['desktop', 'cli'] as const).map((choice) => (
+              <label key={choice} className="flex items-center gap-v2-xs text-v2-body text-v2-ink">
+                <input type="radio" name={`launch-mode-${repo}-${issue}`} checked={mode === choice} disabled={choice === 'cli' && !info.cli}
+                  onChange={() => update({ mode: choice })} />
+                {text.t(choice === 'desktop' ? 'launchModeDesktop' : 'launchModeCli')}
               </label>
             ))}
-            {prefs.mode === 'cli' ? (
+            {!info.cli ? <p className="text-v2-meta text-v2-ink-2">{text.t('launchNoCli', { agent: name })}</p> : null}
+            {!info.prefills ? <p className="text-v2-meta text-v2-ink-2">{text.t('launchPasteNote', { agent: name })}</p> : null}
+            {mode === 'cli' ? (
               <>
                 <p className="text-v2-meta text-v2-ink-2">{text.t(prefs.agent === 'claude' ? 'launchCliClaudeNote' : 'launchCliCodexNote')}</p>
                 <p className="text-v2-meta text-v2-ink-2">{text.t('launchCliWarning')}</p>
@@ -122,7 +136,7 @@ export function DispatchPanel({ locale, repo, issue, api = dispatchLaunch, onCop
           {result ? (
             result.ok ? (
               <Notice tone="done" live="polite" title={result.code === 'opened'
-                ? text.t(result.copied === false ? 'launchOpenedNoCopy' : 'launchOpened')
+                ? text.t(result.copied === false ? 'launchOpenedNoCopy' : info.prefills ? 'launchOpened' : 'launchOpenedPaste', { agent: name })
                 : text.t('launchLaunched', { pid: result.pid ?? '?' })}>
                 {result.code === 'opened' && result.prompt ? <p className="mt-v2-xs whitespace-pre-wrap break-words text-v2-meta">{text.t('launchPromptLabel')}：{result.prompt}</p> : null}
               </Notice>

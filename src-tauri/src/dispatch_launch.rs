@@ -63,6 +63,10 @@ pub struct LaunchArgs {
 enum Agent {
     Claude,
     Codex,
+    /// Desktop-only: no command line and no deep link that takes a prompt.
+    Antigravity,
+    /// Desktop-only: no command line and no deep link that takes a prompt.
+    WorkBuddy,
 }
 
 impl Agent {
@@ -70,6 +74,8 @@ impl Agent {
         match value {
             "claude" => Some(Agent::Claude),
             "codex" => Some(Agent::Codex),
+            "antigravity" => Some(Agent::Antigravity),
+            "workbuddy" => Some(Agent::WorkBuddy),
             _ => None,
         }
     }
@@ -77,7 +83,13 @@ impl Agent {
         match self {
             Agent::Claude => "Claude Code",
             Agent::Codex => "Codex",
+            Agent::Antigravity => "Antigravity",
+            Agent::WorkBuddy => "WorkBuddy",
         }
+    }
+    /// Only these can be run unattended on the command line.
+    fn has_cli(self) -> bool {
+        matches!(self, Agent::Claude | Agent::Codex)
     }
 }
 
@@ -224,7 +236,23 @@ fn client_url(agent: Agent, prompt: &str, workdir: &Path) -> String {
             "codex://threads/new?prompt={}",
             pct_encode(&format!("（在 {} 目录工作）{prompt}", workdir.to_string_lossy()))
         ),
+        // The prompt reaches these through the clipboard; the link only brings the app up (the
+        // VS Code style `file/` route also opens the checkout as the project).
+        Agent::Antigravity => format!("antigravity://file/{}", pct_encode_path(workdir)),
+        Agent::WorkBuddy => "workbuddy://home".to_string(),
     }
+}
+
+/// Path for a `scheme://file/<path>` link: forward slashes, `:` and `/` kept, the rest encoded.
+fn pct_encode_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .split('/')
+        .map(|segment| {
+            if segment.len() == 2 && segment.ends_with(':') { segment.to_string() } else { pct_encode(segment) }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn strip_verbatim(path: PathBuf) -> PathBuf {
@@ -331,6 +359,7 @@ fn find_program(agent: Agent) -> Option<PathBuf> {
             &["codex"]
         })
         .or_else(find_packaged_codex),
+        Agent::Antigravity | Agent::WorkBuddy => None,
     }
 }
 
@@ -522,6 +551,7 @@ fn launch_cli(
         Agent::Codex => {
             command.args(codex_args());
         }
+        Agent::Antigravity | Agent::WorkBuddy => unreachable!("agents without a command line never reach launch_cli"),
     }
     command
         .env_clear()
@@ -692,6 +722,9 @@ pub fn dispatch_launch(app: AppHandle, webview: tauri::Webview, args: LaunchArgs
     if !valid_repo(&args.repo) || args.issue == 0 || args.issue > MAX_ISSUE {
         return invalid("仓库或 Issue 编号不合法");
     }
+    if args.mode == "cli" && !agent.has_cli() {
+        return invalid("该 agent 只能打开桌面客户端");
+    }
     if let Some(model) = &args.model {
         if agent != Agent::Claude || !CLAUDE_MODELS.contains(&model.as_str()) {
             return invalid("不支持的模型");
@@ -791,6 +824,9 @@ mod tests {
         let codex = client_url(Agent::Codex, "p", Path::new("/w"));
         assert!(codex.starts_with("codex://threads/new?prompt="));
         assert!(!codex.contains("&"));
+        let antigravity = client_url(Agent::Antigravity, "p", Path::new("D:\\Repo sitory\\ai-one"));
+        assert_eq!(antigravity, "antigravity://file/D:/Repo%20sitory/ai-one");
+        assert_eq!(client_url(Agent::WorkBuddy, "p", Path::new("D:\\x")), "workbuddy://home");
     }
 
     #[test]
@@ -831,6 +867,18 @@ mod tests {
             .map(|(name, value)| (OsString::from(name), OsString::from(value)));
         let kept: Vec<String> = filter_env(vars.into_iter()).into_iter().map(|(name, _)| name.to_string_lossy().to_string()).collect();
         assert_eq!(kept, vec!["Path".to_string(), "GH_TOKEN".to_string()]);
+    }
+
+    #[test]
+    fn only_claude_and_codex_can_run_on_the_command_line() {
+        assert_eq!(Agent::parse("antigravity"), Some(Agent::Antigravity));
+        assert_eq!(Agent::parse("workbuddy"), Some(Agent::WorkBuddy));
+        assert_eq!(Agent::parse("cursor"), None);
+        assert!(Agent::Claude.has_cli() && Agent::Codex.has_cli());
+        assert!(!Agent::Antigravity.has_cli() && !Agent::WorkBuddy.has_cli());
+        assert!(find_program(Agent::Antigravity).is_none() && find_program(Agent::WorkBuddy).is_none());
+        let prompt = build_prompt("o/r", 3, Agent::WorkBuddy, "dispatch-9");
+        assert!(prompt.contains("take 3 --agent \"WorkBuddy / dispatch-9\""));
     }
 
     #[test]
