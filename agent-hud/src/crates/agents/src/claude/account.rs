@@ -91,14 +91,38 @@ fn settings_network(host: &dyn Host) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Whether the Claude query would leave through a proxy: one set in
+/// settings.json `env` (Claude Code applies it on top of the environment) or
+/// in the HUD's own environment. ai-one change (#186).
+fn has_proxy(host: &dyn Host, network: &[(String, String)]) -> bool {
+    const PROXY_KEYS: [&str; 6] = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"];
+    let set = |value: &str| !value.trim().is_empty();
+    network
+        .iter()
+        .any(|(key, value)| !key.eq_ignore_ascii_case("NO_PROXY") && set(value))
+        || PROXY_KEYS.iter().any(|key| host.env(key).is_some_and(set))
+}
+
 pub fn read(host: &dyn Host) -> Result<Reading, String> {
+    // The user's rule: Anthropic is reached only through a proxy, never from
+    // this machine's own address. Without one, Claude Code is not started and
+    // nothing is sent; the notice says how to turn the reading back on.
+    let network = settings_network(host);
+    if !has_proxy(host, &network) {
+        let mut reading = Reading::empty("claude");
+        reading.notice = Some(l10n::text(
+            "未配置代理，HUD 不查询 Claude 额度（避免直连 Anthropic）。在 ~/.claude/settings.json 的 env 里设置 HTTPS_PROXY 后恢复",
+            "No proxy is set, so the HUD does not query Claude. Set HTTPS_PROXY in the env of ~/.claude/settings.json",
+        ));
+        return Ok(reading);
+    }
     let reading = read_with(host, &[], &[])?;
     // No plan limits through the user's settings: the subscription login may
     // still be there underneath an API proxy. Ask once more without those
     // settings, same network proxy, and keep the first answer unless that one
     // has limits.
     if reading.quotas.is_empty() && reading.account.is_none() {
-        if let Ok(retry) = read_with(host, &WITHOUT_USER_SETTINGS, &settings_network(host)) {
+        if let Ok(retry) = read_with(host, &WITHOUT_USER_SETTINGS, &network) {
             if !retry.quotas.is_empty() {
                 return Ok(retry);
             }
@@ -347,7 +371,7 @@ mod tests {
     use crate::account::fake::FakeHost;
 
     fn installed(usage: Value) -> FakeHost {
-        let mut host = FakeHost::new("/u").file(
+        let mut host = FakeHost::new("/u").env("HTTPS_PROXY", "http://127.0.0.1:7897").file(
             "/u/.claude.json",
             &json!({"oauthAccount": {
                 "accountUuid": "user-1", "organizationUuid": "org-1",
@@ -425,6 +449,26 @@ mod tests {
     }
 
     #[test]
+    fn without_any_proxy_claude_is_not_started_and_the_notice_says_why() {
+        let mut host = installed(limits());
+        host.env.clear();
+        let reading = read(&host).unwrap();
+        assert!(host.started.borrow().is_empty());
+        assert!(reading.quotas.is_empty());
+        assert_eq!(
+            reading.notice.as_deref(),
+            Some("No proxy is set, so the HUD does not query Claude. Set HTTPS_PROXY in the env of ~/.claude/settings.json")
+        );
+        // NO_PROXY alone is not a proxy.
+        let host = host.file("/u/.claude/settings.json", &json!({"env": {"NO_PROXY": "localhost"}}).to_string());
+        read(&host).unwrap();
+        assert!(host.started.borrow().is_empty());
+        // A proxy from settings.json alone is enough.
+        let host = host.file("/u/.claude/settings.json", &json!({"env": {"HTTPS_PROXY": "http://127.0.0.1:49531"}}).to_string());
+        assert_eq!(read(&host).unwrap().quotas.len(), 2);
+    }
+
+    #[test]
     fn a_proxy_in_user_settings_does_not_hide_the_subscription() {
         let none = json!({"subtype": "success", "response": {"rate_limits_available": false}});
         let mut host = installed(none).file(
@@ -467,7 +511,7 @@ mod tests {
             "Claude Code engine query failed: The engine returned no usage within 40 s"
         );
         assert_eq!(
-            read(&FakeHost::new("/u")).err().unwrap(),
+            read(&FakeHost::new("/u").env("HTTPS_PROXY", "http://127.0.0.1:7897")).err().unwrap(),
             "Claude Code engine (claude command) not found"
         );
     }
