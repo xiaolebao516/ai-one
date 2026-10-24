@@ -1,19 +1,22 @@
-import type { GithubWriteResult, GithubWriteStatus } from '../host/githubWrite';
+import type { GithubWriteCreateIssueArgs, GithubWriteResult, GithubWriteStatus } from '../host/githubWrite';
+import { issueStateKey, type AcceptanceFix, type IssueStates } from './acceptanceFix';
 
 export interface AcceptanceItem {
   key: string; repo: string; issue: number; title: string;
   raw?: string; steps?: string; expected?: string;
 }
-export interface AcceptanceRead { items: AcceptanceItem[]; partial: boolean; errors: string[] }
+export interface AcceptanceRead { items: AcceptanceItem[]; partial: boolean; errors: string[]; issueStates?: IssueStates }
 export interface AcceptanceReader { get(path: string): Promise<unknown> }
 export interface AcceptanceWriter {
   status(): Promise<GithubWriteStatus>;
   comment(args: { repo: string; issue: number; text: string }): Promise<GithubWriteResult>;
+  createIssue?(args: GithubWriteCreateIssueArgs): Promise<GithubWriteResult>;
 }
 export interface AcceptanceRecord {
   key: string; repo: string; issue: number; title: string;
   kind: 'approved' | 'feedback'; sync: 'pending' | 'confirmed' | 'failed' | 'unconfirmed';
   feedback?: string;
+  fix?: AcceptanceFix;
 }
 export type AcceptanceRecords = Record<string, AcceptanceRecord>;
 export const ACCEPTANCE_STORAGE_KEY = 'ai-one.workbench.userAcceptance.v1';
@@ -94,7 +97,7 @@ function labelNames(value: unknown): string[] {
 }
 /** Read only fixed paths accepted by github_readonly.rs; bound scan and expose partial reads. */
 export async function loadAcceptanceIssues(repos: readonly string[], api: AcceptanceReader): Promise<AcceptanceRead> {
-  const items: AcceptanceItem[] = [], errors: string[] = [];
+  const items: AcceptanceItem[] = [], errors: string[] = [], issueStates: IssueStates = {};
   let partial = false;
   for (const repo of repos) {
     if (!/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/u.test(repo)) { errors.push(repo); continue; }
@@ -109,6 +112,10 @@ export async function loadAcceptanceIssues(repos: readonly string[], api: Accept
         for (const issue of data) {
           if (issue.pull_request || seen.has(issue.number)) continue;
           seen.add(issue.number);
+          issueStates[issueStateKey(repo, issue.number)] = {
+            state: issue.state,
+            ...(typeof issue.state_reason === 'string' ? { reason: issue.state_reason } : {}),
+          };
           if (!labelNames(issue.labels).includes('needs-user')) continue;
           if (typeof issue.body !== 'string') {
             errors.push(`${repo} #${issue.number}: issue body unavailable`);
@@ -124,9 +131,16 @@ export async function loadAcceptanceIssues(repos: readonly string[], api: Accept
       }
     }
   }
-  return { items, errors, partial: partial || errors.length > 0 };
+  return { items, errors, partial: partial || errors.length > 0, issueStates };
 }
 export interface AcceptanceStorage { getItem(key: string): string | null; setItem(key: string, value: string): void }
+function validFix(value: unknown): value is AcceptanceFix {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const fix = value as AcceptanceFix;
+  return ['pending', 'confirmed', 'failed', 'unconfirmed'].includes(fix.sync)
+    && (fix.issue === undefined || Number.isSafeInteger(fix.issue))
+    && (fix.url === undefined || typeof fix.url === 'string');
+}
 export function readAcceptanceRecords(storage: AcceptanceStorage): AcceptanceRecords {
   const raw = storage.getItem(ACCEPTANCE_STORAGE_KEY);
   if (raw === null) return {};
@@ -139,7 +153,8 @@ export function readAcceptanceRecords(storage: AcceptanceStorage): AcceptanceRec
     if (row.key !== key || typeof row.repo !== 'string' || !Number.isSafeInteger(row.issue) ||
       typeof row.title !== 'string' || !['approved', 'feedback'].includes(row.kind) ||
       !['pending', 'confirmed', 'failed', 'unconfirmed'].includes(row.sync) ||
-      (row.feedback !== undefined && typeof row.feedback !== 'string')) throw new Error('invalid acceptance record');
+      (row.feedback !== undefined && typeof row.feedback !== 'string') ||
+      (row.fix !== undefined && !validFix(row.fix))) throw new Error('invalid acceptance record');
     records[key] = row;
   }
   return records;

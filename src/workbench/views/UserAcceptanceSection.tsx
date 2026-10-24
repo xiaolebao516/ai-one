@@ -3,6 +3,12 @@ import type { Locale } from '../../i18n/resolve';
 import { Button, Card, Notice } from '../../ui/v2';
 import { workbenchText } from '../workbenchText';
 import type { AcceptanceState } from '../useUserAcceptance';
+import { needsNewDecision, type FixProgress } from '../acceptanceFix';
+
+const FIX_TEXT: Record<FixProgress, 'acceptanceFixCreating' | 'acceptanceFixUnknown' | 'acceptanceFixFailed' | 'acceptanceFixQueued' | 'acceptanceFixWorking' | 'acceptanceFixDone' | 'acceptanceFixDropped'> = {
+  creating: 'acceptanceFixCreating', unknown: 'acceptanceFixUnknown', failed: 'acceptanceFixFailed',
+  queued: 'acceptanceFixQueued', working: 'acceptanceFixWorking', done: 'acceptanceFixDone', dropped: 'acceptanceFixDropped',
+};
 
 export function UserAcceptanceSection({ locale, state, demo }: {
   locale: Locale; state: AcceptanceState; demo: boolean;
@@ -32,7 +38,9 @@ export function UserAcceptanceSection({ locale, state, demo }: {
       {visible.length ? (
         <ul className="mt-v2-md grid gap-v2-sm">
           {visible.map((item) => {
-            const record = state.records[item.key];
+            const progress = state.progress[item.key];
+            const record = needsNewDecision(progress) ? undefined : state.records[item.key];
+            const fixNumber = state.records[item.key]?.fix?.issue;
             return <li key={item.key}>
               <Card accent="you" className="grid gap-v2-sm">
                 <div className="flex flex-wrap items-center gap-v2-sm">
@@ -47,8 +55,19 @@ export function UserAcceptanceSection({ locale, state, demo }: {
                     <p className="whitespace-pre-wrap text-v2-body text-v2-ink-2"><strong>{text.t('acceptanceExpected')}：</strong>{item.expected}</p>
                   </>
                 )}
+                {progress && fixNumber !== undefined && needsNewDecision(progress) ? (
+                  <Notice tone="you" live="polite" title={text.t(FIX_TEXT[progress], { n: fixNumber })} />
+                ) : null}
                 {record ? (
-                  <p role="status" className="text-v2-meta text-v2-ink-2">{record.sync === 'confirmed' ? text.t('acceptanceFeedbackSent') : text.t('acceptanceNotSynced')}</p>
+                  <>
+                    <p role="status" className="text-v2-meta text-v2-ink-2">
+                      {progress ? text.t(FIX_TEXT[progress], { n: fixNumber ?? '?' })
+                        : record.sync === 'confirmed' ? text.t('acceptanceFeedbackSent') : text.t('acceptanceNotSynced')}
+                    </p>
+                    {progress === 'failed' ? (
+                      <div><Button size="sm" disabled={state.storageError} onClick={() => { void state.retryFix(item); }}>{text.t('acceptanceFixRetry')}</Button></div>
+                    ) : null}
+                  </>
                 ) : (
                   <>
                     <div className="flex flex-wrap gap-v2-sm">
