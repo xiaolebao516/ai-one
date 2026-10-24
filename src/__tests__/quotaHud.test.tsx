@@ -434,6 +434,18 @@ describe('ResourcesView quota display', () => {
     expect(card?.querySelector('[data-testid="quota-window-bar"]')?.innerHTML).not.toContain('bg-v2-done');
   });
 
+  it('says on the Claude Code card that no proxy is set and the HUD did not query it', () => {
+    const notice = '未配置代理，HUD 不查询 Claude 额度（避免直连 Anthropic）。在 ~/.claude/settings.json 的 env 里设置 HTTPS_PROXY 后恢复';
+    const reading = parsed('running', snapshot({
+      providers: [{ id: 'claude', detected: true, accountStatus: { status: 'unavailable', notice, checkedAt: freshAt } }],
+    }));
+    const container = document.createElement('div');
+    container.innerHTML = resourcesMarkup(reading);
+    const card = container.querySelector('[data-testid="resource-claude-code"]');
+    expect(card?.textContent).toContain(notice);
+    expect(card?.innerHTML).not.toContain('bg-v2-done');
+  });
+
   it('keeps absent and null-percent quotas unknown rather than green', () => {
     const absent = document.createElement('div');
     absent.innerHTML = resourcesMarkup(parsed('absent', null));
