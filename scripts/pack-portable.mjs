@@ -91,7 +91,7 @@ Options:
   --prefix <dir>   Top-level folder inside the zip. Default: inferred product/version.
   --no-prefix      Put files at the zip root.
   --hud <file>     Quota HUD executable to ship next to the app. Default: ${DEFAULT_HUD_EXE}
-                   (build it with: cd agent-hud && pnpm run build && cargo build --release -p ai-one-hud).
+                   (build it with: pnpm hud:build; a plain cargo build leaves a dev-mode exe whose windows are blank).
                    Skipped, with a note, when the file does not exist.
   --no-hud         Do not ship the quota HUD.
 
