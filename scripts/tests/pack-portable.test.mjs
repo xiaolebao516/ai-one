@@ -54,6 +54,9 @@ test('a built HUD ships next to the app with its notices', () => {
     assert.ok(names.includes('ai-one-hud.exe'), 'HUD beside the app');
     assert.ok(names.includes('NOTICE.md'));
     assert.ok(names.includes('LICENSE-ai-one-hud.txt'));
+    for (const notice of ['agent-hud-third-party.md', 'third-party/THIRD_PARTY_NOTICES.txt', 'third-party/LobeIcons-LICENSE.txt', 'third-party/react-bits-LICENSE.md']) {
+      assert.ok(names.includes(notice), notice);
+    }
     assert.equal(names.filter((name) => name === 'ai-one-hud.exe').length, 1);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -73,10 +76,14 @@ test('without a built HUD the zip is still made, with a note', () => {
   }
 });
 
-test('--no-hud skips it, and a HUD in the input folder is neither mistaken for the app nor added twice', () => {
-  const skipped = pack((tmp) => {
-    fs.writeFileSync(path.join(tmp, 'ai-one-hud.exe'), 'hud');
+test('--no-hud or a missing HUD never takes a stale HUD from the input folder along', () => {
+  const skipped = pack((tmp, input) => {
+    fs.writeFileSync(path.join(input, 'ai-one-hud.exe'), 'stale');
     return ['--no-hud'];
+  });
+  const missing = pack((tmp, input) => {
+    fs.writeFileSync(path.join(input, 'ai-one-hud.exe'), 'stale');
+    return ['--hud', path.join(tmp, 'nope', 'ai-one-hud.exe')];
   });
   const twice = pack((tmp, input) => {
     fs.writeFileSync(path.join(input, 'ai-one-hud.exe'), 'old');
@@ -87,10 +94,32 @@ test('--no-hud skips it, and a HUD in the input folder is neither mistaken for t
   try {
     assert.equal(skipped.result.status, 0, skipped.result.stderr);
     assert.ok(!zipNames(skipped.out).includes('ai-one-hud.exe'));
+    assert.equal(missing.result.status, 0, missing.result.stderr);
+    assert.ok(!zipNames(missing.out).includes('ai-one-hud.exe'));
     assert.equal(twice.result.status, 0, twice.result.stderr);
     assert.equal(zipNames(twice.out).filter((name) => name === 'ai-one-hud.exe').length, 1);
   } finally {
     fs.rmSync(skipped.dir, { recursive: true, force: true });
+    fs.rmSync(missing.dir, { recursive: true, force: true });
     fs.rmSync(twice.dir, { recursive: true, force: true });
+  }
+});
+
+test('the HUD is not shipped without its licences: packaging fails instead', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-portable-nonotice-'));
+  try {
+    const input = path.join(dir, 'release');
+    fs.mkdirSync(input);
+    fs.writeFileSync(path.join(input, 'app.exe'), 'app');
+    const hud = path.join(dir, 'ai-one-hud.exe');
+    fs.writeFileSync(hud, 'hud');
+    const out = path.join(dir, 'out.zip');
+    // Run from a folder that has no agent-hud/ notices at all.
+    const result = spawnSync(process.execPath, [script, '--input', input, '--out', out, '--no-prefix', '--hud', hud], { cwd: dir, encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /required notice files are missing/);
+    assert.ok(!fs.existsSync(out), 'no zip is written');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
