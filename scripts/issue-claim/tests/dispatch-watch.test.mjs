@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { waitForClaimThenWatch } from '../dispatch-watch.mjs';
 
-const base = { issue: 7, agent: 'Claude Code / dispatch-1', pid: 42, cwd: '.', intervalMs: 1, sleep: async () => {} };
+const base = { issue: 7, agent: 'Claude Code / dispatch-1', pid: 42, cwd: '.', intervalMs: 1, sleep: async () => {}, alive: () => true };
 
 test('waits for the agent to claim, then watches the launched process', async () => {
   let calls = 0;
@@ -27,4 +27,11 @@ test('does not keep alive a claim that belongs to someone else', async () => {
   const result = await waitForClaimThenWatch({ ...base, beat: () => ({ ok: false, holder: { agent: 'someone else' } }), watch: async () => { watched = true; } });
   assert.equal(result.stopped, 'not-ours');
   assert.equal(watched, false);
+});
+
+test('stops before touching the claim when the launched process is already gone', async () => {
+  let beats = 0;
+  const result = await waitForClaimThenWatch({ ...base, alive: () => false, beat: () => { beats += 1; return { ok: true }; }, watch: async () => ({}) });
+  assert.deepEqual(result, { stopped: 'process-exited' });
+  assert.equal(beats, 0);
 });

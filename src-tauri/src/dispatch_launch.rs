@@ -31,7 +31,7 @@ const ENV_ALLOW: [&str; 33] = [
     "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "USERPROFILE", "HOME", "HOMEDRIVE",
     "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432",
     "TEMP", "TMP", "USERNAME", "USERDOMAIN", "COMPUTERNAME", "OS", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS",
-    "LANG", "LC_ALL", "TERM", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST",
+    "LANG", "LC_ALL", "TERM", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR",
 ];
 /// Commands the AGENTS.md workflow needs. Everything else is denied in the unattended run.
 const CLAUDE_ALLOW: [&str; 11] = [
@@ -169,9 +169,9 @@ fn same_login(author: &str, me: &str) -> bool {
 fn issue_written_by_me(repo: &str, issue: u64) -> bool {
     let Some(gh) = find_on_path(if cfg!(windows) { &["gh.exe"] } else { &["gh"] }) else { return false };
     let mut author = helper(&gh);
-    author.args(["api", &format!("repos/{repo}/issues/{issue}"), "--jq", ".user.login"]);
+    author.args(["api", "--hostname", "github.com", &format!("repos/{repo}/issues/{issue}"), "--jq", "select(.pull_request == null) | .user.login"]);
     let mut me = helper(&gh);
-    me.args(["api", "user", "--jq", ".login"]);
+    me.args(["api", "--hostname", "github.com", "user", "--jq", ".login"]);
     match (run_text(&mut author), run_text(&mut me)) {
         (Some(author), Some(me)) => same_login(&author, &me),
         _ => false,
@@ -351,6 +351,74 @@ fn find_packaged_codex() -> Option<PathBuf> {
     found.pop()
 }
 
+/// One lock file per repo+Issue in a folder shared by every ai-one instance of this Windows user, so
+/// two instances (even with different app-data folders) cannot start the same Issue twice.
+fn lock_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("ai-one")
+        .join("dispatch-locks")
+}
+
+fn lock_file(dir: &Path, repo: &str, issue: u64) -> PathBuf {
+    dir.join(format!("{}-{issue}.lock", repo.to_lowercase().replace('/', "__")))
+}
+
+/// Removes the lock when dropped unless it was handed to the running process's waiter thread.
+struct IssueLock {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl IssueLock {
+    fn hand_over(mut self) -> PathBuf {
+        self.armed = false;
+        self.path.clone()
+    }
+}
+
+impl Drop for IssueLock {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// `Ok(None)` means another live dispatch holds the Issue. A lock whose process is gone, or that
+/// stayed at "starting" for over a minute (a crash between creating it and spawning), is stale.
+fn acquire_issue_lock(dir: &Path, repo: &str, issue: u64) -> Result<Option<IssueLock>, String> {
+    fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+    let path = lock_file(dir, repo, issue);
+    for _ in 0..2 {
+        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                let _ = file.write_all(b"starting");
+                return Ok(Some(IssueLock { path, armed: true }));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let text = fs::read_to_string(&path).unwrap_or_default();
+                let fresh = fs::metadata(&path)
+                    .and_then(|meta| meta.modified())
+                    .ok()
+                    .and_then(|time| time.elapsed().ok())
+                    .is_some_and(|age| age.as_secs() < 60);
+                let held = match text.trim().parse::<u32>() {
+                    Ok(pid) => pid_alive(pid),
+                    Err(_) => fresh,
+                };
+                if held {
+                    return Ok(None);
+                }
+                let _ = fs::remove_file(&path);
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(None)
+}
+
 fn dispatch_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app
         .path()
@@ -397,13 +465,16 @@ fn launch_cli(
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     // One launch at a time: the "already running" check and the spawn must not interleave.
     let _guard = LAUNCH_LOCK.lock().map_err(|_| "dispatch lock poisoned".to_string())?;
-    if let Some(existing) = read_runs(&dir).iter().find(|run| {
+    if let Some(existing) = read_all_runs(&dir).iter().find(|run| {
         run["state"] == "running"
             && run["repo"].as_str().is_some_and(|repo| repo.eq_ignore_ascii_case(&args.repo))
             && run["issue"].as_u64() == Some(args.issue)
     }) {
         return Ok(reply(false, "already_running", "这个 Issue 已有一个运行中的派工", json!({ "runId": existing["runId"] })));
     }
+    let Some(lock) = acquire_issue_lock(&lock_dir(), &args.repo, args.issue)? else {
+        return Ok(reply(false, "already_running", "这个 Issue 已有一个运行中的派工（可能来自另一个 ai-one 窗口）", json!({})));
+    };
     let run_id = session.to_string();
     let log_path = dir.join(format!("{run_id}.log"));
     let log = fs::OpenOptions::new()
@@ -442,6 +513,7 @@ fn launch_cli(
         Err(_) => return Ok(reply(false, "spawn_failed", "命令行程序启动失败", json!({}))),
     };
     let pid = child.id();
+    let _ = fs::write(&lock.path, pid.to_string());
     if let Some(mut stdin) = child.stdin.take() {
         // The prompt travels on stdin so no shell or argument quoting can alter it.
         let _ = stdin.write_all(prompt.as_bytes());
@@ -452,9 +524,11 @@ fn launch_cli(
     });
     fs::write(dir.join(format!("{run_id}.json")), meta.to_string()).map_err(|error| error.to_string())?;
     let exit_path = dir.join(format!("{run_id}.exit"));
+    let lock_path = lock.hand_over();
     std::thread::spawn(move || {
         let code = child.wait().ok().and_then(|status| status.code()).unwrap_or(-1);
         let _ = fs::write(exit_path, code.to_string());
+        let _ = fs::remove_file(lock_path);
     });
     prune_old_runs(&dir);
     let watching = start_claim_watch(workdir, args.issue, &agent_id(agent, session), pid);
@@ -501,8 +575,20 @@ fn prune_old_runs(dir: &Path) {
         Err(_) => return,
     };
     metas.sort();
-    while metas.len() > MAX_RUNS * 2 {
-        let old = metas.remove(0);
+    let mut index = 0;
+    while metas.len() - index > MAX_RUNS * 2 {
+        let old = metas[index].clone();
+        index += 1;
+        let still_going = !old.with_extension("exit").exists()
+            && fs::read_to_string(&old)
+                .ok()
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                .and_then(|meta| meta.get("pid").and_then(Value::as_u64))
+                .and_then(|pid| u32::try_from(pid).ok())
+                .is_some_and(pid_alive);
+        if still_going {
+            continue;
+        }
         let stem = old.with_extension("");
         for extension in ["json", "log", "exit", "settings.json"] {
             let _ = fs::remove_file(PathBuf::from(format!("{}.{extension}", stem.to_string_lossy())));
@@ -527,7 +613,17 @@ fn tail(path: &Path) -> String {
     String::from_utf8_lossy(&bytes).to_string()
 }
 
+/// The list shown to the user: the newest runs only.
 fn read_runs(dir: &Path) -> Vec<Value> {
+    read_runs_limited(dir, MAX_RUNS)
+}
+
+/// Every recorded run, for the "is this Issue already running" check.
+fn read_all_runs(dir: &Path) -> Vec<Value> {
+    read_runs_limited(dir, usize::MAX)
+}
+
+fn read_runs_limited(dir: &Path, limit: usize) -> Vec<Value> {
     let mut metas: Vec<PathBuf> = match fs::read_dir(dir) {
         Ok(entries) => entries
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -537,7 +633,7 @@ fn read_runs(dir: &Path) -> Vec<Value> {
     };
     metas.sort();
     metas.reverse();
-    metas.truncate(MAX_RUNS);
+    metas.truncate(limit);
     metas
         .into_iter()
         .filter_map(|path| {
@@ -716,6 +812,43 @@ mod tests {
         assert!(same_login("Octo", "octo"));
         assert!(!same_login("someone-else", "octo"));
         assert!(!same_login("", ""));
+    }
+
+    #[test]
+    fn the_issue_lock_is_exclusive_and_stale_locks_are_replaced() {
+        let dir = unique("locks");
+        let first = acquire_issue_lock(&dir, "O/R", 7).unwrap().expect("first caller gets the lock");
+        assert!(acquire_issue_lock(&dir, "o/r", 7).unwrap().is_none(), "same Issue, any letter case, is busy");
+        assert!(acquire_issue_lock(&dir, "o/r", 8).unwrap().is_some(), "another Issue is independent");
+        // A live process holds it.
+        fs::write(&first.path, std::process::id().to_string()).unwrap();
+        assert!(acquire_issue_lock(&dir, "o/r", 7).unwrap().is_none());
+        // A dead process does not.
+        fs::write(&first.path, "4294967295").unwrap();
+        let replaced = acquire_issue_lock(&dir, "o/r", 7).unwrap();
+        assert!(replaced.is_some(), "a lock whose process is gone is stale");
+        drop(replaced);
+        assert!(!lock_file(&dir, "o/r", 7).exists(), "dropping an armed lock removes it");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_running_run_older_than_the_visible_list_is_still_found_and_never_pruned() {
+        let dir = unique("many");
+        fs::create_dir_all(&dir).unwrap();
+        let me = std::process::id();
+        fs::write(dir.join("dispatch-001-0.json"), json!({"runId":"dispatch-001-0","repo":"o/r","issue":5,"pid":me,"logPath":"x"}).to_string()).unwrap();
+        for index in 2..(MAX_RUNS * 2 + 10) {
+            let id = format!("dispatch-{index:03}-0");
+            fs::write(dir.join(format!("{id}.json")), json!({"runId":id,"repo":"o/r","issue":900,"pid":4294967295u64,"logPath":"x"}).to_string()).unwrap();
+            fs::write(dir.join(format!("{id}.exit")), "0").unwrap();
+        }
+        assert!(read_runs(&dir).iter().all(|run| run["issue"] != 5), "the UI list is limited");
+        assert!(read_all_runs(&dir).iter().any(|run| run["issue"] == 5 && run["state"] == "running"));
+        prune_old_runs(&dir);
+        assert!(dir.join("dispatch-001-0.json").exists(), "a live run's record survives pruning");
+        assert!(!dir.join("dispatch-002-0.json").exists(), "finished old records are removed");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -4,15 +4,17 @@
 //   node scripts/issue-claim/dispatch-watch.mjs <issue> <agent> <pid>
 import { fileURLToPath } from 'node:url';
 import { realpathSync } from 'node:fs';
-import { heartbeat, watchClaim } from './cli.mjs';
+import { heartbeat, processIdentity, watchClaim } from './cli.mjs';
 
 const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function waitForClaimThenWatch({
   issue, agent, pid, cwd, attempts = 40, intervalMs = 15000,
-  beat = heartbeat, watch = watchClaim, sleep = sleepMs,
+  beat = heartbeat, watch = watchClaim, sleep = sleepMs, alive = (id) => processIdentity(id) !== undefined,
 }) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    // A launched process that is already gone can no longer claim or keep a claim alive.
+    if (!alive(pid)) return { stopped: 'process-exited' };
     const result = beat(issue, agent, { cwd });
     if (result.ok) return watch(issue, agent, { cwd, pid });
     // Another holder owns it: not ours to keep alive.
