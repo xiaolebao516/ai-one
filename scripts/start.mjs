@@ -117,6 +117,43 @@ function ensureShortcut() {
   if (result.stdout.includes('updated')) say('已在桌面放好 ai-one 快捷方式，以后双击它就行。');
 }
 
+// PowerShell also treats the curly single quotes U+2018–U+201B as quote marks.
+const psQuote = (text) => `'${text.replace(/['‘-‛]/g, (quote) => quote + quote)}'`;
+
+function powershell(script) {
+  return spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true });
+}
+
+/** Only this repository's own builds count; dev builds in other worktrees have the same file names. */
+const OWN_BUILDS = `$paths = @(${psQuote(APP_EXE)}, ${psQuote(HUD_EXE)})
+function Get-OwnBuilds { Get-Process -Name multi-ai-chat-desktop, ai-one-hud -ErrorAction SilentlyContinue | Where-Object { $paths -contains $_.Path } }`;
+
+function ownBuildsRunning() {
+  return Number(powershell(`${OWN_BUILDS}\n@(Get-OwnBuilds).Count`).stdout.trim()) > 0;
+}
+
+/**
+ * A running build locks its .exe, so the rebuild fails with "拒绝访问" (#192). The console window
+ * starts minimised from the desktop shortcut, so the question is a topmost dialog, not a prompt.
+ */
+function askToClose() {
+  const message = 'ai-one 有新版本，更新前要先关掉正在运行的 ai-one（和额度小窗）。\n\n现在关掉并更新吗？\n选“否”就继续用当前版本，下次关掉后再双击即可更新。';
+  // Popup flags: 4 Yes/No + 32 question icon + 4096 always on top; 6 means Yes.
+  const result = powershell(`(New-Object -ComObject WScript.Shell).Popup(${psQuote(message)}, 0, 'ai-one', 4 + 32 + 4096)`);
+  return result.stdout.trim() === '6';
+}
+
+/** Asks the windows to close first (lets the app save its state), then ends what is left. */
+function closeOwnBuilds() {
+  const result = powershell(`${OWN_BUILDS}
+foreach ($process in @(Get-OwnBuilds)) { [void]$process.CloseMainWindow() }
+Get-OwnBuilds | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
+Get-OwnBuilds | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
+@(Get-OwnBuilds).Count`);
+  if (result.stdout.trim() !== '0') throw new Error('没能关掉正在运行的 ai-one，请手动关掉它（包括额度小窗）后再双击。');
+}
+
 function launch() {
   if (args.has('--no-launch')) return;
   const child = spawn(APP_EXE, [], { cwd: root, detached: true, stdio: 'ignore' });
@@ -134,6 +171,14 @@ function main() {
   const upToDate = existsSync(APP_EXE) && existsSync(HUD_EXE) && built?.head === stamp.head && built?.edits === stamp.edits;
   if (!upToDate) {
     if (!checkTools()) return 1;
+    if (ownBuildsRunning()) {
+      if (!askToClose()) {
+        say('ai-one 正在运行，先继续用当前版本；关掉它后再双击就会更新。');
+        return 0;
+      }
+      say('正在关掉旧的 ai-one……');
+      closeOwnBuilds();
+    }
     say(existsSync(APP_EXE) ? '代码有更新，重新编译（几分钟）……' : '第一次启动，正在编译（大约 5–15 分钟，之后再打开就很快）……');
     if (needsInstall()) run('pnpm', ['install', '--frozen-lockfile']);
     run('pnpm', ['tauri', 'build', '--no-bundle']);
