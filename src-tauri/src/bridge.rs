@@ -302,6 +302,24 @@ mod tests {
     }
 
     #[test]
+    fn reopened_provider_accepts_fresh_boot_and_retried_handshake_sequences() {
+        let mut state = BridgeState::default();
+        rotate_boot_if_needed(&mut state, "claude", "before-close");
+        assert!(accept_seq(&mut state, "claude", "before-close", 30));
+        rotate_boot_if_needed(&mut state, "claude#2", "other-instance");
+        assert!(accept_seq(&mut state, "claude#2", "other-instance", 9));
+
+        rotate_boot_if_needed(&mut state, "claude", "after-reopen");
+        assert!(accept_seq(&mut state, "claude", "after-reopen", 1));
+        assert!(accept_seq(&mut state, "claude", "after-reopen", 2));
+        assert!(!accept_seq(&mut state, "claude", "after-reopen", 2));
+        assert!(!accept_seq(&mut state, "claude#2", "other-instance", 9));
+        assert!(!state
+            .last_seq
+            .contains_key(&("claude".into(), "before-close".into())));
+    }
+
+    #[test]
     fn rejected_title_restores_the_previous_transport_boot() {
         let mut state = BridgeState::default();
         state.active_boot.insert("grok".into(), "current".into());
