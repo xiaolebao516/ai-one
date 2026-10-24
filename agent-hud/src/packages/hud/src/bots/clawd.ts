@@ -6,9 +6,9 @@ import {
   swiftRound,
   type ClawdFrame,
   type ClawdSign,
-} from "./clawd-clips";
-import { layHairline } from "./bot-hairline";
-import { reuseCanvas } from "./scratch";
+} from "./clawd-clips.ts";
+import { layHairline } from "./bot-hairline.ts";
+import { reuseCanvas } from "./scratch.ts";
 export type MarkState = "idle" | "working" | "asking" | "done";
 interface RawSprite {
   w: number;
@@ -269,7 +269,11 @@ function drawClawdPixels(
 /** ClawdBaker's bounded 64-frame LRU. No bitmap is scaled after its device-pixel placement. */
 export class ClawdBaker {
   private readonly kept = new Map<string, HTMLCanvasElement>();
-  constructor(readonly sheet: ClawdSheet) {}
+  // ai-one change (Issue #168): explicit property instead of parameter property for Node strip-only mode
+  readonly sheet: ClawdSheet;
+  constructor(sheet: ClawdSheet) {
+    this.sheet = sheet;
+  }
   get count() {
     return this.kept.size;
   }

@@ -1,4 +1,4 @@
-import { borrowCanvas, giveBack } from "./scratch";
+import { borrowCanvas, giveBack } from "./scratch.ts";
 
 /** Per size: the mask and the two alpha passes, reused frame after frame. */
 const buffers = new Map<

@@ -28,3 +28,7 @@ docs/VISION-ALIGNMENT.md
 
 # local debug bundles exported from the app — contain environment details, never commit
 multi-ai-chat-debug-*.txt
+
+
+# Quota HUD proprietary assets fetched on-demand for local build (Issue #168)
+agent-hud/src/packages/hud/src/assets/clawd-sprites.json
