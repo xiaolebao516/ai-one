@@ -50,21 +50,22 @@ impl Status {
 
     /// Write a running heartbeat; false once stopped.
     fn beat(&self, directory: &Path) -> bool {
-        self.beat_with(directory, || {})
+        self.beat_with(directory, |directory, value| {
+            let _ = write_atomic(directory, STATUS_FILE, value);
+        })
     }
 
-    /// `beat`, running `before_write` once the lock is held and the stopped
-    /// check has passed, just before the file is written. Tests use it to hold
-    /// a heartbeat inside that window while `stop()` races it.
-    fn beat_with(&self, directory: &Path, before_write: impl FnOnce()) -> bool {
+    /// `beat` with the file write injected. `write` runs with the lock held
+    /// and the stopped check passed; tests park a heartbeat at exactly the
+    /// point where the file is written.
+    fn beat_with(&self, directory: &Path, write: impl FnOnce(&Path, &Value)) -> bool {
         let Ok(stopped) = self.stopped.lock() else {
             return false;
         };
         if *stopped {
             return false;
         }
-        before_write();
-        let _ = write_atomic(directory, STATUS_FILE, &status_value(true));
+        write(directory, &status_value(true));
         true
     }
 
@@ -225,12 +226,13 @@ mod tests {
 
     #[test]
     fn a_heartbeat_inside_the_write_path_cannot_overwrite_the_final_status() {
-        // Deterministic interleaving, no sleeps: the heartbeat is parked after
-        // its stopped check passed and before its write; only then does stop()
-        // start. stop() has to wait for the heartbeat's lock, so the heartbeat
-        // writes first and `running: false` is the last word. With the check
-        // outside the lock, stop() would finish first and the heartbeat would
-        // then write `running: true` over it.
+        // Deterministic, no sleeps or timeouts. The heartbeat is parked at the
+        // file write itself (stopped check passed, write about to happen).
+        // With no other thread running yet, the lock must still be held there:
+        // an implementation that checks `stopped` and then releases the lock
+        // before writing fails this assertion. Then stop() races the parked
+        // heartbeat; it can only run after the heartbeat's write, so
+        // `running: false` is the last word.
         use std::sync::mpsc::channel;
         let directory = tempfile_dir();
         let status = Arc::new(Status::new());
@@ -239,28 +241,22 @@ mod tests {
         let beating = {
             let (status, directory) = (Arc::clone(&status), directory.clone());
             std::thread::spawn(move || {
-                status.beat_with(&directory, || {
+                status.beat_with(&directory, |directory, value| {
                     entered_tx.send(()).unwrap();
                     release_rx.recv().unwrap();
+                    write_atomic(directory, STATUS_FILE, value).unwrap();
                 })
             })
         };
         entered_rx.recv().unwrap();
-        let (stopped_tx, stopped_rx) = channel::<()>();
+        assert!(
+            status.stopped.try_lock().is_err(),
+            "the lock must be held while the heartbeat writes"
+        );
         let stopping = {
             let (status, directory) = (Arc::clone(&status), directory.clone());
-            std::thread::spawn(move || {
-                status.stop(&directory);
-                stopped_tx.send(()).unwrap();
-            })
+            std::thread::spawn(move || status.stop(&directory))
         };
-        // While the heartbeat is parked inside the write path, stop() must not
-        // get through. The wait is bounded and only ever times out on correct
-        // code, so this cannot make a correct build flaky.
-        assert!(
-            stopped_rx.recv_timeout(Duration::from_millis(300)).is_err(),
-            "stop() finished while a heartbeat was still inside its write path"
-        );
         release_tx.send(()).unwrap();
         assert!(beating.join().unwrap(), "the parked heartbeat wrote");
         stopping.join().unwrap();
