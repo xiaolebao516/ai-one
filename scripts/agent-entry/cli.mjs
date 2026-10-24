@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Quick entry for agents picking up work (Issue #140). `board` shows which open Spec/Task Issues are
 // free, claimed or already have a PR; `take` claims the best free one through the existing claim lock
-// (scripts/issue-claim) and prints how to start. It never edits Issues and never opens worktrees.
+// (scripts/issue-claim) and prints how to start; `recover` points at claims that went silent (#139).
+// It never edits Issues, never opens worktrees and never takes a claim over.
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -9,9 +10,11 @@ import { assess, claim, list as listClaims, EXIT } from '../issue-claim/cli.mjs'
 
 const USAGE = `usage:
   node scripts/agent-entry/cli.mjs board
+  node scripts/agent-entry/cli.mjs recover
   node scripts/agent-entry/cli.mjs handoff <N>
   node scripts/agent-entry/cli.mjs take [<N>] --agent "<tool / session>" [--dry-run]
-take without <N> picks the best free Issue: recommended for your tool first, then P0 < P1 < P2.`;
+take without <N> picks the best free Issue: recommended for your tool first, then P0 < P1 < P2.
+recover lists claims that went silent (read-only, never takes over).`;
 
 const PRIORITY_RANK = { P0: 0, P1: 1, P2: 2 };
 // Words that identify an agent tool inside a "Recommended Agent" line.
@@ -131,6 +134,43 @@ export function formatBoard(board) {
     return `#${row.number} ${row.meta.priority ?? '--'} [${state}]${prs} ${row.title.slice(0, 60)}${rec}`;
   });
   return lines.length ? lines.join('\n') : 'no open Spec/Task issues';
+}
+
+/**
+ * Claims that stopped beating (#139). A silent claim is **not** a free Issue: the old writer may still
+ * be running, and every agent shares one GitHub account, so nothing here takes over or deletes a lock.
+ * It only points at the read-only handoff rebuild and the takeover command to run after a human
+ * has verified the old writer stopped.
+ */
+export function recoveryCandidates(board) {
+  return board
+    .filter((row) => row.holder?.health?.state === 'SUSPECT_STALE')
+    .sort((a, b) => (PRIORITY_RANK[a.meta.priority] ?? 3) - (PRIORITY_RANK[b.meta.priority] ?? 3) || a.number - b.number);
+}
+
+// A clock anomaly or an unreadable stamp is not recoverable by `takeover`: only a human can look.
+const blockedClaims = (board) => board.filter((row) => row.holder?.health?.state === 'HANDOFF_BLOCKED');
+
+/** Empty string when there is nothing to recover, so callers can append it unconditionally. */
+export function formatRecovery(board, { except } = {}) {
+  const silent = recoveryCandidates(board).filter((row) => row.number !== except);
+  const blocked = blockedClaims(board).filter((row) => row.number !== except);
+  const lines = [];
+  if (silent.length) {
+    lines.push(`疑似失联的认领（${silent.length}）：只读提示，不会自动接管`);
+    for (const row of silent) {
+      const prs = row.prs.length ? `，开放 PR ${row.prs.map((n) => `#${n}`).join('、')}` : '，没有开放 PR';
+      const backup = row.meta.backup ? `；候补 ${row.meta.backup.slice(0, 40)}` : '';
+      lines.push(`- #${row.number} ${row.meta.priority ?? '--'} ${row.title.slice(0, 50)}｜持锁 ${row.holder.agent ?? '(unknown)'}（${row.holder.health.reason}）${prs}${backup}`);
+      lines.push(`  先只读重建交接：node scripts/agent-entry/cli.mjs handoff ${row.number}`);
+      lines.push(`  确认旧写入者已停（旧会话/进程已关、远端分支 HEAD 没被改动）后再接管：node scripts/issue-claim/cli.mjs takeover ${row.number} --agent "<你的标识>" --stopped-evidence "<怎么确认的>"`);
+    }
+    lines.push('  确认不了停写就保持不动，换别的 Ready 任务；不要删别人的 claim。');
+  }
+  if (blocked.length) {
+    lines.push(`认领时间戳异常或不可读（${blocked.length}）：${blocked.map((row) => `#${row.number}`).join('、')} 需要人工或协调者检查，不能 takeover。`);
+  }
+  return lines.join('\n');
 }
 
 export function briefing(row, agent) {
@@ -274,7 +314,14 @@ export function main(argv, { cwd = process.cwd(), out = console.log, err = conso
   }
   try {
     if (options.command === 'board') {
-      out(formatBoard(buildBoard(state ?? loadState({ cwd }))));
+      const board = buildBoard(state ?? loadState({ cwd }));
+      const recovery = formatRecovery(board);
+      out(`${formatBoard(board)}${recovery ? `\n\n${recovery}` : ''}`);
+      return EXIT.ok;
+    }
+    if (options.command === 'recover') {
+      const board = buildBoard(state ?? loadState({ cwd }));
+      out(formatRecovery(board) || '没有疑似失联的认领。');
       return EXIT.ok;
     }
     if (options.command === 'handoff') {
@@ -300,7 +347,13 @@ export function main(argv, { cwd = process.cwd(), out = console.log, err = conso
     const board = buildBoard(state ?? loadState({ cwd }));
     const row = options.issue === undefined ? pickNext(board, options.agent) : board.find((entry) => entry.number === options.issue);
     if (!row) {
-      err(options.issue === undefined ? '没有可自动认领的空闲 Issue。用 `board` 查看，或指定编号。' : `#${options.issue} 不是开放的 Spec/Task Issue。`);
+      if (options.issue !== undefined) {
+        err(`#${options.issue} 不是开放的 Spec/Task Issue。`);
+        return EXIT.error;
+      }
+      // A dead end is where agents used to give up; the silent claims are the only other way forward.
+      const recovery = formatRecovery(board);
+      err([`没有可自动认领的空闲 Issue。用 \`board\` 查看，或指定编号。`, recovery].filter(Boolean).join('\n\n'));
       return EXIT.error;
     }
     if (options.dryRun) {
@@ -313,7 +366,9 @@ export function main(argv, { cwd = process.cwd(), out = console.log, err = conso
       err(`#${row.number} 已被 ${result.holder.agent ?? '(unknown)'} 认领（${result.holder.at ?? '?'}），不要做它；换一个或等用户改派。`);
       return EXIT.held;
     }
-    out(briefing(row, options.agent));
+    // One line only: the taker should start work, not read a second task list.
+    const others = recoveryCandidates(board).filter((entry) => entry.number !== row.number).length;
+    out(`${briefing(row, options.agent)}${others ? `\n\n另有 ${others} 条疑似失联：\`node scripts/agent-entry/cli.mjs recover\` 查看（要人工确认停写才能 takeover）。` : ''}`);
     return EXIT.ok;
   } catch (error) {
     err(error instanceof Error ? error.message : String(error));

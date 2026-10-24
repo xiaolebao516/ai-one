@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { EXIT } from '../../issue-claim/cli.mjs';
-import { briefing, buildBoard, formatBoard, loadState, main, parseMeta, pickNext, prLinks, toolOf } from '../cli.mjs';
+import { briefing, buildBoard, formatBoard, formatRecovery, loadState, main, parseMeta, pickNext, prLinks, recoveryCandidates, toolOf } from '../cli.mjs';
 
 const issue = (number, title, body = '', labels = []) => ({ number, title, body, labels: labels.map((name) => ({ name })), url: `https://example.test/issues/${number}` });
 
@@ -159,6 +159,74 @@ test('board tags a silent or clock-skewed claim but leaves a healthy one plain',
   assert.match(text, /#1 P1 \[已认领: A ⚠SUSPECT_STALE/);
   assert.match(text, /#2 P1 \[已认领: B ⚠HANDOFF_BLOCKED\(claim timestamp is in the future/);
   assert.match(text, /#3 P1 \[已认领: C\]/);
+});
+
+const silentState = () => {
+  const old = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+  const future = new Date(Date.now() + 3600 * 1000).toISOString();
+  const issues = [
+    issue(30, '[Task] p1 silent', '- Priority: P1\n- Backup Agent: Codex / s9'),
+    issue(31, '[Task] p0 silent', '- Priority: P0\n- Current Coordinator / claim: Antigravity / gone'),
+    issue(32, '[Task] clock skew', '- Priority: P0'),
+    issue(33, '[Task] healthy', '- Priority: P0'),
+    issue(34, '[Task] free', '- Priority: P1'),
+  ];
+  const claims = [
+    { issue: 30, agent: 'WorkBuddy / gone', at: old },
+    { issue: 31, agent: 'Antigravity / gone', at: old, generation: 2 },
+    { issue: 32, agent: 'Skewed / gone', at: future },
+    { issue: 33, agent: 'Alive / here', at: new Date().toISOString() },
+  ];
+  return { issues, claims, prs: [{ number: 90, title: 'feat(#31): wip', body: '' }] };
+};
+const silentBoard = () => buildBoard(silentState());
+
+test('recoveryCandidates lists only silent claims, P0 before P1, and never the blocked ones', () => {
+  const board = silentBoard();
+  assert.deepEqual(recoveryCandidates(board).map((row) => row.number), [31, 30]);
+  assert.equal(formatRecovery(board).includes('#33'), false);
+  assert.equal(formatRecovery(buildBoard({ issues: [issue(1, '[Task] free', '- Priority: P0')], claims: [], prs: [] })), '');
+});
+
+test('formatRecovery names the holder, the evidence to check and the takeover command, but never runs it', () => {
+  const text = formatRecovery(silentBoard());
+  assert.match(text, /疑似失联的认领（2）/);
+  assert.match(text, /#31 P0 .*持锁 Antigravity \/ gone（no heartbeat for 180 min/);
+  assert.match(text, /开放 PR #90/);
+  assert.match(text, /node scripts\/agent-entry\/cli\.mjs handoff 31/);
+  assert.match(text, /takeover 31 --agent "<你的标识>" --stopped-evidence "<怎么确认的>"/);
+  assert.match(text, /确认不了停写就保持不动/);
+  assert.match(text, /认领时间戳异常或不可读（1）：#32 需要人工或协调者检查，不能 takeover/);
+  assert.doesNotMatch(text, /#33/);
+});
+
+test('recover is read-only and exits ok; take reports the silent claims instead of a dead end', () => {
+  const board = { issues: [issue(31, '[Task] p0 silent', '- Priority: P0')], claims: [{ issue: 31, agent: 'Gone / s', at: new Date(Date.now() - 3 * 3600 * 1000).toISOString() }], prs: [] };
+  const lines = { out: [], err: [] };
+  let claimed = 0;
+  const code = main(['recover'], { state: board, out: (l) => lines.out.push(l), err: (l) => lines.err.push(l), claimIssue: () => ((claimed += 1), { ok: true }) });
+  assert.equal(code, EXIT.ok);
+  assert.equal(claimed, 0);
+  assert.match(lines.out.join('\n'), /takeover 31/);
+
+  const empty = main(['recover'], { state: { issues: [], claims: [], prs: [] }, out: () => {}, err: () => {} });
+  assert.equal(empty, EXIT.ok);
+
+  const dead = run(['take', '--agent', 'Codex / s'], { state: board, claimIssue: () => ((claimed += 1), { ok: true }) });
+  assert.equal(dead.code, EXIT.error);
+  assert.equal(claimed, 0);
+  assert.match(dead.err, /没有可自动认领的空闲 Issue/);
+  assert.match(dead.err, /疑似失联的认领（1）/);
+  assert.match(dead.err, /handoff 31/);
+});
+
+test('a successful take mentions other silent claims in one line, and stays quiet when there are none', () => {
+  const busy = run(['take', '--agent', 'Claude Code / s'], { state: silentState(), claimIssue: () => ({ ok: true }) });
+  assert.equal(busy.code, EXIT.ok);
+  assert.match(busy.out, /另有 2 条疑似失联/);
+  assert.match(busy.out, /agent-entry\/cli\.mjs recover/);
+  const clean = run(['take', '--agent', 'Claude Code / s'], { claimIssue: () => ({ ok: true }) });
+  assert.doesNotMatch(clean.out, /疑似失联/);
 });
 
 const SHA = 'a'.repeat(40);
