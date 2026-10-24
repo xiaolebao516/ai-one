@@ -164,9 +164,11 @@ export function briefing(row, agent) {
 export function auditSummary(pr) {
   const entries = [...(pr.comments ?? []), ...(pr.reviews ?? [])]
     .map((entry) => {
-      const body = entry.body ?? '';
-      const verdict = /^\W*(?:\*\*)?\s*(PASS|REVISE|BLOCKED)\b/i.exec(body)?.[1]?.toUpperCase();
-      const sha = /\b([0-9a-f]{40})\b/i.exec(body)?.[1]?.toLowerCase();
+      // The repo's format puts the full HEAD SHA first and the verdict next (or the reverse), so both
+      // are read from the opening lines only; verdict words deeper in prose do not count.
+      const head = (entry.body ?? '').split(/\r?\n/).filter((line) => line.trim()).slice(0, 2).join(' ');
+      const verdict = /\b(PASS|REVISE|BLOCKED)\b/.exec(head)?.[1];
+      const sha = /\b([0-9a-f]{40})\b/i.exec(head)?.[1]?.toLowerCase();
       return { verdict, sha, at: entry.createdAt ?? entry.submittedAt ?? '' };
     })
     .filter((entry) => entry.verdict && entry.sha)

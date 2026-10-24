@@ -207,6 +207,14 @@ test('handoff reads the audit verdict from PR comments by HEAD, never reports "n
   const current = `PASS — HEAD ${SHA}\nghp_LEAK2`;
   const mixed = handoff(handoffFixture({ comments: [{ createdAt: '2026-10-23T02:00:00Z', body: stale }, { createdAt: '2026-10-23T03:00:00Z', body: current }] }), []);
   assert.match(mixed.text, /审计：PASS 针对 a{12}，就是当前 HEAD/);
+  const shaFirst = handoff(handoffFixture({ comments: [{ createdAt: '2026-10-23T04:00:00Z', body: `${SHA}
+PASS — 审计通过
+later prose mentions BLOCKED` }] }), []);
+  assert.match(shaFirst.text, /审计：PASS 针对 a{12}，就是当前 HEAD/);
+  const buried = handoff(handoffFixture({ comments: [{ createdAt: '2026-10-23T04:00:00Z', body: `thanks
+ok
+PASS ${SHA}` }] }), []);
+  assert.match(buried.text, /审计待核对/);
   const outdated = handoff(handoffFixture({ comments: [{ createdAt: '2026-10-23T02:00:00Z', body: stale }] }), []);
   assert.match(outdated.text, /审计：REVISE 针对 c{12}，不是当前 HEAD，旧审计已失效/);
   const none = handoff(handoffFixture({ comments: [{ createdAt: 'x', body: 'looks fine to me' }] }), []);
