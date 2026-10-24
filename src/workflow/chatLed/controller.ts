@@ -19,6 +19,7 @@ import {
   scheduleAutoReminder,
   settledFeedbackItems,
   setAvailableProviders,
+  appendLog,
   setInitializationPending,
   startRun,
   stopRun,
@@ -176,6 +177,10 @@ export class ChatLedController {
     return () => this.listeners.delete(listener);
   }
 
+  private log(entry: Parameters<typeof appendLog>[1]): void {
+    this.set(appendLog(this.run, entry, this.env.now()));
+  }
+
   private set(next: ChatLedRun): void {
     if (next === this.run) return;
     this.run = next;
@@ -257,14 +262,17 @@ export class ChatLedController {
       for (const provider of providers) {
         if (!(await this.waitWhilePaused()) || !live()) return false;
         this.preparingProviders.add(provider);
+        this.log({ kind: 'event', event: 'prepare-start', provider });
         try {
           this.assertPersisted();
           await this.env.prepare(provider);
           this.assertPersisted();
           if (!live()) return false;
           prepared.add(provider);
+          this.log({ kind: 'event', event: 'prepare-ok', provider });
         } catch (error) {
           if (!live()) return false;
+          this.log({ kind: 'event', event: 'prepare-failed', provider, detail: errorMessage(error) });
           if (provider === coordinator) {
             this.set(failProvider(this.run, coordinator, errorMessage(error), this.env.now()));
             return false;
@@ -311,6 +319,7 @@ export class ChatLedController {
         .filter((provider) => provider !== coordinator && !available.includes(provider) && goalNamesProvider(this.run.goal, provider))
         .map((provider) => ({ provider, reason: failures.get(provider) ?? 'Not logged in or the page is not ready.' }));
       this.set(setAvailableProviders(this.run, available, this.env.now(), unavailable));
+      this.log({ kind: 'event', event: 'targets-ready', detail: available.join(', ') });
       this.assertPersisted();
       return true;
     } catch (error) {
@@ -320,11 +329,18 @@ export class ChatLedController {
   }
 
   pause(): void {
-    this.set(pauseRun(this.run, this.env.now()));
+    const next = pauseRun(this.run, this.env.now());
+    if (next === this.run) return;
+    this.set(next);
+    this.log({ kind: 'event', event: 'paused' });
   }
 
   resume(): void {
-    this.set(resumeRun(this.run, this.env.now()));
+    const next = resumeRun(this.run, this.env.now());
+    if (next !== this.run) {
+      this.set(next);
+      this.log({ kind: 'event', event: 'resumed' });
+    }
     const waiters = this.resumeWaiters;
     this.resumeWaiters = [];
     for (const wake of waiters) wake();
@@ -339,7 +355,11 @@ export class ChatLedController {
       this.run.phase === 'coordinator-thinking' ||
       (this.run.phase === 'paused' && this.run.pausedFrom === 'coordinator-thinking');
     this.generation += 1;
-    this.set(stopRun(this.run, this.env.now()));
+    const stoppedRun = stopRun(this.run, this.env.now());
+    if (stoppedRun !== this.run) {
+      this.set(stoppedRun);
+      this.log({ kind: 'event', event: 'stopped' });
+    }
     for (const wake of this.resumeWaiters.splice(0)) wake();
     for (const wake of this.stopWaiters.splice(0)) wake();
 
@@ -440,9 +460,12 @@ export class ChatLedController {
     const live = () => this.isLive(generation);
     try {
       let text = firstText;
+      let feedback: { round: number; remaining: number } | undefined;
       for (;;) {
         if (!(await this.waitWhilePaused()) || !live()) return;
         const coordinator = this.run.coordinator;
+        this.log(feedback ? { kind: 'feedback', ...feedback } : { kind: 'to-coordinator', text });
+        feedback = undefined;
         let reply: string;
         try {
           reply = await this.sendOwned(coordinator, text, live);
@@ -471,7 +494,9 @@ export class ChatLedController {
         const items = settledFeedbackItems(this.run, round);
         if (!items) return;
         this.set(resetAutoRemindersAfterForward(this.run, round, this.env.now()));
-        text = buildFeedbackPrompt(items, round, Math.max(0, this.run.roundLimit - this.run.round));
+        const remaining = Math.max(0, this.run.roundLimit - this.run.round);
+        text = buildFeedbackPrompt(items, round, remaining);
+        feedback = { round, remaining };
         this.set(resumeAfterForwarding(this.run, this.env.now()));
       }
     } finally {

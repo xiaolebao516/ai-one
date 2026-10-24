@@ -115,6 +115,27 @@ describe('chat tab', () => {
   });
 });
 
+describe('delegate tab', () => {
+  it('stays mounted behind other tabs, so a run keeps going and the typed task stays (#196)', async () => {
+    const container = await mount();
+    await click(tab(container, 'Delegate'));
+    const textarea = container.querySelector('#chatled-goal') as HTMLTextAreaElement;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+    setter?.call(textarea, 'half-typed task');
+    await act(async () => {
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await click(tab(container, 'Tasks'));
+    expect(container.querySelector('[data-testid="page"] h1')?.textContent).toBe('Tasks');
+    expect(container.querySelector('[data-testid="chatled-tab"]')?.getAttribute('aria-hidden')).toBe('true');
+    await click(tab(container, 'Chat & discuss'));
+    await click(tab(container, 'Delegate'));
+    expect(container.querySelector('#chatled-goal')).toBe(textarea);
+    expect(textarea.value).toBe('half-typed task');
+    expect(container.querySelector('[data-testid="page"]')).toBeNull();
+  });
+});
+
 describe('workbench keyboard and palette', () => {
   it('Ctrl+1..4 switch tabs, but not while typing or while the palette is open', async () => {
     const container = await mount();

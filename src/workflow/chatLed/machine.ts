@@ -4,6 +4,8 @@ import {
   DEFAULT_COORDINATOR,
   DEFAULT_ROUND_LIMIT,
   MAX_CONSECUTIVE_AUTO_REMINDERS,
+  MAX_LOG_ENTRIES,
+  type ChatLedLogEntry,
   type ChatLedMode,
   type ChatLedRun,
   type CleanupItemResult,
@@ -378,6 +380,14 @@ export function registerConversation(
     conversations: [...run.conversations, registered],
     updatedAt: now,
   };
+}
+
+type LogInput = ChatLedLogEntry extends infer Entry ? (Entry extends ChatLedLogEntry ? Omit<Entry, 'at'> : never) : never;
+
+/** Appends one process-log entry (#196); the oldest entries go once the log is full. */
+export function appendLog(run: ChatLedRun, entry: LogInput, now: number): ChatLedRun {
+  const log = [...(run.log ?? []), { ...entry, at: now } as ChatLedLogEntry];
+  return { ...run, log: log.length > MAX_LOG_ENTRIES ? log.slice(-MAX_LOG_ENTRIES) : log, updatedAt: now };
 }
 
 export function settledFeedbackItems(

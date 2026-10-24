@@ -10,7 +10,10 @@ import {
   V2Scope,
   type V2StatusTone,
 } from "../../ui/v2";
+import { settledFeedbackItems } from "../../workflow/chatLed/machine";
+import { buildFeedbackPrompt } from "../../workflow/chatLed/protocol";
 import type {
+  ChatLedLogEvent,
   ChatLedRun,
   CleanupItemResult,
   CleanupOutcome,
@@ -274,6 +277,8 @@ export function ChatLedView({
         )}
       </section>
 
+      <ProcessLog run={run} providerLabels={providerLabels} text={text} />
+
       {run.stop?.type === "protocol-violation" ? (
         <Notice tone="block" title={text.t("chatLedProtocolViolationTitle")} live="assertive">
           <div className="grid gap-v2-sm">
@@ -488,6 +493,85 @@ export function ChatLedView({
         </section>
       ) : null}
     </V2Scope>
+  );
+}
+
+const LOG_EVENT_COPY: Record<ChatLedLogEvent, WorkbenchTextKey> = {
+  "prepare-start": "chatLedLogPrepareStart",
+  "prepare-ok": "chatLedLogPrepareOk",
+  "prepare-failed": "chatLedLogPrepareFailed",
+  "targets-ready": "chatLedLogTargetsReady",
+  paused: "chatLedLogPaused",
+  resumed: "chatLedLogResumed",
+  stopped: "chatLedLogStopped",
+};
+
+function clockTime(at: number): string {
+  return new Date(at).toLocaleTimeString([], { hour12: false });
+}
+
+/** Collapsed by default: system events and every message ai-one sent to the coordinator (#196). */
+function ProcessLog({
+  run,
+  providerLabels,
+  text,
+}: {
+  run: ChatLedRun;
+  providerLabels: Record<string, string>;
+  text: ReturnType<typeof workbenchText>;
+}) {
+  const log = run.log ?? [];
+  const coordinator = providerName(run.coordinator, providerLabels);
+  return (
+    <details className="min-w-0" data-testid="chat-led-process-log">
+      <summary className="cursor-pointer text-v2-body font-semibold text-v2-ink">
+        {text.t("chatLedLogTitle", { count: log.length })}
+      </summary>
+      {log.length === 0 ? (
+        <p className="mt-v2-xs text-v2-meta text-v2-ink-3">{text.t("chatLedLogEmpty")}</p>
+      ) : (
+        <ol className="mt-v2-sm grid gap-v2-xs">
+          {log.map((entry, index) => {
+            const time = <span className="mr-v2-sm font-v2-mono text-v2-micro text-v2-ink-3">{clockTime(entry.at)}</span>;
+            if (entry.kind === "event") {
+              return (
+                <li key={index} className="break-words text-v2-meta text-v2-ink-2">
+                  {time}
+                  {text.t(LOG_EVENT_COPY[entry.event], {
+                    provider: entry.provider ? providerName(entry.provider, providerLabels) : "",
+                    detail: entry.detail
+                      ? entry.event === "targets-ready"
+                        ? entry.detail.split(", ").map((provider) => providerName(provider as ProviderInstance, providerLabels)).join("、")
+                        : entry.detail
+                      : "",
+                  })}
+                </li>
+              );
+            }
+            const body =
+              entry.kind === "feedback"
+                ? buildFeedbackPrompt(settledFeedbackItems(run, entry.round) ?? [], entry.round, entry.remaining)
+                : entry.text;
+            return (
+              <li key={index} className="min-w-0">
+                <details>
+                  <summary className="cursor-pointer text-v2-meta text-v2-ink">
+                    {time}
+                    {entry.kind === "feedback"
+                      ? text.t("chatLedLogFeedback", { coordinator, round: entry.round })
+                      : text.t("chatLedLogToCoordinator", { coordinator })}
+                    <span className="ml-v2-xs text-v2-ink-3">· {text.t("chatLedChars", { count: body.length })}</span>
+                  </summary>
+                  <pre className="mt-v2-xs max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-v2-sm bg-v2-sunken p-v2-sm font-v2-mono text-v2-micro text-v2-ink-2">
+                    {body}
+                  </pre>
+                </details>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </details>
   );
 }
 
