@@ -17,9 +17,9 @@ export interface ResourceQuotaWindow {
 }
 
 export interface ResourceStatus {
-  id: 'claude-code' | 'codex';
+  id: 'claude-code' | 'codex' | 'antigravity';
   name: string;
-  providerId: 'claude' | 'codex';
+  providerId: 'claude' | 'codex' | 'antigravity';
   login: ResourceLogin;
   loginNotice?: string;
   activity: ResourceActivity;
@@ -36,6 +36,7 @@ export interface ResourceStatus {
 const AGENTS = [
   { id: 'claude-code', name: 'Claude Code', providerId: 'claude' },
   { id: 'codex', name: 'Codex CLI', providerId: 'codex' },
+  { id: 'antigravity', name: 'Antigravity', providerId: 'antigravity' },
 ] as const;
 
 /**

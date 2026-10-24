@@ -155,11 +155,69 @@ pub(crate) fn reveal_transcript(path: &Path) -> Result<(), String> {
 pub(crate) fn legacy_quota_database(_home: &Path) -> Option<PathBuf> {
     None
 }
-pub(crate) fn processes() -> Result<Vec<ProcessInfo>, String> {
-    Err("Antigravity local-service discovery is not implemented on Windows.".into())
+// ai-one change (#184): process and port discovery for Antigravity's local
+// language server, through PowerShell's CIM and NetTCPIP cmdlets.
+fn powershell(script: &str) -> Result<String, String> {
+    let mut command = Command::new("powershell.exe");
+    configure_command(&mut command);
+    let output = command
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|_| "Could not list processes".to_owned())?;
+    if !output.status.success() {
+        return Err("Could not list processes".into());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
-pub(crate) fn listening_ports(_pid: u32) -> Result<Vec<u16>, String> {
-    Err("Antigravity local-service discovery is not implemented on Windows.".into())
+/// An executable path as the Unix readers see one: forward slashes, no `.exe`.
+fn unix_like(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    match path.len().checked_sub(4) {
+        Some(at) if path.is_char_boundary(at) && path[at..].eq_ignore_ascii_case(".exe") => path[..at].into(),
+        _ => path,
+    }
+}
+fn process_rows(json: &str) -> Vec<ProcessInfo> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json.trim()) else {
+        return Vec::new();
+    };
+    let rows = match value {
+        serde_json::Value::Array(rows) => rows,
+        row @ serde_json::Value::Object(_) => vec![row],
+        _ => Vec::new(),
+    };
+    rows.into_iter()
+        .filter_map(|row| {
+            Some(ProcessInfo {
+                pid: u32::try_from(row["ProcessId"].as_u64()?).ok()?,
+                executable: unix_like(row["ExecutablePath"].as_str()?),
+                command: row["CommandLine"].as_str()?.to_owned(),
+            })
+        })
+        .collect()
+}
+pub(crate) fn processes() -> Result<Vec<ProcessInfo>, String> {
+    // Command lines are only readable for the user's own processes; others
+    // come back without one and are skipped.
+    let json = powershell(
+        "Get-CimInstance Win32_Process | Where-Object CommandLine | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress",
+    )?;
+    Ok(process_rows(&json))
+}
+pub(crate) fn listening_ports(pid: u32) -> Result<Vec<u16>, String> {
+    let output = powershell(&format!(
+        "Get-NetTCPConnection -OwningProcess {pid} -State Listen -ErrorAction SilentlyContinue | ForEach-Object LocalPort"
+    ))?;
+    let mut ports = output
+        .lines()
+        .filter_map(|line| line.trim().parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .collect::<Vec<_>>();
+    ports.sort_unstable();
+    ports.dedup();
+    Ok(ports)
 }
 
 pub(crate) fn source_roots(home: &Path) -> Vec<agent_hud_core::SourceRoot> {
@@ -208,4 +266,31 @@ pub(crate) fn open_session_url(url: &str) -> Result<(), String> {
 /// Swift UserDefaults has no native source on this host.
 pub(crate) fn legacy_preferences() -> Result<Option<serde_json::Value>, String> {
     Ok(None)
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+
+    #[test]
+    fn executables_read_like_unix_paths() {
+        assert_eq!(
+            unix_like(r"C:\Users\me\AppData\Local\Programs\antigravity\resources\bin\language_server.exe"),
+            "C:/Users/me/AppData/Local/Programs/antigravity/resources/bin/language_server"
+        );
+        assert_eq!(unix_like(r"C:\tools\agy.EXE"), "C:/tools/agy");
+        assert_eq!(unix_like("x"), "x");
+    }
+
+    #[test]
+    fn process_rows_take_one_or_many_and_skip_incomplete_ones() {
+        let one = r#"{"ProcessId":7,"ExecutablePath":"C:\\a\\agy.exe","CommandLine":"agy --csrf_token t"}"#;
+        let rows = process_rows(one);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].pid, 7);
+        assert_eq!(rows[0].executable, "C:/a/agy");
+        let many = r#"[{"ProcessId":1,"ExecutablePath":null,"CommandLine":"x"},{"ProcessId":2,"ExecutablePath":"b.exe","CommandLine":"b"}]"#;
+        assert_eq!(process_rows(many).len(), 1);
+        assert!(process_rows("").is_empty());
+    }
 }

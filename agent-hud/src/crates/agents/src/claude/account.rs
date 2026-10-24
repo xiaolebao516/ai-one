@@ -71,7 +71,43 @@ fn malformed() -> String {
         "The Claude Code engine returned unrecognised usage data",
     )
 }
+/// Skips the user's settings.json: its `env` may point the CLI at an API proxy
+/// (CC Switch and similar), which hides a signed-in subscription's limits.
+/// ai-one change (#184).
+const WITHOUT_USER_SETTINGS: [&str; 2] = ["--setting-sources", "project,local"];
+const NETWORK_KEYS: [&str; 4] = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"];
+
+/// The network proxy settings.json gives Claude Code. The retry that skips
+/// user settings passes these on, so it leaves through the same proxy node as
+/// Claude Code itself; only the API endpoint and token are left out.
+fn settings_network(host: &dyn Host) -> Vec<(String, String)> {
+    let settings = read_json(host, &config_dir(host).join("settings.json")).unwrap_or(Value::Null);
+    let Some(env) = settings["env"].as_object() else {
+        return Vec::new();
+    };
+    env.iter()
+        .filter(|(key, _)| NETWORK_KEYS.contains(&key.to_ascii_uppercase().as_str()))
+        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+        .collect()
+}
+
 pub fn read(host: &dyn Host) -> Result<Reading, String> {
+    let reading = read_with(host, &[], &[])?;
+    // No plan limits through the user's settings: the subscription login may
+    // still be there underneath an API proxy. Ask once more without those
+    // settings, same network proxy, and keep the first answer unless that one
+    // has limits.
+    if reading.quotas.is_empty() && reading.account.is_none() {
+        if let Ok(retry) = read_with(host, &WITHOUT_USER_SETTINGS, &settings_network(host)) {
+            if !retry.quotas.is_empty() {
+                return Ok(retry);
+            }
+        }
+    }
+    Ok(reading)
+}
+
+fn read_with(host: &dyn Host, leading: &[&str], network: &[(String, String)]) -> Result<Reading, String> {
     let executable = host.executable("claude").ok_or_else(|| {
         l10n::text(
             "未找到 Claude Code 引擎（claude 命令）",
@@ -79,20 +115,24 @@ pub fn read(host: &dyn Host) -> Result<Reading, String> {
         )
     })?;
     let before = profile(host);
+    let mut args = leading.to_vec();
+    args.extend_from_slice(&[
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--settings",
+        r#"{"disableAllHooks":true}"#,
+    ]);
+    let mut env = engine_env().to_vec();
+    env.extend(network.iter().map(|(key, value)| (key.as_str(), value.clone())));
     let mut process = host.start_engine(&EngineStart {
         executable: &executable,
-        args: &[
-            "-p",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--settings",
-            r#"{"disableAllHooks":true}"#,
-        ],
+        args: &args,
         folder: "claude",
-        env: &engine_env(),
+        env: &env,
     })?;
     process.send(&json!({"type":"control_request","request_id":"agent-hud-usage","request":{"subtype":"get_usage","skip_behaviors":true}}))?;
     let deadline = Instant::now() + Duration::from_secs(40);
@@ -382,6 +422,35 @@ mod tests {
             Some("No plan limits for this login (API key or third-party platform)")
         );
         assert_eq!(host.started.borrow()[1].1, ["auth", "status", "--json"]);
+    }
+
+    #[test]
+    fn a_proxy_in_user_settings_does_not_hide_the_subscription() {
+        let none = json!({"subtype": "success", "response": {"rate_limits_available": false}});
+        let mut host = installed(none).file(
+            "/u/.claude/settings.json",
+            &json!({"env": {
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:8799", "ANTHROPIC_AUTH_TOKEN": "t",
+                "HTTPS_PROXY": "http://127.0.0.1:49531", "NO_PROXY": "localhost",
+            }})
+            .to_string(),
+        );
+        host.engine_output
+            .insert("auth".into(), vec![json!({"loggedIn": true})]);
+        host.engine_output.insert(
+            "--setting-sources".into(),
+            vec![json!({"type": "control_response", "response": limits()})],
+        );
+        let reading = read(&host).unwrap();
+        assert_eq!(reading.quotas.len(), 2);
+        assert_eq!(reading.notice, None);
+        let started = host.started.borrow();
+        assert_eq!(started[2].1[..3], ["--setting-sources", "project,local", "-p"]);
+        // Same network proxy as Claude Code; never the API endpoint or token.
+        let env = &started[2].3;
+        assert!(env.contains(&("HTTPS_PROXY".to_owned(), "http://127.0.0.1:49531".to_owned())));
+        assert!(env.contains(&("NO_PROXY".to_owned(), "localhost".to_owned())));
+        assert!(!env.iter().any(|(key, _)| key.starts_with("ANTHROPIC_")));
     }
 
     #[test]

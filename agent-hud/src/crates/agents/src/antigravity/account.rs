@@ -214,15 +214,12 @@ mod tests {
     }
 
     #[test]
-    fn windows_is_not_asked() {
+    fn windows_is_asked_too() {
         let mut host = answering(Ok(status_body()));
         host.os = Os::Windows;
         let reading = read(&host).unwrap();
-        assert_eq!(
-            reading.notice.as_deref(),
-            Some("Antigravity local-service discovery is not implemented here (windows)")
-        );
-        assert!(reading.quotas.is_empty());
+        assert_eq!(reading.notice, None);
+        assert!(!reading.quotas.is_empty());
     }
 
     #[test]

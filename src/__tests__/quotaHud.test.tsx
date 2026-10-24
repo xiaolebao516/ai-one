@@ -64,7 +64,7 @@ function parsed(state: string = 'running', snapshotValue: unknown = snapshot()):
   return parseQuotaHudReading(rawReading(state, snapshotValue));
 }
 
-function resource(reading: QuotaHudReading, id: 'claude-code' | 'codex') {
+function resource(reading: QuotaHudReading, id: 'claude-code' | 'codex' | 'antigravity') {
   const result = deriveResources(reading, NOW).find((item) => item.id === id);
   if (!result) throw new Error('missing resource ' + id);
   return result;
@@ -102,6 +102,17 @@ describe('parseQuotaHudReading', () => {
 });
 
 describe('deriveResources', () => {
+  it('shows Antigravity next to Claude Code and Codex with its own quota windows', () => {
+    const reading = parsed('running', snapshot({
+      quotas: [quota('antigravity', 52)],
+      providers: [{ id: 'antigravity', detected: true, accountStatus: { status: 'ready', notice: null, checkedAt: freshAt } }],
+    }));
+    expect(deriveResources(reading, NOW).map((item) => item.id)).toEqual(['claude-code', 'codex', 'antigravity']);
+    const antigravity = resource(reading, 'antigravity');
+    expect(antigravity.login).toBe('ok');
+    expect(antigravity.quota.windows.map((window) => window.usedPercent)).toEqual([52]);
+  });
+
   it('maps login errors and unavailable account status without losing their notices', () => {
     const reading = parsed('running', snapshot({
       providers: [
