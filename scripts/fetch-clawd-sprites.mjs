@@ -1,6 +1,7 @@
 // Fetches the original Clawd sprite table from upstream on demand for local HUD builds.
 // Avoids committing proprietary third-party artwork to the repository while honoring
 // user acceptance feedback (#168 "以原版图像为准").
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -213,12 +214,59 @@ export function cleanClawdArt({
   return cleaned;
 }
 
+export function runHudBuild({
+  isClean = true,
+  target = DEFAULT_TARGET,
+  distDir = path.resolve(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist'),
+  releaseDir = path.resolve(root, 'agent-hud', 'target', 'release'),
+  hudRoot = path.resolve(root, 'agent-hud'),
+} = {}) {
+  const buildStartTime = Date.now();
+  if (isClean) {
+    cleanClawdArt({ target, distDir, releaseDir });
+    if (fs.existsSync(target)) {
+      throw new Error(`Cannot start clean build: target "${target}" still exists.`);
+    }
+  } else {
+    if (!fs.existsSync(target)) {
+      throw new Error(`Cannot start original build: target "${target}" does not exist. Fetch it first with "pnpm hud:fetch-art:strict".`);
+    }
+    const text = fs.readFileSync(target, 'utf8');
+    validateClawdSprites(text);
+  }
+
+  console.log(`[fetch-clawd-sprites] Starting ${isClean ? 'clean' : 'original'} HUD compilation...`);
+  const runCmd = (cmd, args, cwd) => {
+    const res = spawnSync(cmd, args, { cwd, stdio: 'inherit', shell: true });
+    if (res.status !== 0) {
+      throw new Error(`Command failed with exit code ${res.status}: ${cmd} ${args.join(' ')}`);
+    }
+  };
+
+  runCmd('pnpm', ['install', '--frozen-lockfile'], hudRoot);
+  runCmd('pnpm', ['run', 'build'], hudRoot);
+  runCmd('cargo', ['build', '--release', '--manifest-path', 'Cargo.toml', '-p', 'ai-one-hud', '--features', 'custom-protocol'], hudRoot);
+
+  const hudExe = path.join(releaseDir, 'ai-one-hud.exe');
+  if (!fs.existsSync(hudExe)) {
+    throw new Error(`Build failed to produce executable: "${hudExe}" does not exist.`);
+  }
+  const stat = fs.statSync(hudExe);
+  if (stat.mtimeMs < buildStartTime - 5000) {
+    throw new Error(`Stale binary detected: "${hudExe}" was modified before build started.`);
+  }
+
+  const sha = recordHudBuildProvenance(hudExe, { isClean, releaseDir, target, distDir });
+  console.log(`[fetch-clawd-sprites] HUD ${isClean ? 'clean' : 'original'} build completed successfully (SHA-256: ${sha}).`);
+  return { hudExe, sha, isClean };
+}
+
 // CLI entry point
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
   const isClean = process.argv.includes('--clean');
   const strict = process.argv.includes('--strict') || process.env.CLAWD_SPRITES_STRICT === '1';
-  const isRecordClean = process.argv.includes('--record-clean');
-  const isRecordOriginal = process.argv.includes('--record-original');
+  const isBuildClean = process.argv.includes('--build-clean');
+  const isBuildOriginal = process.argv.includes('--build-original');
 
   const getOpt = (flag) => {
     const idx = process.argv.indexOf(flag);
@@ -228,10 +276,19 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
   const distDir = getOpt('--dist-dir') || (process.env.CLAWD_DIST_DIR ? path.resolve(process.env.CLAWD_DIST_DIR) : path.resolve(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist'));
   const releaseDir = getOpt('--release-dir') || (process.env.CLAWD_RELEASE_DIR ? path.resolve(process.env.CLAWD_RELEASE_DIR) : path.resolve(root, 'agent-hud', 'target', 'release'));
 
-  if (isRecordClean || isRecordOriginal) {
-    const hudExe = getOpt('--exe') || path.join(releaseDir, 'ai-one-hud.exe');
-    const sha = recordHudBuildProvenance(hudExe, { isClean: isRecordClean, releaseDir, target, distDir });
-    console.log(`[fetch-clawd-sprites] Recorded ${isRecordClean ? 'clean' : 'original'} build provenance (SHA-256: ${sha}) for ${hudExe}.`);
+  // Standalone --record-clean / --record-original are strictly prohibited to prevent post-hoc signing
+  if (process.argv.includes('--record-clean') || process.argv.includes('--record-original')) {
+    console.error('[fetch-clawd-sprites] Error: Standalone "--record-clean" and "--record-original" CLI switches are prohibited to prevent post-hoc provenance spoofing. Use the unified build command ("--build-clean" or "pnpm hud:build:clean").');
+    process.exit(1);
+  }
+
+  if (isBuildClean || isBuildOriginal) {
+    runHudBuild({
+      isClean: isBuildClean,
+      target,
+      distDir,
+      releaseDir,
+    });
     process.exit(0);
   }
 

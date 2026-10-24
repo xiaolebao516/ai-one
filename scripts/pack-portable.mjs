@@ -214,6 +214,40 @@ function collectFiles(inputDir, exeName) {
   return files.sort((a, b) => a.archivePath.localeCompare(b.archivePath));
 }
 
+export function hasProprietarySpriteSignatures(content) {
+  if (!content) return false;
+  if (!Buffer.isBuffer(content)) content = Buffer.from(content);
+
+  // Literal filenames
+  if (content.includes(Buffer.from('clawd-sprites.json')) || content.includes(Buffer.from('clawd-sprites-'))) {
+    return true;
+  }
+
+  // UTF-8 JSON keys
+  const hasUtf8Keys =
+    content.includes(Buffer.from('"sprites"')) &&
+    content.includes(Buffer.from('"palette"')) &&
+    content.includes(Buffer.from('"deltas"'));
+  if (hasUtf8Keys) return true;
+
+  // UTF-16LE JSON keys
+  const hasUtf16Keys =
+    content.includes(Buffer.from('"sprites"', 'utf16le')) &&
+    content.includes(Buffer.from('"palette"', 'utf16le')) &&
+    content.includes(Buffer.from('"deltas"', 'utf16le'));
+  if (hasUtf16Keys) return true;
+
+  // Base64 encoded sprite keys
+  const base64Sprites = content.includes(Buffer.from('InNwcml0ZXMi')) || content.includes(Buffer.from('c3ByaXRlc'));
+  const base64Palette = content.includes(Buffer.from('InBhbGV0dGUi')) || content.includes(Buffer.from('cGFsZXR0Z'));
+  const base64Deltas = content.includes(Buffer.from('ImRlbHRhcyI')) || content.includes(Buffer.from('kZWx0YXMi'));
+  if (base64Sprites && base64Palette && base64Deltas) {
+    return true;
+  }
+
+  return false;
+}
+
 export function detectProprietaryClawdArt(hudExePath, cleanArt = true) {
   // 1. Source asset check
   const proprietaryArt = path.join(HUD_ASSETS, 'clawd-sprites.json');
@@ -235,10 +269,9 @@ export function detectProprietaryClawdArt(hudExePath, cleanArt = true) {
           stack.push(full);
         } else if (/clawd-sprites/i.test(entry.name)) {
           return `bundled asset "${entry.name}" in HUD dist`;
-        } else if (/\.(js|json|html)$/i.test(entry.name)) {
+        } else if (/\.(js|json|html|bin)$/i.test(entry.name)) {
           const content = fs.readFileSync(full);
-          // Look for proprietary sprite table JSON payload signature (sprites table with palette and deltas)
-          if (content.includes(Buffer.from('"sprites"')) && content.includes(Buffer.from('"palette"')) && content.includes(Buffer.from('"deltas"'))) {
+          if (hasProprietarySpriteSignatures(content)) {
             return `embedded Clawd sprite table in HUD dist file "${entry.name}"`;
           }
         }
@@ -257,8 +290,8 @@ export function detectProprietaryClawdArt(hudExePath, cleanArt = true) {
       return `could not verify HUD binary integrity (${err.message})`;
     }
 
-    // Direct binary content scan
-    if (content.includes(Buffer.from('clawd-sprites.json')) || content.includes(Buffer.from('clawd-sprites-')) || (content.includes(Buffer.from('"sprites"')) && content.includes(Buffer.from('"palette"')) && content.includes(Buffer.from('"deltas"')))) {
+    // Direct binary content scan (UTF-8, UTF-16LE, Base64)
+    if (hasProprietarySpriteSignatures(content)) {
       return 'embedded Clawd sprite table inside HUD binary';
     }
 
@@ -431,6 +464,44 @@ function createZip(entries, zipPath) {
   fs.writeFileSync(zipPath, Buffer.concat([...localParts, centralDir, end]));
 }
 
+export function assertCleanZipEntries(entries, cleanArt = true) {
+  if (!cleanArt) return;
+  for (const entry of entries) {
+    const archivePath = entry.archivePath || '';
+    const base = path.basename(archivePath);
+
+    // 1. Check archive entry path against proprietary asset names
+    if (/clawd-sprites/i.test(base)) {
+      throw new Error(`Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd assets were detected in package contents ("${archivePath}"). Remove it or use "--allow-proprietary-art" for private local packaging.`);
+    }
+
+    // Skip notice/license documentation from content scanning as they discuss licensing policies
+    const lower = archivePath.toLowerCase();
+    if (lower.endsWith('.txt') || lower.endsWith('.md') || lower.endsWith('license') || lower.endsWith('notice')) {
+      continue;
+    }
+
+    // 2. Check disk file or buffer contents
+    let content = null;
+    if (entry.data && Buffer.isBuffer(entry.data) && entry.data.length > 0) {
+      content = entry.data;
+    } else if (entry.source && fs.existsSync(entry.source)) {
+      // Scan JSON, JS, HTML, BIN, or EXE files included in the zip
+      if (lower.endsWith('.json') || lower.endsWith('.js') || lower.endsWith('.html') || lower.endsWith('.bin') || lower.endsWith('.exe')) {
+        try {
+          content = fs.readFileSync(entry.source);
+        } catch {
+          // If unreadable, ignore
+        }
+      }
+    }
+
+    if (content && hasProprietarySpriteSignatures(content)) {
+      throw new Error(`Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd sprite table was detected in "${archivePath}".`);
+    }
+  }
+}
+
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const inputDir = path.resolve(options.input);
@@ -462,6 +533,8 @@ function main() {
     { archivePath: withPrefix(prefix, 'PORTABLE'), data: Buffer.alloc(0), mtime: now },
     { archivePath: withPrefix(prefix, 'README-portable.txt'), data: Buffer.from(README_PORTABLE, 'utf8'), mtime: now },
   ];
+
+  assertCleanZipEntries(entries, options.cleanArt);
 
   createZip(entries, zipPath);
   console.log(`Created ${zipPath}`);

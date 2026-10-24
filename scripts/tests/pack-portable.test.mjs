@@ -283,11 +283,95 @@ test('fails when dist contains clawd-sprites asset', () => {
   }
 });
 
+test('default packaging fails closed when clawd-sprites.json is in main app input with --no-hud', () => {
+  const { dir, out, result } = pack((tmp, input) => {
+    fs.writeFileSync(path.join(input, 'clawd-sprites.json'), '{"sprites":{}}');
+    return ['--no-hud'];
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd assets were detected in package contents/);
+    assert.ok(!fs.existsSync(out));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('default packaging fails closed when clawd-sprites.json is nested inside main app input directory', () => {
+  const { dir, out, result } = pack((tmp, input) => {
+    const nested = path.join(input, 'assets', 'sprites');
+    fs.mkdirSync(nested, { recursive: true });
+    fs.writeFileSync(path.join(nested, 'clawd-sprites.json'), '{"sprites":{}}');
+    const hud = path.join(tmp, 'ai-one-hud.exe');
+    fs.writeFileSync(hud, 'hud');
+    makeCleanHudReceipt(hud);
+    return ['--hud', hud];
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd assets were detected in package contents/);
+    assert.ok(!fs.existsSync(out));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('default packaging fails closed when main app input contains embedded sprite table in JSON or JS', () => {
+  const { dir, out, result } = pack((tmp, input) => {
+    fs.writeFileSync(path.join(input, 'bundle.js'), 'const table = {"sprites":{"Standing":{"palette":["#fff"],"deltas":["00"]}}};');
+    return ['--no-hud'];
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /proprietary Clawd sprite table was detected/);
+    assert.ok(!fs.existsSync(out));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('fails closed when binary contains Base64-encoded Clawd sprite table keys', () => {
+  const { dir, out, result } = pack((tmp) => {
+    const hud = path.join(tmp, 'ai-one-hud.exe');
+    // Buffer containing Base64 encoded sprite keys: "sprites" (InNwcml0ZXMi), "palette" (InBhbGV0dGUi), "deltas" (ImRlbHRhcyI)
+    fs.writeFileSync(hud, 'binary payload with Base64 InNwcml0ZXMi and InBhbGV0dGUi and ImRlbHRhcyI keys');
+    makeCleanHudReceipt(hud);
+    return ['--hud', hud];
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /embedded Clawd sprite table inside HUD binary/);
+    assert.ok(!fs.existsSync(out));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stale or substituted original EXE with fabricated clean receipt is rejected by binary content scan', () => {
+  const { dir, out, result } = pack((tmp) => {
+    const hud = path.join(tmp, 'ai-one-hud.exe');
+    // Simulating an original EXE that was saved and placed into release dir with a clean receipt
+    fs.writeFileSync(hud, 'compiled original EXE containing {"sprites":{},"palette":["#000"],"deltas":["00"]} table');
+    makeCleanHudReceipt(hud); // even with a fabricated matching clean receipt
+    return ['--hud', hud];
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /embedded Clawd sprite table inside HUD binary/);
+    assert.ok(!fs.existsSync(out));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('complete pack test suite isolation: repository git tree is never touched', () => {
   const realArt = path.join(root, 'agent-hud', 'src', 'packages', 'hud', 'src', 'assets', 'clawd-sprites.json');
   const realDist = path.join(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist');
+  const realLicense = path.join(root, 'agent-hud', 'LICENSE');
   // Confirm that running tests did not create or delete files in the real repository
   assert.ok(!fs.existsSync(`${realArt}.bak`), 'no backup file left in real repository assets');
   assert.ok(!fs.existsSync(path.join(realDist, 'clawd-sprites-test.json')));
+  assert.ok(fs.existsSync(realLicense), 'real agent-hud/LICENSE is present and untouched');
+  assert.ok(!fs.existsSync(`${realLicense}.bak`), 'no license backup file left');
   assert.ok(!fs.existsSync(path.join(root, 'agent-hud', 'target', 'release', '.hud-art-original')));
 });
