@@ -230,6 +230,11 @@ export class ChatLedController {
       goal: this.run.goal,
       coordinator: this.run.coordinator,
       available: this.run.available.map((provider) => ({ provider, label: providerInstanceName(provider, PROVIDER_LABELS) })),
+      unavailable: (this.run.unavailable ?? []).map(({ provider, reason }) => ({
+        provider,
+        label: providerInstanceName(provider, PROVIDER_LABELS),
+        reason,
+      })),
       roundLimit: this.run.roundLimit,
       mode: this.run.mode ?? 'general',
     });
@@ -239,7 +244,7 @@ export class ChatLedController {
   private async prepareProviders(generation: number): Promise<boolean> {
     const live = () => this.isLive(generation);
     const coordinator = this.run.coordinator;
-    const failures: string[] = [];
+    const failures = new Map<ProviderInstance, string>();
     const prepared = new Set<ProviderInstance>();
 
     try {
@@ -264,7 +269,7 @@ export class ChatLedController {
             this.set(failProvider(this.run, coordinator, errorMessage(error), this.env.now()));
             return false;
           }
-          failures.push(provider + ': ' + errorMessage(error));
+          failures.set(provider, errorMessage(error));
         } finally {
           this.preparingProviders.delete(provider);
         }
@@ -289,7 +294,9 @@ export class ChatLedController {
         (provider) => provider !== coordinator && prepared.has(provider) && sendable.has(provider),
       ))];
       if (available.length === 0) {
-        const detail = failures.length > 0 ? ' Preparation failures: ' + failures.join('; ') : '';
+        const detail = failures.size > 0
+          ? ' Preparation failures: ' + [...failures].map(([provider, reason]) => provider + ': ' + reason).join('; ')
+          : '';
         this.set(failProvider(
           this.run,
           coordinator,
@@ -299,7 +306,11 @@ export class ChatLedController {
         return false;
       }
 
-      this.set(setAvailableProviders(this.run, available, this.env.now()));
+      // Never drop a candidate silently: the user and the coordinator both see who is missing and why (#189).
+      const unavailable = this.candidates
+        .filter((provider) => provider !== coordinator && !available.includes(provider))
+        .map((provider) => ({ provider, reason: failures.get(provider) ?? 'Not logged in or the page is not ready.' }));
+      this.set(setAvailableProviders(this.run, available, this.env.now(), unavailable));
       this.assertPersisted();
       return true;
     } catch (error) {

@@ -178,6 +178,7 @@ export function buildIntroPrompt(input: {
   goal: string;
   coordinator: AIProvider;
   available: readonly { provider: ProviderInstance; label: string }[];
+  unavailable?: readonly { provider: ProviderInstance; label: string; reason: string }[];
   roundLimit: number;
   mode?: 'general' | 'repo' | 'discuss';
 }): string {
@@ -203,6 +204,11 @@ export function buildIntroPrompt(input: {
     '最多执行 ' + input.roundLimit + ' 轮转发；收到第 ' + (input.roundLimit + 1) + ' 条协调者回复时会暂停并交由用户决定。完成时必须使用 ai-one-done 围栏，不要只用自然语言宣告完成。',
     '用户任务原文如下，请保留其目标与约束：\n\n' + input.goal,
   ];
+  if (input.unavailable && input.unavailable.length > 0) {
+    const missing = input.unavailable.map((item) => item.provider + '（' + item.label + '，原因：' + item.reason + '）').join('、');
+    parts.splice(2, 0,
+      '本次未就绪、不能转发的 AI：' + missing + '。如果用户任务点名要用其中的 AI，不要改派给列表里的其他 AI 顶替，也不要让其他 AI 扮演它；直接输出 ai-one-done 围栏，告诉用户哪个 AI 没就绪、请登录或打开后重新开始。');
+  }
   if (input.available.some(({ provider }) => provider.startsWith('chatgpt#'))) {
     parts.splice(-1, 0, 'chatgpt#2 / chatgpt#3 是另外的独立 ChatGPT 工人对话，与你（协调者）不共享上下文，message 必须自包含。');
   }

@@ -12,6 +12,7 @@ import {
   type RegisteredConversation,
   type RunPhase,
   type SessionInitializationStatus,
+  type UnavailableProvider,
 } from './types';
 import { parseCoordinatorReply, PROVIDER_LABELS } from './protocol';
 
@@ -114,11 +115,17 @@ export function setAvailableProviders(
   run: ChatLedRun,
   available: readonly ProviderInstance[],
   now: number,
+  unavailable: readonly UnavailableProvider[] = [],
 ): ChatLedRun {
   if (run.phase !== 'coordinator-thinking') return run;
   const next = [...new Set(available.filter((provider) => provider !== run.coordinator))];
-  if (next.length === run.available.length && next.every((provider, index) => provider === run.available[index])) return run;
-  return { ...run, available: next, updatedAt: now };
+  const skipped = unavailable.filter(({ provider }) => provider !== run.coordinator && !next.includes(provider));
+  if (
+    next.length === run.available.length &&
+    next.every((provider, index) => provider === run.available[index]) &&
+    skipped.length === (run.unavailable?.length ?? 0)
+  ) return run;
+  return { ...run, available: next, unavailable: skipped.length > 0 ? skipped : undefined, updatedAt: now };
 }
 
 export function beginSessionInitialization(

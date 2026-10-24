@@ -227,6 +227,18 @@ describe('chat-led template modes', () => {
     expect(prompt).toContain('GitHub 连接器');
     expect(prompt).toContain('ai-one 不检查、不代执行');
   });
+  it('lists unready AIs and forbids substituting them, right after the available list', () => {
+    const prompt = buildIntroPrompt({
+      ...input,
+      unavailable: [{ provider: 'gemini', label: 'Gemini', reason: 'not logged in' }],
+    });
+    const lines = prompt.split('\n\n');
+    expect(lines[1]).toContain('可转发的 AI 列表：claude（Claude）');
+    expect(lines[2]).toContain('本次未就绪、不能转发的 AI：gemini（Gemini，原因：not logged in）');
+    expect(lines[2]).toContain('不要改派给列表里的其他 AI 顶替');
+    expect(lines[2]).toContain('ai-one-done');
+    expect(buildIntroPrompt({ ...input, unavailable: [] })).toBe(buildIntroPrompt(input));
+  });
   it('asks independent opinions and coordinator synthesis in discussion mode', () => {
     const prompt = buildIntroPrompt({ ...input, mode: 'discuss' });
     expect(prompt).toContain('独立给出观点');

@@ -111,11 +111,18 @@ export interface RegisteredConversation {
   registeredAt: number;
 }
 
+export interface UnavailableProvider {
+  provider: ProviderInstance;
+  reason: string;
+}
+
 export interface ChatLedRun {
   id: string;
   goal: string; // the user's task text
   coordinator: AIProvider;
   available: ProviderInstance[]; // logged-in providers the coordinator may address (never includes coordinator)
+  /** Candidates that failed startup readiness, with the reason; shown to the user and the coordinator. */
+  unavailable?: UnavailableProvider[];
   roundLimit: number;
   workers?: 0 | 1 | 2; // absent in old storage means zero
   mode?: ChatLedMode; // absent in v1 storage means general
