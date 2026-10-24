@@ -11,12 +11,14 @@ export interface TaskViewProps {
   locale: Locale;
   task: HudTask;
   onBack: () => void;
+  /** Real GitHub data only; demo tasks have nothing to hand over. */
+  canDispatch?: boolean;
 }
 
 const EVIDENCE_TONE = { readback: 'done', local: 'run', self: 'neutral', unverified: 'unknown' } as const;
 
 /** Task page (design §5): now → needs you → stages and evidence, with delivery facts on the right. */
-export function TaskView({ locale, task, onBack }: TaskViewProps) {
+export function TaskView({ locale, task, onBack, canDispatch = true }: TaskViewProps) {
   const text = workbenchText(locale);
   const hud = taskHudText(locale);
   return (
@@ -36,7 +38,7 @@ export function TaskView({ locale, task, onBack }: TaskViewProps) {
           <TaskStatus task={task} locale={locale} />
         </header>
 
-        {task.issue ? <DispatchPanel locale={locale} repo={task.repo} issue={task.issue} /> : null}
+        {canDispatch && task.issue ? <DispatchPanel locale={locale} repo={task.repo} issue={task.issue} /> : null}
 
         {task.stages.length ? <StageStrip stages={task.stages} locale={locale} /> : null}
 

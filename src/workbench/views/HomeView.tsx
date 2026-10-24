@@ -114,7 +114,7 @@ export function HomeView({ locale, tasks, health, acceptance, channel, onOpenTas
               <Card padding="none" className="mt-v2-sm">
                 <ul className="divide-y divide-v2-line p-v2-xs">
                   {moving.map((task) => (
-                    <TaskRow key={task.id} task={task} locale={locale} onOpen={onOpenTask} />
+                    <TaskRow key={task.id} task={task} locale={locale} onOpen={onOpenTask} canDispatch={health !== 'demo'} />
                   ))}
                 </ul>
               </Card>

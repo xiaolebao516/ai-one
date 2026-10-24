@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import type { Locale } from '../i18n/resolve';
 import { STATUS_TONE, effectiveCi, formatAge, pickText, type HudStage, type HudTask } from '../ui/taskHudModel';
 import { taskHudText } from '../ui/taskHudText';
-import { Badge, Icon, StatusIndicator, cx } from '../ui/v2';
+import { Badge, Button, Icon, StatusIndicator, cx } from '../ui/v2';
+import { DispatchPanel } from './DispatchPanel';
 import { workbenchText } from './workbenchText';
 
 /** Status as shape + colour + text (design §6). */
@@ -51,16 +53,23 @@ export function StageStrip({ stages, locale }: { stages: readonly HudStage[]; lo
 }
 
 /** One task line, used by the overview and the task list. The whole row opens the task. */
-export function TaskRow({ task, locale, onOpen }: { task: HudTask; locale: Locale; onOpen: (task: HudTask) => void }) {
+export function TaskRow({ task, locale, onOpen, canDispatch = false }: {
+  task: HudTask; locale: Locale; onOpen: (task: HudTask) => void;
+  /** Real GitHub data only: a demo task has nothing to hand over. */
+  canDispatch?: boolean;
+}) {
+  const [dispatchOpen, setDispatchOpen] = useState(false);
+  const dispatchable = canDispatch && Boolean(task.issue);
   const hud = taskHudText(locale);
   const text = workbenchText(locale);
   const ci = effectiveCi(task);
   return (
     <li>
+      <div className="flex items-center gap-v2-xs">
       <button
         type="button"
         onClick={() => onOpen(task)}
-        className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-v2-md rounded-v2-md px-v2-sm py-v2-sm text-left hover:bg-v2-hover"
+        className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-v2-md rounded-v2-md px-v2-sm py-v2-sm text-left hover:bg-v2-hover"
       >
         <span className="min-w-0">
           <span className="flex min-w-0 items-center gap-v2-sm">
@@ -85,6 +94,17 @@ export function TaskRow({ task, locale, onOpen }: { task: HudTask; locale: Local
           <span className="hidden w-20 text-right xl:inline">{formatAge(task.updatedMinutesAgo, locale)}</span>
         </span>
       </button>
+      {dispatchable ? (
+        <Button size="sm" aria-expanded={dispatchOpen} aria-label={`${text.t('launchButton')} #${task.issue}`} onClick={() => setDispatchOpen((value) => !value)}>
+          {text.t('launchButton')}
+        </Button>
+      ) : null}
+      </div>
+      {dispatchable && dispatchOpen ? (
+        <div className="px-v2-sm pb-v2-sm">
+          <DispatchPanel locale={locale} repo={task.repo} issue={task.issue!} open onOpenChange={setDispatchOpen} />
+        </div>
+      ) : null}
     </li>
   );
 }
