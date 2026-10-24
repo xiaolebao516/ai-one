@@ -4,7 +4,7 @@ import { Button, Card, Notice } from '../../ui/v2';
 import { workbenchText } from '../workbenchText';
 import type { AcceptanceState } from '../useUserAcceptance';
 import { host } from '../../host';
-import { hasChoice } from '../acceptanceActions';
+import { hasChoice, stripActionLines } from '../acceptanceActions';
 import { needsNewDecision, type FixProgress } from '../acceptanceFix';
 
 const FIX_TEXT: Record<FixProgress, 'acceptanceFixNotStarted' | 'acceptanceFixCreating' | 'acceptanceFixUnknown' | 'acceptanceFixFailed' | 'acceptanceFixQueued' | 'acceptanceFixWorking' | 'acceptanceFixDone' | 'acceptanceFixDropped'> = {
@@ -71,7 +71,7 @@ export function UserAcceptanceSection({ locale, state, demo, onCopy = copyToClip
                   <span className="text-v2-micro text-v2-ink-3">{item.repo} #{item.issue}</span>
                 </div>
                 {item.raw ? (
-                  <div className="whitespace-pre-wrap break-words text-v2-body text-v2-ink-2">{item.raw}</div>
+                  <div className="whitespace-pre-wrap break-words text-v2-body text-v2-ink-2">{item.actions?.length ? stripActionLines(item.raw) : item.raw}</div>
                 ) : (
                   <>
                     <p className="whitespace-pre-wrap text-v2-body text-v2-ink-2"><strong>{text.t('acceptanceSteps')}：</strong>{item.steps}</p>

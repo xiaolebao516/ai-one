@@ -19,6 +19,16 @@ describe('fix task from acceptance feedback', () => {
     expect(task.body).toContain('操作步骤：打开首页');
     expect(task.body).not.toContain('<!-- ai-one:');
   });
+  it('keeps command, link and option lines in the fix Task for raw and structured items', () => {
+    const raw = { ...item, steps: undefined, expected: undefined, raw: '- 看一下\n  - 命令：echo hello\n  - 打开：https://example.com/',
+      actions: [{ kind: 'command' as const, value: 'echo hello' }] };
+    expect(buildFixTask(raw, '坏了').body).toContain('echo hello');
+    expect(buildFixTask(raw, '坏了').body).toContain('https://example.com/');
+    const structured = { ...item, actions: [{ kind: 'command' as const, value: 'pnpm dev' }, { kind: 'choice' as const, options: ['A', 'B'] }] };
+    const body = buildFixTask(structured, '坏了').body;
+    expect(body).toContain('命令：pnpm dev');
+    expect(body).toContain('决定：A / B');
+  });
   it('creates the issue once with the original as parent and reports the number', async () => {
     const createIssue = vi.fn(async () => created());
     expect(await createFixTask({ createIssue }, item, '坏了')).toEqual({ sync: 'confirmed', issue: 99, url: 'https://github.com/o/r/issues/99' });

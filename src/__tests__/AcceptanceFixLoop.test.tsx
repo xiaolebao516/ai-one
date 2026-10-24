@@ -183,9 +183,10 @@ describe('cards that ask the user to act', () => {
     expect(container.textContent).not.toContain('启动应用并登录');
   });
   it('"cannot do it" with a reason becomes a fix task', async () => {
-    item = actionItem([{ kind: 'command', value: 'pnpm dev' }]);
+    item = { ...actionItem([{ kind: 'command', value: 'pnpm dev' }]), raw: '启动应用并登录。\n- 命令：pnpm dev' };
     const api = writer();
     await render(api);
+    expect(container.textContent).not.toContain('命令：pnpm dev');
     await click('做不了');
     const input = container.querySelector('textarea')!;
     await act(async () => {
@@ -195,6 +196,7 @@ describe('cards that ask the user to act', () => {
     await click('发送反馈');
     expect(api.createIssue).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(api.createIssue.mock.calls[0])).toContain('做不了：命令报错');
+    expect(JSON.stringify(api.createIssue.mock.calls[0])).toContain('命令：pnpm dev');
   });
   it('a decision sends only an option the Issue offers', async () => {
     item = actionItem([{ kind: 'choice', options: ['方案 A', '方案 B'] }]);

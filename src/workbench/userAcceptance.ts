@@ -33,12 +33,6 @@ function firstSentence(value: string): string {
   const text = value.replace(/\s+/gu, ' ').trim();
   return text.split(/(?<=[。！？!?])\s*|(?<=[.;；])\s+/u)[0]?.slice(0, 220) || text.slice(0, 220);
 }
-/** Action lines become buttons, so they are not repeated in the verbatim text; every other line stays. */
-function withoutActionLines(clean: string): string {
-  return clean.split(/\r?\n/u)
-    .filter((line) => !parseActionLine(line.trim().replace(/^(?:[-*+]\s+|\d+[.)、]\s+)/u, '')))
-    .join('\n');
-}
 function parseEntry(repo: string, issue: number, raw: string, index: number): AcceptanceItem | undefined {
   const clean = raw.trim();
   if (!clean || /^(?:无|暂无|没有|none|n\/a|无待验收事项)[。.!！\s]*$/iu.test(clean)) return undefined;
@@ -60,7 +54,7 @@ function parseEntry(repo: string, issue: number, raw: string, index: number): Ac
   const structured = Boolean(steps.trim() && expected.trim() && description && !loose);
   const key = repo.toLowerCase() + ':' + issue + ':' + index + ':' + fingerprint(clean);
   return { key, repo, issue, title: firstSentence(description || lines[0] || clean),
-    ...(structured ? { steps: steps.trim(), expected: expected.trim() } : { raw: actions.length ? withoutActionLines(clean) : clean }),
+    ...(structured ? { steps: steps.trim(), expected: expected.trim() } : { raw: clean }),
     ...(actions.length ? { actions } : {}) };
 }
 /** A missing/empty section means no acceptance. Unstructured nonempty entries remain verbatim. */

@@ -1,4 +1,5 @@
 import type { GithubWriteCreateIssueArgs, GithubWriteResult } from '../host/githubWrite';
+import { describeActions } from './acceptanceActions';
 import type { AcceptanceItem, AcceptanceRecord } from './userAcceptance';
 
 /** ready: comment confirmed, create_issue not yet sent (safe to send). pending: create_issue may have been sent. */
@@ -15,8 +16,10 @@ export const issueStateKey = (repo: string, issue: number): string => `${repo.to
 export function buildFixTask(item: AcceptanceItem, feedback: string): { title: string; body: string } {
   const problem = feedback.trim();
   const headline = problem.replace(/\s+/gu, ' ').slice(0, 60);
-  const original = item.raw ?? [item.title, item.steps && `操作步骤：${item.steps}`, item.expected && `预期结果：${item.expected}`]
+  // Everything the user was asked to do stays in the Task, including command / link / option lines.
+  const described = item.raw ?? [item.title, item.steps && `操作步骤：${item.steps}`, item.expected && `预期结果：${item.expected}`]
     .filter(Boolean).join('\n');
+  const original = item.raw === undefined && item.actions?.length ? `${described}\n${describeActions(item.actions)}` : described;
   const body = `## 关联 / 派工
 - Parent Spec: #${item.issue}（用户验收反馈产生；原 Issue 即使已关闭也以此为线索）
 - Priority: P1

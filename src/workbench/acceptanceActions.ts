@@ -37,5 +37,17 @@ export function parseActionLine(line: string): AcceptanceAction | undefined {
   return undefined;
 }
 
+/** For display only: action lines already appear as buttons. The stored text and fix tasks keep every line. */
+export function stripActionLines(text: string): string {
+  return text.split(/\r?\n/u)
+    .filter((line) => !parseActionLine(line.trim().replace(/^(?:[-*+]\s+|\d+[.)、]\s+)/u, '')))
+    .join('\n');
+}
+export function describeActions(actions: readonly AcceptanceAction[]): string {
+  return actions.map((action) => action.kind === 'command' ? `命令：${action.value}`
+    : action.kind === 'open' ? `打开：${action.value}`
+    : action.kind === 'manual' ? `本人操作：${action.value}`
+    : `决定：${action.options.join(' / ')}`).join('\n');
+}
 export const hasChoice = (actions: readonly AcceptanceAction[] | undefined): boolean =>
   Boolean(actions?.some((action) => action.kind === 'choice'));
