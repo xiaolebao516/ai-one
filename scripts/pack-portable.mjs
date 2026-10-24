@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { deflateRawSync } from 'node:zlib';
 import { Buffer } from 'node:buffer';
 import fs from 'node:fs';
@@ -13,7 +14,9 @@ const HUD_ARCHIVE_NAME = 'ai-one-hud.exe';
 // Everything the HUD's licences require us to pass on: Apache-2.0 (LICENSE, NOTICE), the upstream's
 // own third-party notes, and the licence texts of the bundled third-party parts (LobeHub icons,
 // React Bits). All are required whenever the HUD is shipped.
-const HUD_ASSETS = path.join('agent-hud', 'src', 'packages', 'hud', 'src', 'assets');
+const HUD_ASSETS = process.env.CLAWD_HUD_ASSETS ? path.resolve(process.env.CLAWD_HUD_ASSETS) : path.join('agent-hud', 'src', 'packages', 'hud', 'src', 'assets');
+const HUD_DIST = process.env.CLAWD_HUD_DIST ? path.resolve(process.env.CLAWD_HUD_DIST) : path.join('agent-hud', 'src', 'apps', 'desktop', 'dist');
+const HUD_RELEASE_DIR = process.env.CLAWD_HUD_RELEASE_DIR ? path.resolve(process.env.CLAWD_HUD_RELEASE_DIR) : path.join('agent-hud', 'target', 'release');
 const HUD_NOTICES = [
   [path.join('agent-hud', 'LICENSE'), 'LICENSE-ai-one-hud.txt'],
   ['NOTICE.md', 'NOTICE.md'],
@@ -209,16 +212,19 @@ function collectFiles(inputDir, exeName) {
   return files.sort((a, b) => a.archivePath.localeCompare(b.archivePath));
 }
 
-export function detectProprietaryClawdArt(hudExePath) {
+export function detectProprietaryClawdArt(hudExePath, cleanArt = true) {
+  // 1. Source asset check
   const proprietaryArt = path.join(HUD_ASSETS, 'clawd-sprites.json');
   if (fs.existsSync(proprietaryArt)) return 'clawd-sprites.json present in HUD assets';
 
-  const origMarker = path.join('agent-hud', 'target', 'release', '.hud-art-original');
+  // 2. Original art provenance marker check
+  const releaseDir = hudExePath ? path.dirname(hudExePath) : HUD_RELEASE_DIR;
+  const origMarker = path.join(releaseDir, '.hud-art-original');
   if (fs.existsSync(origMarker)) return 'build provenance marker indicates original art was bundled (.hud-art-original present)';
 
-  const distDir = path.join('agent-hud', 'src', 'apps', 'desktop', 'dist');
-  if (fs.existsSync(distDir)) {
-    const stack = [distDir];
+  // 3. Bundled dist asset check
+  if (fs.existsSync(HUD_DIST)) {
+    const stack = [HUD_DIST];
     while (stack.length > 0) {
       const current = stack.pop();
       for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
@@ -238,16 +244,39 @@ export function detectProprietaryClawdArt(hudExePath) {
     }
   }
 
+  // 4. Binary inspection and clean build provenance verification
   if (hudExePath && fs.existsSync(hudExePath)) {
+    let content;
+    let exeSha256;
     try {
-      const content = fs.readFileSync(hudExePath);
-      // Notice: Do NOT match 'DancingHappy' which is a code identifier in clawd-clips.ts!
-      // Look for asset filename 'clawd-sprites.json' or 'clawd-sprites-' or the proprietary sprite table JSON signature:
-      if (content.includes(Buffer.from('clawd-sprites.json')) || content.includes(Buffer.from('clawd-sprites-')) || (content.includes(Buffer.from('"sprites"')) && content.includes(Buffer.from('"palette"')) && content.includes(Buffer.from('"deltas"')))) {
-        return 'embedded Clawd sprite table inside HUD binary';
-      }
+      content = fs.readFileSync(hudExePath);
+      exeSha256 = crypto.createHash('sha256').update(content).digest('hex');
     } catch (err) {
       return `could not verify HUD binary integrity (${err.message})`;
+    }
+
+    // Direct binary content scan
+    if (content.includes(Buffer.from('clawd-sprites.json')) || content.includes(Buffer.from('clawd-sprites-')) || (content.includes(Buffer.from('"sprites"')) && content.includes(Buffer.from('"palette"')) && content.includes(Buffer.from('"deltas"')))) {
+      return 'embedded Clawd sprite table inside HUD binary';
+    }
+
+    // If packaging for clean release: verify cryptographic clean-build provenance receipt
+    if (cleanArt) {
+      const cleanMarker = path.join(releaseDir, '.hud-art-clean');
+      if (!fs.existsSync(cleanMarker)) {
+        return 'no verified clean-build provenance record (.hud-art-clean missing; rebuild HUD with "pnpm hud:build:clean")';
+      }
+      try {
+        const record = JSON.parse(fs.readFileSync(cleanMarker, 'utf8'));
+        if (record.clean !== true) {
+          return 'clean-build provenance record is invalid or marked unclean';
+        }
+        if (record.sha256 && record.sha256 !== exeSha256) {
+          return `HUD executable SHA-256 (${exeSha256.slice(0, 12)}...) does not match clean-build provenance record (${record.sha256.slice(0, 12)}...; rebuild with "pnpm hud:build:clean")`;
+        }
+      } catch (err) {
+        return `invalid clean-build provenance record (${err.message})`;
+      }
     }
   }
   return null;
@@ -264,7 +293,7 @@ function hudEntriesFor(hudPath, cleanArt = true) {
     console.log('Quota HUD not included: ' + exe + ' does not exist (see --hud).');
     return [];
   }
-  const taintedReason = detectProprietaryClawdArt(exe);
+  const taintedReason = detectProprietaryClawdArt(exe, cleanArt);
   if (cleanArt && taintedReason) {
     throw new Error(`Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd assets were detected (${taintedReason}). Rebuild with clean assets ("pnpm hud:build:clean") or use "--allow-proprietary-art" for private local packaging.`);
   }

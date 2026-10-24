@@ -1,6 +1,7 @@
 // Fetches the original Clawd sprite table from upstream on demand for local HUD builds.
 // Avoids committing proprietary third-party artwork to the repository while honoring
 // user acceptance feedback (#168 "以原版图像为准").
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -120,6 +121,37 @@ export function validateClawdSprites(rawContent) {
   return parsed;
 }
 
+export function recordHudBuildProvenance(hudExePath, { isClean = true, releaseDir } = {}) {
+  const dir = releaseDir || path.dirname(hudExePath);
+  let sha256 = '';
+  if (fs.existsSync(hudExePath)) {
+    const content = fs.readFileSync(hudExePath);
+    sha256 = crypto.createHash('sha256').update(content).digest('hex');
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  const cleanMarker = path.join(dir, '.hud-art-clean');
+  const origMarker = path.join(dir, '.hud-art-original');
+
+  if (isClean) {
+    fs.writeFileSync(cleanMarker, JSON.stringify({
+      clean: true,
+      sha256,
+      exe: path.basename(hudExePath),
+      timestamp: new Date().toISOString(),
+    }, null, 2), 'utf8');
+    if (fs.existsSync(origMarker)) fs.unlinkSync(origMarker);
+  } else {
+    fs.writeFileSync(origMarker, JSON.stringify({
+      clean: false,
+      sha256,
+      exe: path.basename(hudExePath),
+      timestamp: new Date().toISOString(),
+    }, null, 2), 'utf8');
+    if (fs.existsSync(cleanMarker)) fs.unlinkSync(cleanMarker);
+  }
+  return sha256;
+}
+
 export function cleanClawdArt({
   target = DEFAULT_TARGET,
   distDir = path.resolve(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist'),
@@ -143,7 +175,12 @@ export function cleanClawdArt({
   }
   // Touch clean provenance marker and remove original marker
   fs.mkdirSync(releaseDir, { recursive: true });
-  fs.writeFileSync(path.join(releaseDir, '.hud-art-clean'), `${Date.now()}`, 'utf8');
+  fs.writeFileSync(path.join(releaseDir, '.hud-art-clean'), JSON.stringify({
+    clean: true,
+    sha256: '',
+    exe: 'ai-one-hud.exe',
+    timestamp: new Date().toISOString(),
+  }, null, 2), 'utf8');
   const origMarker = path.join(releaseDir, '.hud-art-original');
   if (fs.existsSync(origMarker)) fs.unlinkSync(origMarker);
 
@@ -154,6 +191,8 @@ export function cleanClawdArt({
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
   const isClean = process.argv.includes('--clean');
   const strict = process.argv.includes('--strict') || process.env.CLAWD_SPRITES_STRICT === '1';
+  const isRecordClean = process.argv.includes('--record-clean');
+  const isRecordOriginal = process.argv.includes('--record-original');
 
   const getOpt = (flag) => {
     const idx = process.argv.indexOf(flag);
@@ -162,6 +201,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
   const target = getOpt('--target') || (process.env.CLAWD_SPRITES_DEST ? path.resolve(process.env.CLAWD_SPRITES_DEST) : DEFAULT_TARGET);
   const distDir = getOpt('--dist-dir') || (process.env.CLAWD_DIST_DIR ? path.resolve(process.env.CLAWD_DIST_DIR) : path.resolve(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist'));
   const releaseDir = getOpt('--release-dir') || (process.env.CLAWD_RELEASE_DIR ? path.resolve(process.env.CLAWD_RELEASE_DIR) : path.resolve(root, 'agent-hud', 'target', 'release'));
+
+  if (isRecordClean || isRecordOriginal) {
+    const hudExe = getOpt('--exe') || path.join(releaseDir, 'ai-one-hud.exe');
+    const sha = recordHudBuildProvenance(hudExe, { isClean: isRecordClean, releaseDir });
+    console.log(`[fetch-clawd-sprites] Recorded ${isRecordClean ? 'clean' : 'original'} build provenance (SHA-256: ${sha || 'none'}) for ${hudExe}.`);
+    process.exit(0);
+  }
 
   if (isClean) {
     const cleaned = cleanClawdArt({ target, distDir, releaseDir });
@@ -209,7 +255,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
 
     // Record provenance marker
     fs.mkdirSync(releaseDir, { recursive: true });
-    fs.writeFileSync(path.join(releaseDir, '.hud-art-original'), `${Date.now()}`, 'utf8');
+    fs.writeFileSync(path.join(releaseDir, '.hud-art-original'), JSON.stringify({
+      clean: false,
+      sha256: '',
+      exe: 'ai-one-hud.exe',
+      timestamp: new Date().toISOString(),
+    }, null, 2), 'utf8');
     const cleanMarker = path.join(releaseDir, '.hud-art-clean');
     if (fs.existsSync(cleanMarker)) fs.unlinkSync(cleanMarker);
 
