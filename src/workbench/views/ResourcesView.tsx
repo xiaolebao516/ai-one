@@ -247,9 +247,12 @@ function safeNotice(notice: string | undefined): string | undefined {
   return notice;
 }
 
+const AGENT_AVATAR: Record<ResourceStatus['id'], string> = { 'claude-code': 'CC', codex: 'Cx', antigravity: 'Ag' };
+const AGENT_COLOR: Record<ResourceStatus['id'], string> = { 'claude-code': '#C15F3C', codex: '#2B2A27', antigravity: '#3367D6' };
+
 function AgentResourceCard({ resource, locale, text }: { resource: ResourceStatus; locale: Locale; text: WorkbenchText }) {
-  const avatar = resource.id === 'claude-code' ? 'CC' : 'Cx';
-  const color = resource.id === 'claude-code' ? '#C15F3C' : '#2B2A27';
+  const avatar = AGENT_AVATAR[resource.id];
+  const color = AGENT_COLOR[resource.id];
   const quotaLabel = resource.quota.stale && resource.quota.windows.length > 0
     ? 'quotaExpiredShort'
     : resource.quota.source === 'known'
