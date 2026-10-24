@@ -215,6 +215,11 @@ later prose mentions BLOCKED` }] }), []);
 ok
 PASS ${SHA}` }] }), []);
   assert.match(buried.text, /审计待核对/);
+  const prose = handoff(handoffFixture({ comments: [{ createdAt: '2026-10-23T05:00:00Z', body: `${SHA}
+pnpm verify PASS, independent audit pending` }, { createdAt: '2026-10-23T06:00:00Z', body: `${SHA}
+fix for the round-3 REVISE plus device recheck` }] }), []);
+  assert.match(prose.text, /审计待核对/);
+  assert.doesNotMatch(prose.text, /审计：PASS|审计：REVISE/);
   const outdated = handoff(handoffFixture({ comments: [{ createdAt: '2026-10-23T02:00:00Z', body: stale }] }), []);
   assert.match(outdated.text, /审计：REVISE 针对 c{12}，不是当前 HEAD，旧审计已失效/);
   const none = handoff(handoffFixture({ comments: [{ createdAt: 'x', body: 'looks fine to me' }] }), []);

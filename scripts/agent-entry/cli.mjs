@@ -166,9 +166,10 @@ export function auditSummary(pr) {
     .map((entry) => {
       // The repo's format puts the full HEAD SHA first and the verdict next (or the reverse), so both
       // are read from the opening lines only; verdict words deeper in prose do not count.
-      const head = (entry.body ?? '').split(/\r?\n/).filter((line) => line.trim()).slice(0, 2).join(' ');
-      const verdict = /\b(PASS|REVISE|BLOCKED)\b/.exec(head)?.[1];
-      const sha = /\b([0-9a-f]{40})\b/i.exec(head)?.[1]?.toLowerCase();
+      const lines = (entry.body ?? '').split(/\r?\n/).filter((line) => line.trim()).slice(0, 2);
+      // The verdict must be the first word of a line, so "verify PASS" or "fix for the round-3 REVISE" is not one.
+      const verdict = lines.map((line) => /^[\s*_#>`-]*(PASS|REVISE|BLOCKED)\b/.exec(line)?.[1]).find(Boolean);
+      const sha = /\b([0-9a-f]{40})\b/i.exec(lines.join(' '))?.[1]?.toLowerCase();
       return { verdict, sha, at: entry.createdAt ?? entry.submittedAt ?? '' };
     })
     .filter((entry) => entry.verdict && entry.sha)
