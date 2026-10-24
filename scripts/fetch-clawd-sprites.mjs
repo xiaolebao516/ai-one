@@ -121,18 +121,43 @@ export function validateClawdSprites(rawContent) {
   return parsed;
 }
 
-export function recordHudBuildProvenance(hudExePath, { isClean = true, releaseDir } = {}) {
+export function recordHudBuildProvenance(hudExePath, {
+  isClean = true,
+  releaseDir,
+  target = DEFAULT_TARGET,
+  distDir = path.resolve(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist'),
+} = {}) {
   const dir = releaseDir || path.dirname(hudExePath);
-  let sha256 = '';
-  if (fs.existsSync(hudExePath)) {
-    const content = fs.readFileSync(hudExePath);
-    sha256 = crypto.createHash('sha256').update(content).digest('hex');
+  if (!fs.existsSync(hudExePath)) {
+    throw new Error(`Cannot record HUD build provenance: executable "${hudExePath}" does not exist.`);
   }
+  const content = fs.readFileSync(hudExePath);
+  const sha256 = crypto.createHash('sha256').update(content).digest('hex');
+  if (!sha256 || sha256.length !== 64) {
+    throw new Error(`Failed to compute valid 64-character SHA-256 for "${hudExePath}".`);
+  }
+
   fs.mkdirSync(dir, { recursive: true });
   const cleanMarker = path.join(dir, '.hud-art-clean');
   const origMarker = path.join(dir, '.hud-art-original');
 
   if (isClean) {
+    // Fail-closed verification: ensure no proprietary artwork is present in source assets or dist!
+    if (fs.existsSync(target)) {
+      throw new Error(`Cannot record clean build provenance: proprietary artwork "${target}" is present in assets. Run "pnpm hud:clean-art" before clean building.`);
+    }
+    if (fs.existsSync(distDir)) {
+      const checkDist = (cur) => {
+        for (const entry of fs.readdirSync(cur, { withFileTypes: true })) {
+          const full = path.join(cur, entry.name);
+          if (entry.isDirectory()) checkDist(full);
+          else if (/clawd-sprites/i.test(entry.name)) {
+            throw new Error(`Cannot record clean build provenance: bundled asset "${entry.name}" is present in dist.`);
+          }
+        }
+      };
+      checkDist(distDir);
+    }
     fs.writeFileSync(cleanMarker, JSON.stringify({
       clean: true,
       sha256,
@@ -173,16 +198,17 @@ export function cleanClawdArt({
     fs.unlinkSync(hudExe);
     cleaned += 1;
   }
-  // Touch clean provenance marker and remove original marker
-  fs.mkdirSync(releaseDir, { recursive: true });
-  fs.writeFileSync(path.join(releaseDir, '.hud-art-clean'), JSON.stringify({
-    clean: true,
-    sha256: '',
-    exe: 'ai-one-hud.exe',
-    timestamp: new Date().toISOString(),
-  }, null, 2), 'utf8');
+  // Remove both markers on clean; a clean-build receipt is only issued after an actual verified build!
+  const cleanMarker = path.join(releaseDir, '.hud-art-clean');
+  if (fs.existsSync(cleanMarker)) {
+    fs.unlinkSync(cleanMarker);
+    cleaned += 1;
+  }
   const origMarker = path.join(releaseDir, '.hud-art-original');
-  if (fs.existsSync(origMarker)) fs.unlinkSync(origMarker);
+  if (fs.existsSync(origMarker)) {
+    fs.unlinkSync(origMarker);
+    cleaned += 1;
+  }
 
   return cleaned;
 }
@@ -204,8 +230,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
 
   if (isRecordClean || isRecordOriginal) {
     const hudExe = getOpt('--exe') || path.join(releaseDir, 'ai-one-hud.exe');
-    const sha = recordHudBuildProvenance(hudExe, { isClean: isRecordClean, releaseDir });
-    console.log(`[fetch-clawd-sprites] Recorded ${isRecordClean ? 'clean' : 'original'} build provenance (SHA-256: ${sha || 'none'}) for ${hudExe}.`);
+    const sha = recordHudBuildProvenance(hudExe, { isClean: isRecordClean, releaseDir, target, distDir });
+    console.log(`[fetch-clawd-sprites] Recorded ${isRecordClean ? 'clean' : 'original'} build provenance (SHA-256: ${sha}) for ${hudExe}.`);
     process.exit(0);
   }
 

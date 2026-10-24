@@ -134,7 +134,7 @@ test('validateClawdSprites throws on unexpected unknown extra sprite key', () =>
   );
 });
 
-test('fetch-clawd-sprites CLI --clean removes target file and respects isolated dist/release directories', () => {
+test('fetch-clawd-sprites CLI --clean removes target file, isolated dist, and existing provenance markers', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fetch-sprites-test-'));
   const target = path.join(tmpDir, 'clawd-sprites.json');
   const distDir = path.join(tmpDir, 'dist');
@@ -144,6 +144,8 @@ test('fetch-clawd-sprites CLI --clean removes target file and respects isolated 
   fs.writeFileSync(target, 'dummy');
   fs.writeFileSync(path.join(distDir, 'dummy.txt'), 'dist content');
   fs.writeFileSync(path.join(releaseDir, 'ai-one-hud.exe'), 'exe content');
+  fs.writeFileSync(path.join(releaseDir, '.hud-art-clean'), 'old receipt');
+  fs.writeFileSync(path.join(releaseDir, '.hud-art-original'), 'old orig marker');
 
   try {
     const res = spawnSync(process.execPath, [
@@ -159,7 +161,57 @@ test('fetch-clawd-sprites CLI --clean removes target file and respects isolated 
     assert.ok(!fs.existsSync(target), 'target file should be unlinked');
     assert.ok(!fs.existsSync(distDir), 'isolated dist dir should be unlinked');
     assert.ok(!fs.existsSync(path.join(releaseDir, 'ai-one-hud.exe')), 'isolated exe should be unlinked');
-    assert.ok(fs.existsSync(path.join(releaseDir, '.hud-art-clean')), 'clean marker should be created in isolated release dir');
+    assert.ok(!fs.existsSync(path.join(releaseDir, '.hud-art-clean')), 'clean marker should be removed on clean');
+    assert.ok(!fs.existsSync(path.join(releaseDir, '.hud-art-original')), 'original marker should be removed on clean');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('fetch-clawd-sprites CLI --record-clean writes valid 64-char sha256 and fails if artwork present', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fetch-sprites-record-test-'));
+  const target = path.join(tmpDir, 'clawd-sprites.json');
+  const distDir = path.join(tmpDir, 'dist');
+  const releaseDir = path.join(tmpDir, 'release');
+  fs.mkdirSync(distDir, { recursive: true });
+  fs.mkdirSync(releaseDir, { recursive: true });
+  const exePath = path.join(releaseDir, 'ai-one-hud.exe');
+  fs.writeFileSync(exePath, 'compiled binary bytes');
+
+  try {
+    // 1. Successful record-clean
+    const res = spawnSync(process.execPath, [
+      script,
+      '--record-clean',
+      '--target', target,
+      '--dist-dir', distDir,
+      '--release-dir', releaseDir,
+      exePath,
+    ], {
+      encoding: 'utf8',
+    });
+    assert.equal(res.status, 0, res.stderr);
+    const receiptPath = path.join(releaseDir, '.hud-art-clean');
+    assert.ok(fs.existsSync(receiptPath));
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+    assert.equal(receipt.clean, true);
+    assert.match(receipt.sha256, /^[0-9a-f]{64}$/);
+    assert.equal(receipt.exe, 'ai-one-hud.exe');
+
+    // 2. Fails if proprietary artwork target is present
+    fs.writeFileSync(target, 'proprietary art payload');
+    const resFail = spawnSync(process.execPath, [
+      script,
+      '--record-clean',
+      '--target', target,
+      '--dist-dir', distDir,
+      '--release-dir', releaseDir,
+      exePath,
+    ], {
+      encoding: 'utf8',
+    });
+    assert.notEqual(resFail.status, 0);
+    assert.match(resFail.stderr, /Cannot record clean build provenance/);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

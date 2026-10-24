@@ -9,21 +9,23 @@ const DEFAULT_INPUT = path.join('src-tauri', 'target', 'release');
 const DEFAULT_OUT_DIR = path.join('dist', 'portable');
 // The quota HUD (Spec #82) is a separate process built from agent-hud/. quota_hud_start looks for it
 // beside the app executable, so a portable zip carries it there when it has been built.
-const DEFAULT_HUD_EXE = path.join('agent-hud', 'target', 'release', 'ai-one-hud.exe');
+const HUD_RELEASE_DIR = process.env.CLAWD_HUD_RELEASE_DIR ? path.resolve(process.env.CLAWD_HUD_RELEASE_DIR) : path.join('agent-hud', 'target', 'release');
+const DEFAULT_HUD_EXE = path.join(HUD_RELEASE_DIR, 'ai-one-hud.exe');
 const HUD_ARCHIVE_NAME = 'ai-one-hud.exe';
+const HUD_ROOT = process.env.CLAWD_HUD_ROOT ? path.resolve(process.env.CLAWD_HUD_ROOT) : 'agent-hud';
+const HUD_REPO_ROOT = process.env.CLAWD_REPO_ROOT ? path.resolve(process.env.CLAWD_REPO_ROOT) : '.';
 // Everything the HUD's licences require us to pass on: Apache-2.0 (LICENSE, NOTICE), the upstream's
 // own third-party notes, and the licence texts of the bundled third-party parts (LobeHub icons,
 // React Bits). All are required whenever the HUD is shipped.
-const HUD_ASSETS = process.env.CLAWD_HUD_ASSETS ? path.resolve(process.env.CLAWD_HUD_ASSETS) : path.join('agent-hud', 'src', 'packages', 'hud', 'src', 'assets');
-const HUD_DIST = process.env.CLAWD_HUD_DIST ? path.resolve(process.env.CLAWD_HUD_DIST) : path.join('agent-hud', 'src', 'apps', 'desktop', 'dist');
-const HUD_RELEASE_DIR = process.env.CLAWD_HUD_RELEASE_DIR ? path.resolve(process.env.CLAWD_HUD_RELEASE_DIR) : path.join('agent-hud', 'target', 'release');
+const HUD_ASSETS = process.env.CLAWD_HUD_ASSETS ? path.resolve(process.env.CLAWD_HUD_ASSETS) : path.join(HUD_ROOT, 'src', 'packages', 'hud', 'src', 'assets');
+const HUD_DIST = process.env.CLAWD_HUD_DIST ? path.resolve(process.env.CLAWD_HUD_DIST) : path.join(HUD_ROOT, 'src', 'apps', 'desktop', 'dist');
 const HUD_NOTICES = [
-  [path.join('agent-hud', 'LICENSE'), 'LICENSE-ai-one-hud.txt'],
-  ['NOTICE.md', 'NOTICE.md'],
-  [path.join('agent-hud', 'docs', 'third-party.md'), 'agent-hud-third-party.md'],
+  [path.join(HUD_ROOT, 'LICENSE'), 'LICENSE-ai-one-hud.txt'],
+  [path.join(HUD_REPO_ROOT, 'NOTICE.md'), 'NOTICE.md'],
+  [path.join(HUD_ROOT, 'docs', 'third-party.md'), 'agent-hud-third-party.md'],
   [path.join(HUD_ASSETS, 'THIRD_PARTY_NOTICES.txt'), path.join('third-party', 'THIRD_PARTY_NOTICES.txt')],
   [path.join(HUD_ASSETS, 'LobeIcons-LICENSE.txt'), path.join('third-party', 'LobeIcons-LICENSE.txt')],
-  [path.join('agent-hud', 'src', 'packages', 'ui', 'src', 'react-bits', 'LICENSE.md'), path.join('third-party', 'react-bits-LICENSE.md')],
+  [path.join(HUD_ROOT, 'src', 'packages', 'ui', 'src', 'react-bits', 'LICENSE.md'), path.join('third-party', 'react-bits-LICENSE.md')],
 ].map(([source, archive]) => [source, archive.split(path.sep).join('/')]);
 const README_PORTABLE = `Multi-AI Chat Desktop portable build
 
@@ -271,8 +273,14 @@ export function detectProprietaryClawdArt(hudExePath, cleanArt = true) {
         if (record.clean !== true) {
           return 'clean-build provenance record is invalid or marked unclean';
         }
-        if (record.sha256 && record.sha256 !== exeSha256) {
+        if (!record.sha256 || typeof record.sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(record.sha256)) {
+          return 'clean-build provenance record is missing a valid 64-character SHA-256 hash';
+        }
+        if (record.sha256.toLowerCase() !== exeSha256.toLowerCase()) {
           return `HUD executable SHA-256 (${exeSha256.slice(0, 12)}...) does not match clean-build provenance record (${record.sha256.slice(0, 12)}...; rebuild with "pnpm hud:build:clean")`;
+        }
+        if (record.exe && record.exe !== path.basename(hudExePath)) {
+          return `clean-build provenance record was issued for "${record.exe}", but attempting to package "${path.basename(hudExePath)}"`;
         }
       } catch (err) {
         return `invalid clean-build provenance record (${err.message})`;

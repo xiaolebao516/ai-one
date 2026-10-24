@@ -56,6 +56,8 @@ function pack(args, envOverrides = {}) {
   fs.writeFileSync(path.join(testAssets, 'THIRD_PARTY_NOTICES.txt'), 'dummy notice');
   fs.writeFileSync(path.join(testAssets, 'LobeIcons-LICENSE.txt'), 'dummy notice');
 
+  const computedEnvOverrides = typeof envOverrides === 'function' ? envOverrides(dir) : envOverrides;
+
   const result = spawnSync(process.execPath, [
     script,
     '--input', input,
@@ -70,7 +72,7 @@ function pack(args, envOverrides = {}) {
       CLAWD_HUD_ASSETS: testAssets,
       CLAWD_HUD_DIST: testDist,
       CLAWD_HUD_RELEASE_DIR: testRelease,
-      ...envOverrides,
+      ...computedEnvOverrides,
     },
   });
   return { dir, input, out, result, testAssets, testDist, testRelease };
@@ -143,26 +145,25 @@ test('--no-hud or a missing HUD never takes a stale HUD from the input folder al
 });
 
 test('the HUD is not shipped without its licences: packaging fails instead', () => {
-  const original = path.join(root, 'agent-hud', 'LICENSE');
-  const backup = path.join(root, 'agent-hud', 'LICENSE.bak');
-  const wasPresent = fs.existsSync(original);
-  if (wasPresent) {
-    fs.renameSync(original, backup);
-  }
   const { dir, out, result } = pack((tmp) => {
+    // Provide a mock HUD root missing its LICENSE file
+    const mockHudRoot = path.join(tmp, 'mock-hud-root');
+    fs.mkdirSync(path.join(mockHudRoot, 'docs'), { recursive: true });
+    fs.mkdirSync(path.join(mockHudRoot, 'src', 'packages', 'ui', 'src', 'react-bits'), { recursive: true });
+    fs.writeFileSync(path.join(mockHudRoot, 'docs', 'third-party.md'), 'notices');
+    fs.writeFileSync(path.join(mockHudRoot, 'src', 'packages', 'ui', 'src', 'react-bits', 'LICENSE.md'), 'notices');
     const hud = path.join(tmp, 'ai-one-hud.exe');
     fs.writeFileSync(hud, 'hud');
     makeCleanHudReceipt(hud);
     return ['--hud', hud];
-  });
+  }, (tmp) => ({
+    CLAWD_HUD_ROOT: path.join(tmp, 'mock-hud-root'),
+  }));
   try {
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /required notice files are missing/);
     assert.ok(!fs.existsSync(out), 'no zip is written');
   } finally {
-    if (wasPresent && fs.existsSync(backup)) {
-      fs.renameSync(backup, original);
-    }
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

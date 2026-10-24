@@ -24,7 +24,7 @@
     "hud:fetch-art": "node scripts/fetch-clawd-sprites.mjs",
     "hud:fetch-art:strict": "node scripts/fetch-clawd-sprites.mjs --strict",
     "hud:clean-art": "node scripts/fetch-clawd-sprites.mjs --clean",
-    "hud:build": "pnpm --dir agent-hud install --frozen-lockfile && pnpm --dir agent-hud run build && cargo build --release --manifest-path agent-hud/Cargo.toml -p ai-one-hud --features custom-protocol && node scripts/fetch-clawd-sprites.mjs --record-clean",
+    "hud:build": "node scripts/fetch-clawd-sprites.mjs --clean && pnpm --dir agent-hud install --frozen-lockfile && pnpm --dir agent-hud run build && cargo build --release --manifest-path agent-hud/Cargo.toml -p ai-one-hud --features custom-protocol && node scripts/fetch-clawd-sprites.mjs --record-clean",
     "hud:build:original": "node scripts/fetch-clawd-sprites.mjs --strict && pnpm --dir agent-hud install --frozen-lockfile && pnpm --dir agent-hud run build && cargo build --release --manifest-path agent-hud/Cargo.toml -p ai-one-hud --features custom-protocol && node scripts/fetch-clawd-sprites.mjs --record-original",
     "hud:build:clean": "node scripts/fetch-clawd-sprites.mjs --clean && pnpm --dir agent-hud install --frozen-lockfile && pnpm --dir agent-hud run build && cargo build --release --manifest-path agent-hud/Cargo.toml -p ai-one-hud --features custom-protocol && node scripts/fetch-clawd-sprites.mjs --record-clean",
     "pack:verify": "node --test scripts/tests/*.test.mjs",
