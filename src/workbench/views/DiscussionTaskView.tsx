@@ -20,6 +20,8 @@ export function DiscussionTaskView({ task, store, locale, source, defaultRepo, o
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [handoff, setHandoff] = useState('');
+  const handoffText = handoff || (task.issueCreation?.issueNumber ?
+    `按 AGENTS.md 快速开发模式接手 ${task.issueCreation.repo} 的 Issue #${task.issueCreation.issueNumber}` : '');
   const [copied, setCopied] = useState(false);
   const summary = discussionSummary(task);
   const planEnabled = source === 'github' && host.app.isDesktop() && (task.status === 'needs-you' || task.status === 'ended' || task.status === 'completed') && !task.issueCreation;
@@ -27,7 +29,21 @@ export function DiscussionTaskView({ task, store, locale, source, defaultRepo, o
   useEffect(() => { setError(''); }, [task.id]);
 
   const finish = async () => {
-    const ok = await store.update(task.id, (current) => ({ ...current, status: 'ended', updatedAt: new Date().toISOString() }));
+    const ok = await store.update(task.id, (current) => {
+      const summary = discussionSummary(current).summary;
+      const field = (f: typeof summary.nextSteps) => f.kind === 'value' ? f.text : t.unavailable;
+      const text = [
+        summary.conclusion.kind === 'value' ? summary.conclusion.text : t.unavailable,
+        t.disagreements + ': ' + field(summary.disagreements),
+        t.gaps + ': ' + field(summary.evidenceGaps),
+        t.next + ': ' + field(summary.nextSteps),
+      ].join('\n');
+      return {
+        ...current, status: 'ended', updatedAt: new Date().toISOString(),
+        rounds: current.rounds.map((round, index) => index === current.rounds.length - 1
+          ? { ...round, summary: text } : round),
+      };
+    });
     if (!ok) setError(t.storageError);
   };
   const remove = async () => {
@@ -121,7 +137,7 @@ export function DiscussionTaskView({ task, store, locale, source, defaultRepo, o
           {task.issueCreation.status === 'partial' ? t.planPartial : task.issueCreation.status === 'confirmed' ? t.planConfirmed : t.planError}
           {confirmedIssue ? <Button size="sm" variant="ghost" onClick={() => { void host.app.openExternal(task.issueCreation!.url!); }}>{t.openIssue}</Button> : null}
         </Notice> : null}
-        {handoff ? <div className="grid gap-v2-sm"><Button onClick={() => { void navigator.clipboard.writeText(handoff).then(() => setCopied(true)).catch(() => setCopied(false)); }}>{t.handoff}</Button><textarea readOnly value={handoff} aria-label={t.copyFailed} className="w-full rounded-v2-md border border-v2-line bg-v2-surface p-v2-sm text-v2-body text-v2-ink" />{!copied ? <span className="text-v2-meta text-v2-ink-3">{t.copyFailed}</span> : null}</div> : null}
+        {handoffText ? <div className="grid gap-v2-sm"><Button onClick={() => { void navigator.clipboard.writeText(handoffText).then(() => setCopied(true)).catch(() => setCopied(false)); }}>{t.handoff}</Button><textarea readOnly value={handoffText} aria-label={t.copyFailed} className="w-full rounded-v2-md border border-v2-line bg-v2-surface p-v2-sm text-v2-body text-v2-ink" />{!copied ? <span className="text-v2-meta text-v2-ink-3">{t.copyFailed}</span> : null}</div> : null}
       </Card>
       <Card className="grid gap-v2-sm">
         <p className="text-v2-meta text-v2-ink-2">{t.noIssue}</p>
