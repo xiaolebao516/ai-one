@@ -218,31 +218,6 @@ describe('deriveResources', () => {
     expect(resource(parsed('running', snapshot({ quotas: [noReset] })), 'codex').quota.source).toBe('known');
   });
 
-  it('keeps the reading of a locally observed tool valid while it stays idle, and only then', () => {
-    const HOUR = 60 * 60 * 1000;
-    const claudeAt = (hoursAgo: number, extra: Record<string, unknown> = {}) => ({
-      ...quota('claude', 40, new Date(NOW - hoursAgo * HOUR).toISOString()),
-      resetAt: new Date(NOW + 2 * HOUR).toISOString(),
-      ...extra,
-    });
-    const session = (state: string, hoursAgo: number, source = 'claude') => ({ id: 's' + state + hoursAgo, title: 't', source, state, updatedAt: new Date(NOW - hoursAgo * HOUR).toISOString(), tokens: 1 });
-    const claudeSource = (quotas: unknown[], sessions: unknown[] = []) => resource(parsed('running', snapshot({ quotas, sessions })), 'claude-code').quota;
-    // Idle for hours: the HUD's own re-read is ~24 h away, the number has not moved.
-    expect(claudeSource([claudeAt(2)]).source).toBe('known');
-    expect(claudeSource([claudeAt(2)], [session('idle', 3)]).source).toBe('known');
-    expect(claudeSource([claudeAt(24)]).source).toBe('known');
-    // Too old even for an idle tool, or something happened since: unknown.
-    expect(claudeSource([claudeAt(26)]).source).toBe('unknown');
-    expect(claudeSource([claudeAt(2)], [session('running', 1)]).source).toBe('unknown');
-    expect(claudeSource([claudeAt(2)], [session('waiting', 1)]).source).toBe('unknown');
-    expect(claudeSource([claudeAt(2)], [session('idle', 1)]).source).toBe('unknown');
-    expect(claudeSource([claudeAt(2, { status: 'stale' })]).source).toBe('unknown');
-    expect(claudeSource([claudeAt(2, { resetAt: new Date(NOW - HOUR).toISOString() })]).source).toBe('unknown');
-    // Codex is polled every few minutes, so an old Codex reading is simply old.
-    const codexOld = { ...quota('codex', 40, new Date(NOW - 2 * HOUR).toISOString()), resetAt: new Date(NOW + 2 * HOUR).toISOString() };
-    expect(resource(parsed('running', snapshot({ quotas: [codexOld] })), 'codex').quota.source).toBe('unknown');
-  });
-
   it('does not trust demo, unlabelled or future-dated snapshots as current', () => {
     const providers = [{ id: 'codex', detected: true, accountStatus: { status: 'ready', notice: null, checkedAt: freshAt } }];
     for (const overrides of [{ mode: 'demo' }, { mode: null }, { generatedAt: null }, { generatedAt: 'tomorrow-ish' }, { generatedAt: new Date(NOW + 60 * 60 * 1000).toISOString() }]) {

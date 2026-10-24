@@ -1,4 +1,4 @@
-import type { HudQuota, HudSnapshot, QuotaHudReading } from './types';
+import type { HudQuota, QuotaHudReading } from './types';
 
 export type ResourceLogin = 'ok' | 'attention' | 'unknown' | 'not-detected';
 export type ResourceActivity = 'busy' | 'waiting' | 'idle' | 'unknown';
@@ -39,13 +39,6 @@ const AGENTS = [
 ] as const;
 
 const FRESH_MS = 30 * 60 * 1000;
-/**
- * Claude's usage is worked out from this computer's own session logs, and the HUD re-reads it only
- * every ~24 h while that tool is idle (it keeps the old observation time). An idle tool's numbers do
- * not move, so such a reading stays valid for that long, but only while nothing has happened since.
- */
-const QUIET_PROVIDER_MAX_AGE_MS = 25 * 60 * 60 * 1000;
-const LOCALLY_OBSERVED_PROVIDERS: readonly string[] = ['claude'];
 /**
  * The HUD re-checks an idle account at most every 24 h and rewrites its snapshot only when something
  * changed, so how old the snapshot is says nothing; how old the account check is does. A "ready" older
@@ -111,28 +104,10 @@ function activityState(reading: QuotaHudReading, providerId: string, trusted: bo
   return 'idle';
 }
 
-/** No session of this provider is running or waiting, and none was updated after `observedAt`. */
-function quietSince(snapshot: HudSnapshot | null, providerId: string, observedAt: number): boolean {
-  const sessions = (snapshot?.sessions ?? []).filter((session) => session.source === providerId);
-  return sessions.every((session) => {
-    if (session.state === 'running' || session.state === 'waiting') return false;
-    const updatedAt = parseTime(session.updatedAt);
-    return updatedAt !== null && updatedAt <= observedAt;
-  });
-}
-
-function windowIsCurrent(quota: HudQuota, reading: QuotaHudReading, trusted: boolean, now: number): boolean {
+function windowIsCurrent(quota: HudQuota, trusted: boolean, now: number): boolean {
   if (!trusted || quota.usedPercent === null || quota.status === 'stale') return false;
   const observedAt = parseTime(quota.observedAt);
-  if (observedAt === null || observedAt > now + FUTURE_TOLERANCE_MS) return false;
-  if (observedAt < now - FRESH_MS) {
-    // Older than the short window: only a locally observed, quiet tool's reading is still true.
-    const provider = quota.vendor ?? '';
-    const quiet = LOCALLY_OBSERVED_PROVIDERS.includes(provider)
-      && observedAt >= now - QUIET_PROVIDER_MAX_AGE_MS
-      && quietSince(reading.snapshot, provider, observedAt);
-    if (!quiet) return false;
-  }
+  if (observedAt === null || observedAt > now + FUTURE_TOLERANCE_MS || observedAt < now - FRESH_MS) return false;
   // A window that has reset since it was read no longer describes the current window.
   if (quota.resetAt === null) return true;
   const resetAt = parseTime(quota.resetAt);
@@ -144,7 +119,7 @@ function quotaState(reading: QuotaHudReading, providerId: string, trusted: boole
   const windows: ResourceQuotaWindow[] = (snapshot?.quotas ?? [])
     .filter((quota) => quota.vendor === providerId)
     .map((quota) => {
-      const current = windowIsCurrent(quota, reading, trusted, now);
+      const current = windowIsCurrent(quota, trusted, now);
       return {
         id: quota.id,
         name: quota.name ?? quota.shortLabel ?? '',
