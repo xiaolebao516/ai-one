@@ -73,9 +73,9 @@ describe('resources page', () => {
     expect(container.textContent).not.toContain('Being built');
     expect(channel(container)).toContain('Demo dispatch records');
     expect(container.querySelector('[data-testid="dispatch-receipts"]')).not.toBeNull();
-    // Quota and logins have no source yet: they say so instead of showing a filled bar.
+    // Web chat quota and logins have no source: they say so instead of showing a filled bar.
     expect(container.textContent).toContain('Not checked');
-    expect(container.textContent).toContain('so every quota below is unknown');
+    expect(container.textContent).toContain('Web chat quotas remain unknown because no reliable source is available');
   });
 
   it('asks for the repository folder before reading anything local', async () => {
