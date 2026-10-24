@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { AIProvider } from '../../shared/types';
 import { host } from '../host';
 import { globalOverlayGuard } from './overlayGuard';
+import { hideUnlessRunPage } from '../workflow/chatLed/runPages';
 
 export function useOverlayGuard(open: boolean, loadedProviders: AIProvider[]): void {
   const loadedProvidersRef = useRef(loadedProviders);
@@ -11,13 +12,13 @@ export function useOverlayGuard(open: boolean, loadedProviders: AIProvider[]): v
   useEffect(() => {
     if (!open) return;
     globalOverlayGuard.open(loadedProvidersRef.current, {
-      hide: host.provider.hide,
+      hide: hideUnlessRunPage,
       show: host.provider.show,
     });
     return () => {
       globalOverlayGuard.close(
         {
-          hide: host.provider.hide,
+          hide: hideUnlessRunPage,
           show: host.provider.show,
         },
         loadedProvidersRef.current,
@@ -28,7 +29,7 @@ export function useOverlayGuard(open: boolean, loadedProviders: AIProvider[]): v
   useEffect(() => {
     if (!open) return;
     globalOverlayGuard.reconcile(loadedProvidersRef.current, {
-      hide: host.provider.hide,
+      hide: hideUnlessRunPage,
       show: host.provider.show,
     });
   }, [open, loadedProvidersKey]);

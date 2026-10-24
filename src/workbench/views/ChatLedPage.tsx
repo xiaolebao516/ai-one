@@ -13,6 +13,7 @@ import { createGeminiCleaner } from '../../workflow/chatLed/drivers/gemini';
 import { createRealChatLedEnv, prepareProviderPage } from '../../workflow/chatLed/env';
 import { exportRunMarkdown } from '../../workflow/chatLed/exportMarkdown';
 import { appendCleanupResult, beginCleanup, closeRun, finishCleanup, interruptCleanup, isRunActive, recordExport } from '../../workflow/chatLed/machine';
+import { setRunPages } from '../../workflow/chatLed/runPages';
 import { loadRuns, saveRunChecked } from '../../workflow/chatLed/store';
 import type { ChatLedMode, ChatLedRun } from '../../workflow/chatLed/types';
 import { workbenchText } from '../workbenchText';
@@ -30,6 +31,26 @@ function browserStorage() {
     return globalThis.localStorage;
   } catch {
     return undefined;
+  }
+}
+
+/** The unsent task text survives leaving the tab and restarting the app (#196). Local only. */
+const DRAFT_KEY = 'ai-one:chat-led:draft:v1';
+
+function readDraft(storage: Storage | undefined): string {
+  try {
+    return storage?.getItem(DRAFT_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function writeDraft(storage: Storage | undefined, draft: string): void {
+  try {
+    if (draft) storage?.setItem(DRAFT_KEY, draft);
+    else storage?.removeItem(DRAFT_KEY);
+  } catch {
+    // Storage full or unavailable: the draft still lives in the mounted page.
   }
 }
 
@@ -63,7 +84,8 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
   const storage = useMemo(browserStorage, []);
   const [runs, setRuns] = useState<ChatLedRun[]>(() => loadRuns(storage));
   const [selectedId, setSelectedId] = useState<string | undefined>();
-  const [goal, setGoal] = useState('');
+  const [goal, setGoal] = useState(() => readDraft(storage));
+  useEffect(() => writeDraft(storage, goal), [storage, goal]);
   const [mode, setMode] = useState<ChatLedMode>('general');
   const [workers, setWorkers] = useState<0 | 1 | 2>(0);
   const [starting, setStarting] = useState(false);
@@ -121,8 +143,8 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
   );
 
   useEffect(() => () => {
-    // Leaving the page does not stop a run; controllers stay alive in module scope via the ref of
-    // the mounted page only, so stop live runs that are still going to avoid orphaned sends.
+    // The workbench keeps this page mounted across tabs (#196), so this runs only when the workbench
+    // itself goes away: stop live runs that are still going to avoid orphaned sends.
     for (const controller of controllers.current.values()) {
       const phase = controller.getRun().phase;
       if (phase === 'coordinator-thinking' || phase === 'forwarding' || phase === 'paused') void controller.stop();
@@ -131,6 +153,15 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
 
   // One active chat-led run at a time: runs share the same provider pages and workflow state.
   const activeRun = runs.find((run) => controllers.current.has(run.id) && isRunActive(run));
+
+  // Pages the live run uses stay live (offscreen, never hidden) while the user is on another tab.
+  const runPagesKey = activeRun
+    ? [...new Set([activeRun.coordinator, ...activeRun.available, ...activeRun.forwards.map((forward) => forward.to)])].join('|')
+    : '';
+  useEffect(() => {
+    setRunPages(runPagesKey ? (runPagesKey.split('|') as ProviderInstance[]) : []);
+  }, [runPagesKey]);
+  useEffect(() => () => setRunPages([]), []);
 
   const start = async () => {
     const trimmed = goal.trim();

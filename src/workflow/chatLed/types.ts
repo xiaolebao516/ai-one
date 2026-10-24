@@ -111,6 +111,27 @@ export interface RegisteredConversation {
   registeredAt: number;
 }
 
+/** Progress events, localised by the view (#196). */
+export type ChatLedLogEvent =
+  | 'prepare-start' // provider page is being opened / checked
+  | 'prepare-ok'
+  | 'prepare-failed' // detail: reason
+  | 'targets-ready' // detail: comma-separated provider ids the coordinator may address
+  | 'paused'
+  | 'resumed'
+  | 'stopped';
+
+/**
+ * The run's process log (#196), shown collapsed. Messages to the coordinator other than feedback
+ * keep their full text; feedback is rebuilt from the round's forwards so replies are not stored twice.
+ */
+export type ChatLedLogEntry =
+  | { at: number; kind: 'event'; event: ChatLedLogEvent; provider?: ProviderInstance; detail?: string }
+  | { at: number; kind: 'to-coordinator'; text: string }
+  | { at: number; kind: 'feedback'; round: number; remaining: number };
+
+export const MAX_LOG_ENTRIES = 300;
+
 export interface UnavailableProvider {
   provider: ProviderInstance;
   reason: string;
@@ -121,6 +142,8 @@ export interface ChatLedRun {
   goal: string; // the user's task text
   coordinator: AIProvider;
   available: ProviderInstance[]; // logged-in providers the coordinator may address (never includes coordinator)
+  /** Process log, oldest first; absent in runs saved before #196. */
+  log?: ChatLedLogEntry[];
   /** Candidates that failed startup readiness, with the reason; shown to the user and the coordinator. */
   unavailable?: UnavailableProvider[];
   roundLimit: number;

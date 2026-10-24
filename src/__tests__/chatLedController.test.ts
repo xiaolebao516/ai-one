@@ -1036,3 +1036,41 @@ describe('multi-instance parallel forwarding', () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+describe('process log (#196)', () => {
+  it('records preparation, the coordinator messages and pause/resume without storing replies twice', async () => {
+    const { env } = makeEnv({
+      chatgpt: [SEND(['claude'], 'review this'), DONE('all done')],
+      claude: ['claude full reply'],
+    });
+    env.prepare = vi.fn(async (provider: ProviderInstance) => {
+      if (provider === 'gemini') throw new Error('gemini not logged in');
+    });
+    const controller = await create(env);
+    await controller.start();
+    const log = controller.getRun().log ?? [];
+    const events = log.flatMap((entry) => (entry.kind === 'event' ? [`${entry.event}:${entry.provider ?? entry.detail ?? ''}`] : []));
+    expect(events).toEqual([
+      'prepare-start:chatgpt',
+      'prepare-ok:chatgpt',
+      'prepare-start:claude',
+      'prepare-ok:claude',
+      'prepare-start:gemini',
+      'prepare-failed:gemini',
+      'targets-ready:claude',
+    ]);
+    const messages = log.filter((entry) => entry.kind !== 'event');
+    expect(messages[0]).toMatchObject({ kind: 'to-coordinator' });
+    expect(messages[0].kind === 'to-coordinator' && messages[0].text).toContain('compare two designs');
+    expect(messages[1]).toEqual({ kind: 'feedback', round: 1, remaining: 7, at: expect.any(Number) });
+    expect(JSON.stringify(log)).not.toContain('claude full reply');
+  });
+
+  it('does not log a pause or resume that did not happen', async () => {
+    const { env } = makeEnv({ chatgpt: [] });
+    const controller = await create(env);
+    controller.pause();
+    controller.resume();
+    expect(controller.getRun().log).toBeUndefined(); // idle: nothing to pause or resume
+  });
+});

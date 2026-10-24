@@ -87,6 +87,12 @@ export function Workbench({ locale, githubLoader, acceptanceLoader, acceptanceWr
   useEffect(() => {
     if (onChat) setChatMounted(true);
   }, [onChat]);
+  // 派活 likewise: a run keeps going and the draft stays while the user is on another tab (#196).
+  const onChatLed = current.view === 'chatled';
+  const [chatLedMounted, setChatLedMounted] = useState(onChatLed);
+  useEffect(() => {
+    if (onChatLed) setChatLedMounted(true);
+  }, [onChatLed]);
 
   // Each page starts at its top; the scroll position of the previous page means nothing here.
   const routeKey = `${current.view}:${current.taskId ?? ''}`;
@@ -145,8 +151,6 @@ export function Workbench({ locale, githubLoader, acceptanceLoader, acceptanceWr
         <TaskView key={task.id} locale={locale} task={task} onBack={() => go({ view: 'tasks' })} canDispatch={data.health !== 'demo'} />
       </>
     );
-  } else if (current.view === 'chatled') {
-    view = <ChatLedPage locale={locale} />;
   } else if (current.view === 'resources') {
     view = <ResourcesView locale={locale} dispatch={dispatch} quotaHud={quotaHud} repoPath={data.prefs.dispatchRepo} onSetRepo={data.setDispatchRepo} onOpenClassic={() => go({ view: 'chat' })} />;
   }
@@ -173,7 +177,18 @@ export function Workbench({ locale, githubLoader, acceptanceLoader, acceptanceWr
             {renderChat(!onChat)}
           </div>
         ) : null}
-        {onChat ? null : (
+        {chatLedMounted ? (
+          <div
+            ref={onChatLed ? pageRef : undefined}
+            tabIndex={-1}
+            data-testid="chatled-tab"
+            aria-hidden={onChatLed ? undefined : true}
+            className={cx('absolute inset-0 overflow-auto', onChatLed ? '' : 'invisible pointer-events-none')}
+          >
+            <ChatLedPage locale={locale} />
+          </div>
+        ) : null}
+        {onChat || onChatLed ? null : (
           <div ref={pageRef} tabIndex={-1} className="absolute inset-0 overflow-auto" data-testid="page">
             {view}
           </div>

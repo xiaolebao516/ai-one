@@ -1,6 +1,7 @@
 import type { ProviderInstance, ProviderState } from '../../../shared/types';
 import { providerInstanceBase } from '../../../shared/providerInstances';
 import { sendAndWaitInstance, cancelInstanceSend } from './sendInstance';
+import { parkedBounds } from './runPages';
 import { resetProviderBootState, startBridgePull } from '../../bridge/pull';
 import { host } from '../../host';
 import { prepareWorkflowRun } from '../runtime';
@@ -12,21 +13,6 @@ import type { ChatLedEnv } from './controller';
 const PAGE_READY_TIMEOUT_MS = 45_000;
 const IDLE_TIMEOUT_MS = 120_000;
 const POLL_MS = 1_000;
-
-/** Same offscreen parking rectangle the classic UI uses for background provider pages. */
-function parkedBounds(): DOMRectReadOnly {
-  return {
-    x: -10_000,
-    y: -10_000,
-    width: 420,
-    height: 320,
-    top: -10_000,
-    left: -10_000,
-    right: -9_580,
-    bottom: -9_680,
-    toJSON: () => ({}),
-  };
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, ms));

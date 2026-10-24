@@ -29,7 +29,9 @@ import {
   startRun,
   stopRun,
   updateForward,
+  appendLog,
 } from '../workflow/chatLed/machine';
+import { MAX_LOG_ENTRIES } from '../workflow/chatLed/types';
 
 const fence = String.fromCharCode(96).repeat(3);
 
@@ -367,5 +369,17 @@ describe('automatic protocol reminders', () => {
     const timed = updateForward(forwarded, 'r1-claude', { status: 'timed-out', error: 'timeout' }, 13);
     expect(settledFeedbackItems(timed, 1)?.[0]).toMatchObject({ error: 'timeout' });
     expect(updateForward(timed, 'r1-claude', { status: 'done', reply: 'late' }, 14)).toBe(timed);
+  });
+});
+
+describe('process log', () => {
+  it('appends with a timestamp and keeps only the newest entries', () => {
+    let run = makeRun();
+    for (let index = 0; index < MAX_LOG_ENTRIES + 5; index += 1) {
+      run = appendLog(run, { kind: 'to-coordinator', text: `m${index}` }, index);
+    }
+    expect(run.log).toHaveLength(MAX_LOG_ENTRIES);
+    expect(run.log?.[0]).toEqual({ kind: 'to-coordinator', text: 'm5', at: 5 });
+    expect(run.log?.at(-1)).toMatchObject({ text: `m${MAX_LOG_ENTRIES + 4}` });
   });
 });

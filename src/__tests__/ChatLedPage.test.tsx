@@ -264,6 +264,19 @@ describe('ChatLedPage persistence safety', () => {
   });
 });
 
+describe('task draft', () => {
+  it('keeps the unsent task across a remount (app restart) and nowhere but local storage', async () => {
+    const first = await renderPage();
+    await enterGoal(first, 'draft that must survive');
+    expect(window.localStorage.getItem('ai-one:chat-led:draft:v1')).toBe('draft that must survive');
+    for (const { root } of roots.splice(0)) await act(async () => root.unmount());
+    const second = await renderPage();
+    expect((second.querySelector('#chatled-goal') as HTMLTextAreaElement).value).toBe('draft that must survive');
+    await enterGoal(second, '');
+    expect(window.localStorage.getItem('ai-one:chat-led:draft:v1')).toBeNull();
+  });
+});
+
 describe('extra ChatGPT worker selection', () => {
   it('defaults to zero and offers zero, one or two workers', async () => {
     const container = await renderPage();
