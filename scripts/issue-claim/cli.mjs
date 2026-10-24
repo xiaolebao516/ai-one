@@ -24,6 +24,7 @@ const USAGE = `usage:
   node scripts/issue-claim/cli.mjs show [<N>]
   node scripts/issue-claim/cli.mjs release <N> --agent "<tool / session>"
   node scripts/issue-claim/cli.mjs heartbeat <N> --agent "<tool / session>"
+  node scripts/issue-claim/cli.mjs watch <N> --agent "<tool / session>" --pid <pid> [--interval-sec 120]
   node scripts/issue-claim/cli.mjs inspect [<N>] [--suspect-after-min 30]   (inspect only; takeover always uses the default window)
   node scripts/issue-claim/cli.mjs takeover <N> --agent "<new tool / session>" --stopped-evidence "<how the old writer is known to have stopped>"
 options: --remote <name> (default origin)`;
@@ -42,7 +43,7 @@ function parseArgs(argv) {
   const options = { command, remote: 'origin' };
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i];
-    if (['--agent', '--remote', '--stopped-evidence', '--suspect-after-min'].includes(arg)) {
+    if (['--agent', '--remote', '--stopped-evidence', '--suspect-after-min', '--pid', '--interval-sec'].includes(arg)) {
       const value = rest[i + 1];
       if (!value || value.startsWith('--')) throw new Error(`${arg} needs a value`);
       options[arg.slice(2).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = value;
@@ -122,6 +123,7 @@ export function release(issue, agent, { cwd, remote = 'origin' } = {}) {
 // delete or take the claim by itself, because all agents share one GitHub credential and nothing
 // fences the old writer's pushes to the feature branch.
 export const DEFAULT_SUSPECT_AFTER_MIN = 30;
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 function commitClaim(issue, { agent, at, beat, generation, takeoverFrom, evidence }, parent, { cwd }) {
   const emptyTree = git(['mktree'], { cwd, input: '' }).stdout;
@@ -153,10 +155,40 @@ export function heartbeat(issue, agent, { cwd, remote = 'origin' } = {}) {
   return advanceClaim(issue, holder.sha, commit, { cwd, remote });
 }
 
+/**
+ * Supervisor loop: beats only while the watched process (the agent's executor) is alive, so a dead
+ * or quota-killed executor stops renewing without any LLM turn having to remember a heartbeat.
+ * A failed beat means the claim moved on (taken over or released): the loop stops and reports
+ * 'fenced' so the caller stops writing.
+ */
+export async function watchClaim(issue, agent, { cwd, remote = 'origin', pid, intervalMs = 120000, isAlive = pidAlive, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), maxBeats = Infinity, onBeat = () => {} } = {}) {
+  let beats = 0;
+  while (beats < maxBeats) {
+    if (!isAlive(pid)) return { stopped: 'process-exited', beats };
+    const result = heartbeat(issue, agent, { cwd, remote });
+    if (!result.ok) return { stopped: 'fenced', beats, holder: result.holder, missing: result.missing };
+    beats += 1;
+    onBeat(beats);
+    await sleep(intervalMs);
+  }
+  return { stopped: 'max-beats', beats };
+}
+
+export function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM'; // exists but not ours
+  }
+}
+
 /** ACTIVE: beat (or claim time) is recent. SUSPECT_STALE: silent past the window; observe only. */
 export function assess(holder, { now = new Date(), suspectAfterMin = DEFAULT_SUSPECT_AFTER_MIN } = {}) {
   const last = Date.parse(holder.beat ?? holder.at ?? '');
   if (Number.isNaN(last)) return { state: 'HANDOFF_BLOCKED', reason: 'claim has no readable timestamp' };
+  // A stamp from the future (a fast or tampered clock) would keep a dead claim ACTIVE for as long as the skew lasts.
+  if (last - now.getTime() > CLOCK_SKEW_MS) return { state: 'HANDOFF_BLOCKED', reason: 'claim timestamp is in the future (clock anomaly); needs a human look' };
   const exactMin = Math.max(0, (now.getTime() - last) / 60000);
   const silentMin = Math.floor(exactMin);
   return exactMin >= suspectAfterMin
@@ -202,6 +234,7 @@ function describe(issue, holder) {
 }
 
 export function main(argv, { cwd = process.cwd(), out = console.log, err = console.error } = {}) {
+  if (argv[0] === 'watch') return watchMain(argv, { cwd, out, err });
   let options;
   try {
     options = parseArgs(argv);
@@ -296,6 +329,25 @@ export function main(argv, { cwd = process.cwd(), out = console.log, err = conso
   }
 }
 
+async function watchMain(argv, { cwd, out, err }) {
+  try {
+    const options = parseArgs(argv);
+    const pid = Number(options.pid);
+    const intervalSec = options.intervalSec === undefined ? 120 : Number(options.intervalSec);
+    if (options.issue === undefined || !options.agent || !Number.isInteger(pid) || pid <= 0 || !(intervalSec > 0)) throw new Error('watch needs <N>, --agent and a positive --pid');
+    const result = await watchClaim(options.issue, options.agent, { cwd, remote: options.remote, pid, intervalMs: intervalSec * 1000, onBeat: (n) => out(`heartbeat #${options.issue} (${n})`) });
+    if (result.stopped === 'fenced') {
+      err(`claim #${options.issue} is no longer ours (${result.missing ? 'released' : `now ${result.holder.agent}`}); stop writing.`);
+      return EXIT.held;
+    }
+    out(`watched process ${pid} is gone; stopped beating #${options.issue}`);
+    return EXIT.ok;
+  } catch (error) {
+    err(`${error instanceof Error ? error.message : String(error)}\n${USAGE}`);
+    return EXIT.error;
+  }
+}
+
 const invokedDirectly = (() => {
   try {
     return realpathSync(process.argv[1] ?? '') === realpathSync(fileURLToPath(import.meta.url));
@@ -303,4 +355,8 @@ const invokedDirectly = (() => {
     return false;
   }
 })();
-if (invokedDirectly) process.exitCode = main(process.argv.slice(2));
+if (invokedDirectly) {
+  Promise.resolve(main(process.argv.slice(2))).then((code) => {
+    process.exitCode = code;
+  });
+}

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
-import { EXIT, heartbeat, main, takeover } from '../cli.mjs';
+import { EXIT, heartbeat, main, takeover, watchClaim } from '../cli.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli.mjs');
 let root;
@@ -122,13 +122,13 @@ test('heartbeat keeps the claim alive; only the holder can beat', () => {
 });
 
 // Plants a claim whose last sign of life is long past, as an agent that died without releasing.
-function plantStaleClaim(dir, issue, agent) {
+function plantStaleClaim(dir, issue, agent, { force = false } = {}) {
   const tree = git(dir, 'mktree');
   const old = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
   const env = { ...process.env, GIT_AUTHOR_NAME: 'x', GIT_AUTHOR_EMAIL: 'x@x.invalid', GIT_COMMITTER_NAME: 'x', GIT_COMMITTER_EMAIL: 'x@x.invalid' };
   const made = spawnSync('git', ['commit-tree', tree, '-m', `claim #${issue}\n\nagent: ${agent}\nat: ${old}\n`], { cwd: dir, encoding: 'utf8', env });
   assert.equal(made.status, 0, made.stderr);
-  git(dir, 'push', '--quiet', 'origin', `${made.stdout.trim()}:refs/heads/claim/${issue}`);
+  git(dir, 'push', '--quiet', ...(force ? ['--force'] : []), 'origin', `${made.stdout.trim()}:refs/heads/claim/${issue}`);
 }
 
 test('a live claim cannot be taken, and the window is not a takeover option', () => {
@@ -187,4 +187,49 @@ test('two rescuers racing for a stale claim: exactly one wins', async () => {
   assert.equal(codes.filter((code) => code === EXIT.ok).length, 1);
   assert.equal(codes.filter((code) => code === EXIT.held).length, 1);
   assert.match(run(a, ['show', '94']).out, /^#94 claimed by rescuer-\d/);
+});
+
+test('a claim stamped in the future is not ACTIVE: it needs a human look', () => {
+  const [a] = clones;
+  const tree = git(a, 'mktree');
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'x', GIT_AUTHOR_EMAIL: 'x@x.invalid', GIT_COMMITTER_NAME: 'x', GIT_COMMITTER_EMAIL: 'x@x.invalid' };
+  const future = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
+  const made = spawnSync('git', ['commit-tree', tree, '-m', `claim #95\n\nagent: skewed\nat: ${future}\n`], { cwd: a, encoding: 'utf8', env });
+  git(a, 'push', '--quiet', 'origin', `${made.stdout.trim()}:refs/heads/claim/95`);
+  assert.match(run(a, ['inspect', '95']).out, /^HANDOFF_BLOCKED .*clock anomaly/);
+  assert.equal(run(a, ['takeover', '95', '--agent', 'x', '--stopped-evidence', 'y']).code, EXIT.held);
+  assert.equal(run(a, ['release', '95', '--agent', 'skewed']).code, EXIT.ok);
+});
+
+test('watchClaim beats while the process lives, stops when it exits, and stops when fenced', async () => {
+  const [a, b] = clones;
+  assert.equal(run(a, ['claim', '96', '--agent', 'worker']).code, EXIT.ok);
+  const alive = [true, true, false];
+  const exited = await watchClaim(96, 'worker', { cwd: a, pid: 1, intervalMs: 0, isAlive: () => alive.shift() });
+  assert.deepEqual({ stopped: exited.stopped, beats: exited.beats }, { stopped: 'process-exited', beats: 2 });
+  // Taken over while the executor is still alive (forced here, since a fresh beat is not stale):
+  // the next beat fails and the loop reports fenced instead of writing again.
+  assert.equal(run(a, ['claim', '97', '--agent', 'old-owner']).code, EXIT.ok);
+  const result = await watchClaim(97, 'old-owner', {
+    cwd: a,
+    pid: 1,
+    intervalMs: 0,
+    isAlive: () => true,
+    sleep: async () => {
+      plantStaleClaim(b, 97, 'rescuer', { force: true });
+    },
+  });
+  assert.equal(result.stopped, 'fenced');
+  assert.equal(result.holder.agent, 'rescuer');
+  assert.equal(run(a, ['release', '96', '--agent', 'worker']).code, EXIT.ok);
+  assert.equal(run(b, ['release', '97', '--agent', 'rescuer']).code, EXIT.ok);
+});
+
+test('watch CLI exits cleanly when the watched pid is gone and rejects bad input', async () => {
+  const [a] = clones;
+  assert.equal(run(a, ['claim', '98', '--agent', 'w']).code, EXIT.ok);
+  const dead = spawnSync(process.execPath, ['-e', '0']);
+  assert.equal(await main(['watch', '98', '--agent', 'w', '--pid', String(dead.pid ?? 999999)], { cwd: a, out: () => {}, err: () => {} }), EXIT.ok);
+  assert.equal(await main(['watch', '98', '--agent', 'w', '--pid', 'abc'], { cwd: a, out: () => {}, err: () => {} }), EXIT.error);
+  assert.equal(run(a, ['release', '98', '--agent', 'w']).code, EXIT.ok);
 });
