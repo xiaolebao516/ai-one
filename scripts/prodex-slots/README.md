@@ -20,6 +20,28 @@ node scripts/prodex-slots/cli.mjs release --slot 2
 node --test scripts/prodex-slots/tests/*.test.mjs   # or: pnpm slots:verify
 ```
 
+## WorkBuddy sessions: dispatch from a %TEMP% root first
+
+The WorkBuddy sandbox turns every file deletion made by session children into a move to the
+Recycle Bin (only deletions under `%TEMP%` pass through as real deletes). Prodex's bridge store
+writes task records atomically as `link(tmp → final)` followed by a real delete of `tmp`; run
+from a project directory, the recycled `tmp` survives, `final` keeps `nlink=2`, and Prodex's own
+verified write then refuses the status update: `Target path is hard linked and cannot be used
+through safe file operations`, exit code 1, nothing sent.
+
+Before dispatching from a WorkBuddy session, switch to a dedicated root under `%TEMP%`:
+
+```bash
+mkdir -p "$TEMP/ai-one-prodex-root" && cd "$TEMP/ai-one-prodex-root"
+node /path/to/repo/scripts/prodex-slots/cli.mjs run --slot auto -- ...
+```
+
+Bridge records are throwaway artifacts, so keeping them under `%TEMP%` is fine; the GPT side
+reads the repository through its GitHub connector and does not depend on the cwd. Recognition
+pattern: the error above plus a task stuck at status `new` plus no thread URL means nothing was
+sent - switching to the `%TEMP%` root and retrying is not a blind resend. Codex and Claude Code
+run outside the WorkBuddy sandbox and are unaffected.
+
 ## Layout
 
 | Slot | Port | Profile | Send lock |

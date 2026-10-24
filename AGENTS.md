@@ -62,6 +62,8 @@ PRODEX_CDP_PORT=<端口> PRODEX_SEND_LOCK_FILE="${PRODEX_SLOTS_HOME:-$HOME/.loca
   prodex pro browser recover --port <端口> --target-url "$THREAD" --request-id <id>
 ```
 
+- **WorkBuddy 会话先切 Temp 根再派工（2026-10-24，#61/#178）**：WorkBuddy 沙箱把会话内子进程的文件删除转成“移入回收站”（仅 %TEMP% 下豁免）。在工程目录派 prodex 会破坏 cwd/.bridge 的原子写：任务记录的 tmp 文件进回收站删不掉（final nlink=2），prodex 更新任务状态时被自己的安全检查拒绝——`Target path is hard linked and cannot be used through safe file operations`、退出码 1、消息未发出。派工前先 `mkdir -p "$TEMP/ai-one-prodex-root" && cd "$TEMP/ai-one-prodex-root"` 再执行 prodex / prodex-slots；bridge 记录是临时产物，放 Temp 不影响 GPT 经 GitHub 连接器读仓库。判别要点：报错含 `Target path is hard linked`、任务状态停在 `new`、无 thread URL = 消息未发出，换 Temp 根重试不算盲重发。沙箱外的 Codex / Claude Code 不受影响。
+
 **并行时怎么不冲突**
 
 - 一个槽位同时只服务一个对话；`run --slot auto` 只挑空闲槽位，全忙时按 `--wait-ms` 排队（退出码 4），不往别人正在进行的对话里塞消息。
