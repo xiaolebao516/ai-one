@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderState } from '../../shared/types';
-const mocks = vi.hoisted(() => ({ get: vi.fn(), open: vi.fn(), park: vi.fn(), eval: vi.fn(), newSession: vi.fn(), evalWithCallback: vi.fn() }));
-vi.mock('../host', () => ({ host: { connections: { get: mocks.get, getAll: mocks.get }, provider: { open: mocks.open, park: mocks.park, eval: mocks.eval, newSession: mocks.newSession, evalWithCallback: mocks.evalWithCallback } } }));
+const mocks = vi.hoisted(() => ({ get: vi.fn(), open: vi.fn(), park: vi.fn(), eval: vi.fn(), newSession: vi.fn(), evalWithCallback: vi.fn(), isSendBlocked: vi.fn(), reload: vi.fn() }));
+vi.mock('../host', () => ({ host: { connections: { get: mocks.get, getAll: mocks.get }, provider: { open: mocks.open, park: mocks.park, eval: mocks.eval, newSession: mocks.newSession, evalWithCallback: mocks.evalWithCallback, isSendBlocked: mocks.isSendBlocked, reload: mocks.reload } } }));
 vi.mock('../bridge/pull', () => ({ resetProviderBootState: vi.fn(), startBridgePull: vi.fn() }));
 vi.mock('../workflow/runtime', () => ({ prepareWorkflowRun: vi.fn() }));
 vi.mock('../workflow/sendAndWait', () => ({ sendAndWait: vi.fn() }));
@@ -30,6 +30,19 @@ describe('chat-led real provider preparation', () => {
     expect(mocks.open).not.toHaveBeenCalled();
     expect(mocks.park).toHaveBeenCalledWith('chatgpt', expect.anything());
     expect(mocks.eval).toHaveBeenCalledWith('chatgpt', expect.stringContaining('CHECK_STATUS'));
+  });
+  it('reloads a page that an earlier unconfirmed stop locked, and only that page', async () => {
+    let state: ProviderState = { provider: 'chatgpt', webview: 'loaded', dom: 'ready', login: 'logged_in', thinking: false, lastStatusAt: 1 };
+    mocks.get.mockImplementation(async () => [state]);
+    mocks.eval.mockImplementation(async () => { state = { ...state, lastStatusAt: state.lastStatusAt + 1 }; });
+    mocks.isSendBlocked.mockReturnValue(true);
+    await prepareProviderPage('chatgpt');
+    expect(mocks.reload).toHaveBeenCalledWith('chatgpt');
+    expect(mocks.reload.mock.invocationCallOrder[0]).toBeLessThan(mocks.eval.mock.invocationCallOrder[0]);
+    mocks.reload.mockClear();
+    mocks.isSendBlocked.mockReturnValue(false);
+    await prepareProviderPage('chatgpt');
+    expect(mocks.reload).not.toHaveBeenCalled();
   });
   it('treats "script evaluation is not ready" on a just-opened page as transient and keeps polling', async () => {
     vi.useFakeTimers();

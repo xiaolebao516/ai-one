@@ -166,12 +166,14 @@ describe('host snapshot bindings', () => {
   it('blocks sending after an unclicked stop until the provider reloads', async () => {
     invokeMock.mockResolvedValueOnce(JSON.stringify({ found: false, clicked: false, generating: false }));
     await expect(host.provider.stop('gemini')).resolves.toEqual({ outcome: 'not-found', generating: false });
+    expect(host.provider.isSendBlocked('gemini')).toBe(true);
     invokeMock.mockClear();
     await expect(host.provider.send('gemini', 'must not send')).rejects.toThrow('reload provider page');
     expect(invokeMock).not.toHaveBeenCalled();
 
     invokeMock.mockResolvedValueOnce(undefined);
     await host.provider.reload('gemini');
+    expect(host.provider.isSendBlocked('gemini')).toBe(false);
     invokeMock.mockResolvedValueOnce(undefined);
     await expect(host.provider.send('gemini', 'after reload')).resolves.toBeUndefined();
     expect(invokeMock).toHaveBeenLastCalledWith('provider_eval', expect.objectContaining({ provider: 'gemini' }));
