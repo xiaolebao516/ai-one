@@ -12,6 +12,14 @@ Not imported from upstream:
 - Upstream GitHub configuration that would act on this repository or point to the upstream project: `.github/PULL_REQUEST_TEMPLATE.md`, `.github/ISSUE_TEMPLATE/`, `.github/dependabot.yml`, `.github/workflows/pages.yml`, `.github/workflows/release.yml`, `SECURITY.md`.
 - Upstream `README*.md`, replaced by the ai-one `README.md`.
 
+## Agent HUD Open (quota HUD, `agent-hud/`)
+
+The directory [`agent-hud/`](./agent-hud) contains source copied from [Agent HUD Open](https://github.com/jazzenchen/agent-hud-open) (`jazzenchen/agent-hud-open`), commit `5c1f93e9457cb0f5fd3d69042144ffa63e51851b`, under the [Apache License 2.0](./agent-hud/LICENSE). The upstream license text is kept unchanged in `agent-hud/LICENSE`. The upstream project's own third-party notices (shadcn/ui, Shaders, React Bits, provider artwork, Clawd sprites) are in `agent-hud/docs/third-party.md` and next to the files they cover, and still apply.
+
+Per Apache-2.0 section 4(b), every file we changed is listed in [`agent-hud/UPSTREAM.md`](./agent-hud/UPSTREAM.md), and a change is marked with an "ai-one change" comment wherever the file's syntax allows comments (JSON cannot; the two lock files carry a header comment that a tool may drop when it rewrites them, so UPSTREAM.md is the record for those); files we added (for example `agent-hud/src/apps/desktop/src-tauri/src/export.rs`) say they are ai-one additions. The upstream `lan` crate (iPhone / Apple Watch remote) and `apps/mcp` (built-in MCP server) are not copied.
+
+Provider logos under `agent-hud/src/packages/hud/src/assets` keep their own owners' branding and notices (LobeHub icons: MIT, see `LobeIcons-LICENSE.txt` there); they are not covered by this repository's license. Anthropic's Clawd sprite table (`clawd-sprites.json`) is copyrighted by Anthropic and is **not included** here: we have no permission to redistribute it.
+
 ## Multi-AI Chat Desktop (upstream notice)
 
 Multi-AI Chat Desktop is distributed under the [MIT License](./LICENSE).

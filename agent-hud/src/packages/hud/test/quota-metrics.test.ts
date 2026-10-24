@@ -1,0 +1,104 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { quotaMetric } from "../src/quota-metrics.ts";
+
+const now = Date.parse("2026-10-21T12:00:00Z");
+const zh = {
+  language: "zh" as const,
+  calendar: { timeZone: "UTC", firstWeekday: 2 },
+};
+const en = {
+  language: "en" as const,
+  calendar: { timeZone: "UTC", firstWeekday: 1 },
+};
+const row = (extra: object) =>
+  ({
+    id: "w",
+    vendor: "codex",
+    name: "Weekly",
+    usedPercent: 40,
+    resetAt: "2026-10-21T15:00:00Z",
+    status: "normal",
+    account: null,
+    ...extra,
+  }) as never;
+
+test("missing values and details read as dashes, a read window without a figure as N/A", () => {
+  assert.deepEqual(
+    [
+      quotaMetric(row({ usedPercent: null }), "quota", now, en).value,
+      quotaMetric(row({ usedPercent: null, resetAt: null }), "quota", now, en)
+        .detail,
+    ],
+    ["—", "—"],
+  );
+  assert.equal(
+    quotaMetric(
+      row({ usedPercent: null, observedAt: "2026-10-21T11:00:00Z" }),
+      "quota",
+      now,
+      en,
+    ).value,
+    "N/A",
+  );
+  assert.deepEqual(
+    [
+      quotaMetric(row({}), "cost", now, zh).value,
+      quotaMetric(row({}), "cost", now, zh).detail,
+    ],
+    ["—", "—"],
+  );
+});
+
+test("a passed reset waits for its reading, and one inside a minute reads <1m", () => {
+  assert.equal(
+    quotaMetric(row({ resetAt: "2026-10-21T11:00:00Z" }), "quota", now, zh)
+      .detail,
+    "等待更新",
+  );
+  assert.equal(
+    quotaMetric(row({ resetAt: "2026-10-21T12:00:30Z" }), "quota", now, en)
+      .detail,
+    "<1m",
+  );
+});
+
+test("burn rate: sampling is the detail, a run-out before the reset is its time, replies are counted in words", () => {
+  const sampling = row({
+    metrics: {
+      burnRatePctPerHour: null,
+      outlook: { kind: "insufficient-data" },
+      sampling: { elapsed: 300, required: 1800, afterReset: false },
+    },
+  });
+  assert.deepEqual(
+    [
+      quotaMetric(sampling, "burn", now, zh).value,
+      quotaMetric(sampling, "burn", now, zh).detail,
+    ],
+    ["—", "采样中"],
+  );
+  const runsOut = row({
+    metrics: {
+      burnRatePctPerHour: 12.5,
+      outlook: {
+        kind: "exhausts",
+        beforeReset: true,
+        exhaustsAt: "2026-10-21T14:10:00Z",
+      },
+    },
+  });
+  assert.deepEqual(
+    [
+      quotaMetric(runsOut, "burn", now, en).value,
+      quotaMetric(runsOut, "burn", now, en).detail,
+    ],
+    ["12.5%/h", "Wed 14:10"],
+  );
+  const replies = row({
+    metrics: {
+      replyRate: { tokensPerSecond: 42.7, calls: 9, tokensOut: 1200 },
+    },
+  });
+  assert.equal(quotaMetric(replies, "tokens", now, zh).detail, "9 次回复");
+});

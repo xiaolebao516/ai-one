@@ -1,0 +1,288 @@
+//! The agents a resting HUD draws and what each one reads, projected from a
+//! snapshot as src/packages/hud/src/model.ts `vendorsFromSnapshot` and
+//! `configuredVendors` do, for what the host draws itself: the menu bar item,
+//! the HUD windows' sizes and the Bots' directions.
+use crate::presentation::{mark, resting_agents};
+use serde_json::Value;
+
+pub struct Vendor<'a> {
+    pub key: String,
+    pub name: String,
+    /// The tightest measured window's used percent.
+    pub used: Option<f64>,
+    pub level: &'a str,
+    /// Sessions in flight: running, or waiting on a request.
+    pub working: usize,
+    pub balance: Option<String>,
+    pub quotas: Vec<&'a Value>,
+    pub sessions: Vec<&'a Value>,
+}
+
+fn list<'a>(snapshot: &'a Value, key: &str) -> impl Iterator<Item = &'a Value> {
+    snapshot[key].as_array().into_iter().flatten()
+}
+
+/// Every agent a resting HUD in `mode` shows without a list, one per mark.
+pub fn vendors<'a>(snapshot: &'a Value, mode: &str, now_ms: i64) -> Vec<Vendor<'a>> {
+    let zh = snapshot["language"] == "zh";
+    resting_agents(snapshot, mode, now_ms)
+        .into_iter()
+        .map(|source| {
+            let key = mark(&source);
+            let quotas: Vec<&Value> = list(snapshot, "quotas")
+                .filter(|q| mark(q["vendor"].as_str().unwrap_or("")) == key)
+                .collect();
+            // The first of equal readings stays the tightest.
+            let tightest = quotas
+                .iter()
+                .filter(|q| q["status"] != "stale")
+                .filter_map(|q| Some((q["usedPercent"].as_f64()?, *q)))
+                .fold(None::<(f64, &Value)>, |best, (used, q)| match best {
+                    Some((most, _)) if used <= most => best,
+                    _ => Some((used, q)),
+                });
+            let sessions: Vec<&Value> = list(snapshot, "sessions")
+                .filter(|s| mark(s["source"].as_str().unwrap_or("")) == key)
+                .collect();
+            let balance = quotas
+                .is_empty()
+                .then(|| {
+                    list(snapshot, "billing")
+                        .find(|b| mark(b["vendor"].as_str().unwrap_or("")) == key)
+                })
+                .flatten();
+            Vendor {
+                name: vendor_name(&source),
+                used: tightest.map(|(used, _)| used),
+                // An agent billed by balance alone takes its balance's level.
+                level: tightest
+                    .and_then(|(_, q)| q["status"].as_str())
+                    .or_else(|| balance.and_then(|b| b["level"].as_str()))
+                    .unwrap_or("stale"),
+                working: sessions
+                    .iter()
+                    .filter(|s| matches!(s["state"].as_str(), Some("running" | "waiting")))
+                    .count(),
+                balance: balance.map(|b| {
+                    money_amount(&b["amount"], b["currency"].as_str().unwrap_or("USD"), zh)
+                }),
+                key,
+                quotas,
+                sessions,
+            }
+        })
+        .collect()
+}
+
+/// The marks a screen's HUD names in its layout's `hud.agents`, in that order;
+/// a list naming none of the available agents never empties a HUD
+/// (HUDAgentOrder.swift).
+pub fn configured<'a>(
+    snapshot: &'a Value,
+    mode: &str,
+    layout: &Value,
+    now_ms: i64,
+) -> Vec<Vendor<'a>> {
+    let available = vendors(snapshot, mode, now_ms);
+    let marks: Vec<String> = layout["hud"]["agents"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(mark)
+        .collect();
+    if !available.iter().any(|vendor| marks.contains(&vendor.key)) {
+        return available;
+    }
+    let mut named: Vec<Vendor> = available
+        .into_iter()
+        .filter(|vendor| marks.contains(&vendor.key))
+        .collect();
+    named.sort_by_key(|vendor| marks.iter().position(|key| *key == vendor.key));
+    named
+}
+
+/// The number a Simple HUD writes beside a mark.
+pub fn meter_label(vendor: &Vendor) -> String {
+    match vendor.used {
+        Some(used) => format!("{}%", used.round()),
+        None => vendor.balance.clone().unwrap_or_else(|| "–".into()),
+    }
+}
+
+/// agent-artwork.ts `agentVendorName`.
+fn vendor_name(source: &str) -> String {
+    let name = match mark(source).as_str() {
+        "claude" => "Claude",
+        "openai" => "OpenAI",
+        "antigravity" => "Antigravity",
+        "deepseek" => "DeepSeek",
+        "grok" => "Grok",
+        "grok-bot" => "Grok Bot",
+        "cursor" => "Cursor",
+        "opencode" => "OpenCode",
+        "kimi" => "Kimi",
+        "glm" => "GLM",
+        "pi" => "Pi",
+        "copilot" => "GitHub Copilot",
+        "openclaw" => "OpenClaw",
+        "hermes" => "Hermes",
+        "zcode" => "ZCode",
+        "codebuddy" => "CodeBuddy",
+        "workbuddy" => "WorkBuddy",
+        "qwen" => "Qwen",
+        "qoder" => "Qoder",
+        "devin" => "Devin",
+        _ => source,
+    };
+    name.to_owned()
+}
+
+/// A balance with its currency's narrow symbol and two decimals, rounded half
+/// to even, as format.ts `moneyAmount` writes it: "$12.99", "¥1,234.50",
+/// "-$3.00". Both languages write it the same way.
+pub fn money_amount(amount: &Value, code: &str, _zh: bool) -> String {
+    let decimal = match amount {
+        Value::String(text) => text.trim().to_owned(),
+        // The shortest form that reads back as the same number, as Intl reads it.
+        Value::Number(number) => number.as_f64().map(|v| v.to_string()).unwrap_or_default(),
+        _ => String::new(),
+    };
+    let (negative, digits) = match decimal.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, decimal.strip_prefix('+').unwrap_or(&decimal)),
+    };
+    let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+    if whole.is_empty() && fraction.is_empty()
+        || !whole
+            .chars()
+            .chain(fraction.chars())
+            .all(|c| c.is_ascii_digit())
+    {
+        return format!("{code} {decimal}");
+    }
+    // Hundredths, rounded half to even on the decimal digits.
+    let mut cents: u128 = format!("{whole}{:0<2}", fraction.get(..2).unwrap_or(fraction))
+        .trim_start_matches('0')
+        .parse()
+        .unwrap_or(0);
+    let rest = fraction.get(2..).unwrap_or("");
+    let first = rest.bytes().next().unwrap_or(b'0');
+    let beyond = rest.bytes().skip(1).any(|b| b != b'0');
+    if first > b'5' || first == b'5' && (beyond || cents % 2 == 1) {
+        cents += 1;
+    }
+    let units = (cents / 100).to_string();
+    let mut grouped = String::new();
+    for (index, digit) in units.chars().enumerate() {
+        if index > 0 && (units.len() - index).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    let symbol = match code {
+        "USD" | "AUD" | "CAD" | "HKD" | "NZD" | "SGD" | "TWD" | "MXN" => "$",
+        "CNY" | "JPY" => "¥",
+        "EUR" => "€",
+        "GBP" => "£",
+        "KRW" => "₩",
+        "INR" => "₹",
+        _ => "",
+    };
+    let sign = if negative && cents > 0 { "-" } else { "" };
+    let amount = format!("{grouped}.{:02}", cents % 100);
+    if symbol.is_empty() {
+        format!("{sign}{code}\u{a0}{amount}")
+    } else {
+        format!("{sign}{symbol}{amount}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_balance_reads_as_the_money_format_contract_writes_it() {
+        let contract: Value = serde_json::from_str(include_str!(
+            "../../../fixtures/parity/contracts/money-format.json"
+        ))
+        .unwrap();
+        let mut checked = 0;
+        for case in contract["cases"].as_array().unwrap() {
+            let args = &case["args"];
+            if case["fn"] != "MoneyFormat.amount" || args["estimated"] != false {
+                continue;
+            }
+            for language in ["en", "zh"] {
+                assert_eq!(
+                    money_amount(
+                        &args["amount"],
+                        args["currency"].as_str().unwrap(),
+                        language == "zh"
+                    ),
+                    case["expected"][language],
+                    "{}",
+                    case["name"]
+                );
+            }
+            checked += 1;
+        }
+        assert!(checked >= 7);
+        assert_eq!(money_amount(&json!(8.85), "CNY", false), "¥8.85");
+        assert_eq!(money_amount(&json!(0.125), "USD", false), "$0.12");
+        assert_eq!(money_amount(&json!(0.135), "USD", false), "$0.14");
+        assert_eq!(money_amount(&json!(1e-7), "USD", false), "$0.00");
+    }
+
+    #[test]
+    fn vendors_follow_the_resting_order_and_a_layout_list() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-21T12:00:00Z")
+            .unwrap()
+            .timestamp_millis();
+        let snapshot = json!({
+            "language": "en",
+            "quotas": [
+                {"vendor": "claude", "name": "5h", "usedPercent": 40.0, "status": "normal", "resetAt": null},
+                {"vendor": "claude", "name": "Week", "usedPercent": 72.4, "status": "warning", "resetAt": null},
+                {"vendor": "codex", "name": "5h", "usedPercent": 90.0, "status": "stale", "resetAt": null}
+            ],
+            "billing": [{"vendor": "deepseek", "amount": 8.85, "currency": "CNY", "level": "normal"}],
+            "providers": [],
+            "approvals": [],
+            "sessions": [
+                {"id": "a", "source": "claude", "state": "running", "updatedAt": "2026-10-21T11:00:00Z"},
+                {"id": "b", "source": "codex", "state": "idle", "updatedAt": "2026-10-21T10:00:00Z"}
+            ]
+        });
+        let simple = vendors(&snapshot, "simple", now);
+        let keys: Vec<&str> = simple.iter().map(|v| v.key.as_str()).collect();
+        assert_eq!(keys, ["claude", "openai", "deepseek"]);
+        assert_eq!(simple[0].used, Some(72.4));
+        assert_eq!(simple[0].level, "warning");
+        assert_eq!(simple[0].working, 1);
+        assert_eq!(simple[1].name, "OpenAI");
+        // A stale reading is no reading.
+        assert_eq!(simple[1].used, None);
+        assert_eq!(simple[1].level, "stale");
+        assert_eq!(simple[2].balance.as_deref(), Some("¥8.85"));
+        assert_eq!(meter_label(&simple[0]), "72%");
+        assert_eq!(meter_label(&simple[2]), "¥8.85");
+        let named = configured(
+            &snapshot,
+            "simple",
+            &json!({"hud": {"agents": ["DeepSeek", "Claude Code"]}}),
+            now,
+        );
+        let keys: Vec<&str> = named.iter().map(|v| v.key.as_str()).collect();
+        assert_eq!(keys, ["deepseek", "claude"]);
+        let unknown = configured(
+            &snapshot,
+            "simple",
+            &json!({"hud": {"agents": ["kimi"]}}),
+            now,
+        );
+        assert_eq!(unknown.len(), 3);
+    }
+}
