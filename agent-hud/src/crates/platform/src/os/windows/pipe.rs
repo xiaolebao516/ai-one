@@ -23,7 +23,8 @@ use windows_sys::Win32::{
     Security::{
         Authorization::{
             ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-            GetNamedSecurityInfoW, SE_FILE_OBJECT,
+            ConvertStringSidToSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT,
+            SetNamedSecurityInfoW,
         },
         GetTokenInformation, SetFileSecurityW, TokenUser, DACL_SECURITY_INFORMATION,
         OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
@@ -144,7 +145,16 @@ pub(crate) fn private_directory(path: &Path) -> Result<(), String> {
         return Err("The IPC directory cannot be a reparse point".into());
     }
     if !owned_path(path) {
-        return Err("The IPC directory must belong to the current user".into());
+        // ai-one change: a directory created while elevated (this same user
+        // running the same product as administrator) is owned by the
+        // Administrators group, not the user, and otherwise good launches die
+        // here. That directory is still this user's: adopt it and re-check.
+        // Any other owner stays refused, so a foreign user's directory can
+        // never be adopted.
+        repair_elevated_owner(path);
+        if !owned_path(path) {
+            return Err("The IPC directory must belong to the current user".into());
+        }
     }
     let descriptor = security(true)?;
     let path = wide(path.as_os_str());
@@ -159,6 +169,86 @@ pub(crate) fn private_directory(path: &Path) -> Result<(), String> {
         return Err("The private IPC directory ACL could not be set".into());
     }
     Ok(())
+}
+
+/// The well-known SID of `BUILTIN\Administrators`. Windows gives a directory
+/// created by an elevated process this owner instead of the creating user.
+const ADMINISTRATORS_SID: &str = "S-1-5-32-544";
+
+/// Adopt an Administrators-owned directory for the current user. Only the
+/// group owner is adopted; the attempt itself needs the right to write the
+/// owner, which a caller without access to the directory does not have, so a
+/// refused foreign directory stays refused. Returns nothing; callers re-run
+/// the ownership check to see whether the repair took.
+fn repair_elevated_owner(path: &Path) {
+    fn current_administrator_owned(path: &Path) -> Option<()> {
+        let mut owner = std::ptr::null_mut();
+        let mut descriptor = std::ptr::null_mut();
+        let wide = wide(path.as_os_str());
+        let status = unsafe {
+            GetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                &mut owner,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        let _descriptor = Local(descriptor);
+        if status != 0 || owner.is_null() {
+            return None;
+        }
+        (owner_is_administrators(owner)).then_some(())
+    }
+    fn owner_is_administrators(owner: *mut c_void) -> bool {
+        let mut text = std::ptr::null_mut();
+        if unsafe { ConvertSidToStringSidW(owner, &mut text) } == 0 {
+            return false;
+        }
+        let text = Local(text.cast());
+        let mut count = 0;
+        unsafe {
+            while *text.0.cast::<u16>().add(count) != 0 {
+                count += 1;
+            }
+            String::from_utf16_lossy(std::slice::from_raw_parts(
+                text.0.cast::<u16>(),
+                count,
+            )) == ADMINISTRATORS_SID
+        }
+    }
+    if current_administrator_owned(path).is_none() {
+        return;
+    }
+    let Ok(current) = sid() else { return };
+    let mut sid_pointer = std::ptr::null_mut();
+    let current = wide(OsStr::new(&current));
+    if unsafe { ConvertStringSidToSidW(current.as_ptr(), &mut sid_pointer) } == 0 {
+        return;
+    }
+    let wide = wide(path.as_os_str());
+    unsafe {
+        SetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            sid_pointer,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+        LocalFree(sid_pointer.cast());
+    }
+}
+
+/// Decide, as a pure check, whether an owner may be adopted: only the
+/// Administrators group owner marks an elevated creation of this same user.
+#[cfg(test)]
+fn adoptable_owner(owner: Option<&str>, _current: &str) -> bool {
+    owner == Some(ADMINISTRATORS_SID)
 }
 pub(crate) fn name(data: &Path, channel: &str) -> Result<String, String> {
     let mut hash = Sha256::new();
@@ -386,4 +476,19 @@ pub(crate) fn request(
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::adoptable_owner;
+
+    #[test]
+    fn only_an_administrators_group_owner_is_adoptable() {
+        // A directory created while elevated carries the group owner and is
+        // adopted; any other owner (another user, unknown) stays refused.
+        assert!(adoptable_owner(Some(super::ADMINISTRATORS_SID), "S-1-5-21-1-1000"));
+        assert!(!adoptable_owner(Some("S-1-5-21-1-1000"), "S-1-5-21-1-1000"));
+        assert!(!adoptable_owner(Some("S-1-5-21-1-1001"), "S-1-5-21-1-1000"));
+        assert!(!adoptable_owner(None, "S-1-5-21-1-1000"));
+    }
 }
