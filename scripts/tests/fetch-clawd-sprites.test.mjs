@@ -91,6 +91,34 @@ test('validateClawdSprites throws on out-of-range delta pixel offset', () => {
   );
 });
 
+test('validateClawdSprites throws when palette exceeds 36 colors', () => {
+  const payload = makeSyntheticValidSprites();
+  payload.sprites.Walking.palette = Array.from({ length: 37 }, () => '#112233');
+  assert.throws(
+    () => validateClawdSprites(JSON.stringify(payload)),
+    /Invalid palette length \(must be 1\.\.36\) for sprite: "Walking"/,
+  );
+});
+
+test('validateClawdSprites throws on non-base36 delta character syntax', () => {
+  const payload = makeSyntheticValidSprites();
+  payload.sprites.Walking.deltas[0] = '0!0'; // invalid character !
+  assert.throws(
+    () => validateClawdSprites(JSON.stringify(payload)),
+    /Invalid delta pixel offset syntax "0!" in sprite: "Walking"/,
+  );
+});
+
+test('validateClawdSprites throws when dimensions exceed 65536', () => {
+  const payload = makeSyntheticValidSprites();
+  payload.sprites.Walking.w = 300;
+  payload.sprites.Walking.h = 300;
+  assert.throws(
+    () => validateClawdSprites(JSON.stringify(payload)),
+    /Sprite dimensions exceed 65536 pixel limit for sprite: "Walking"/,
+  );
+});
+
 test('fetch-clawd-sprites CLI --clean removes existing target file', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fetch-sprites-test-'));
   const target = path.join(tmpDir, 'clawd-sprites.json');

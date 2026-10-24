@@ -210,19 +210,39 @@ function collectFiles(inputDir, exeName) {
 function detectProprietaryClawdArt(hudExePath) {
   const proprietaryArt = path.join(HUD_ASSETS, 'clawd-sprites.json');
   if (fs.existsSync(proprietaryArt)) return 'clawd-sprites.json present in HUD assets';
-  const distAssets = path.join('agent-hud', 'src', 'apps', 'desktop', 'dist', 'assets');
-  if (fs.existsSync(distAssets)) {
-    const found = fs.readdirSync(distAssets).find((file) => /^clawd-sprites.*\.json$/i.test(file));
-    if (found) return `bundled ${found} in HUD dist/assets`;
+
+  const origMarker = path.join('agent-hud', 'target', 'release', '.hud-art-original');
+  if (fs.existsSync(origMarker)) return 'build provenance marker indicates original art was bundled (.hud-art-original present)';
+
+  const distDir = path.join('agent-hud', 'src', 'apps', 'desktop', 'dist');
+  if (fs.existsSync(distDir)) {
+    const stack = [distDir];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        const full = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(full);
+        } else if (/clawd-sprites/i.test(entry.name)) {
+          return `bundled asset "${entry.name}" in HUD dist`;
+        } else if (/\.(js|json|html)$/i.test(entry.name)) {
+          const content = fs.readFileSync(full);
+          if (content.includes(Buffer.from('DancingHappy')) || content.includes(Buffer.from('clawd-sprites'))) {
+            return `embedded Clawd sprite table in HUD dist file "${entry.name}"`;
+          }
+        }
+      }
+    }
   }
+
   if (hudExePath && fs.existsSync(hudExePath)) {
     try {
       const content = fs.readFileSync(hudExePath);
       if (content.includes(Buffer.from('DancingHappy')) || content.includes(Buffer.from('clawd-sprites'))) {
         return 'embedded Clawd sprite table inside HUD binary';
       }
-    } catch {
-      // ignore read error
+    } catch (err) {
+      return `could not verify HUD binary integrity (${err.message})`;
     }
   }
   return null;

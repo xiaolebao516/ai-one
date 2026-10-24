@@ -53,8 +53,11 @@ export function validateClawdSprites(rawContent) {
     if (!Number.isInteger(sprite.w) || !Number.isInteger(sprite.h) || sprite.w <= 0 || sprite.h <= 0) {
       throw new Error(`Invalid dimensions for sprite: "${name}"`);
     }
-    if (!Array.isArray(sprite.palette) || sprite.palette.length === 0) {
-      throw new Error(`Invalid palette for sprite: "${name}"`);
+    if (sprite.w * sprite.h > 65536) {
+      throw new Error(`Sprite dimensions exceed 65536 pixel limit for sprite: "${name}"`);
+    }
+    if (!Array.isArray(sprite.palette) || sprite.palette.length === 0 || sprite.palette.length > 36) {
+      throw new Error(`Invalid palette length (must be 1..36) for sprite: "${name}"`);
     }
     for (const color of sprite.palette) {
       if (typeof color !== 'string' || !/^#[0-9a-f]{3}([0-9a-f]{3}([0-9a-f]{2})?)?$/i.test(color)) {
@@ -66,11 +69,13 @@ export function validateClawdSprites(rawContent) {
     }
     for (let i = 0; i < sprite.base.length; i += 1) {
       const ch = sprite.base[i];
-      if (ch !== '.') {
-        const idx = parseInt(ch, 36);
-        if (Number.isNaN(idx) || idx >= sprite.palette.length) {
-          throw new Error(`Invalid base palette index "${ch}" in sprite: "${name}"`);
-        }
+      if (ch === '.') continue;
+      if (!/^[0-9a-z]$/i.test(ch)) {
+        throw new Error(`Invalid base character "${ch}" in sprite: "${name}"`);
+      }
+      const idx = parseInt(ch, 36);
+      if (Number.isNaN(idx) || idx >= sprite.palette.length) {
+        throw new Error(`Invalid base palette index "${ch}" in sprite: "${name}"`);
       }
     }
     if (!Array.isArray(sprite.deltas)) {
@@ -86,8 +91,15 @@ export function validateClawdSprites(rawContent) {
       }
       for (const change of delta.split(',')) {
         if (change.length >= 2) {
-          const pixel = parseInt(change.slice(0, -1), 36);
+          const pixelText = change.slice(0, -1);
           const colorChar = change.slice(-1);
+          if (!/^[0-9a-z]+$/i.test(pixelText)) {
+            throw new Error(`Invalid delta pixel offset syntax "${pixelText}" in sprite: "${name}"`);
+          }
+          if (!/^[0-9a-z.]$/i.test(colorChar)) {
+            throw new Error(`Invalid delta color character "${colorChar}" in sprite: "${name}"`);
+          }
+          const pixel = parseInt(pixelText, 36);
           const colorIdx = colorChar === '.' ? 255 : parseInt(colorChar, 36);
           if (!Number.isInteger(pixel) || pixel < 0 || pixel >= sprite.w * sprite.h) {
             throw new Error(`Delta pixel offset out of range in sprite: "${name}"`);
@@ -107,6 +119,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
   const isClean = process.argv.includes('--clean');
   const strict = process.argv.includes('--strict') || process.env.CLAWD_SPRITES_STRICT === '1';
   const target = process.env.CLAWD_SPRITES_DEST ? path.resolve(process.env.CLAWD_SPRITES_DEST) : DEFAULT_TARGET;
+  const releaseDir = path.resolve(root, 'agent-hud', 'target', 'release');
 
   if (isClean) {
     let cleaned = 0;
@@ -114,22 +127,24 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
       fs.unlinkSync(target);
       cleaned += 1;
     }
-    // Also clean bundled sprite JSON in desktop dist/assets if present
-    const distAssets = path.resolve(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist', 'assets');
-    if (fs.existsSync(distAssets)) {
-      for (const file of fs.readdirSync(distAssets)) {
-        if (/^clawd-sprites.*\.json$/i.test(file)) {
-          fs.unlinkSync(path.join(distAssets, file));
-          cleaned += 1;
-        }
-      }
+    // Also remove bundled sprite JSON in desktop dist/
+    const distDir = path.resolve(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist');
+    if (fs.existsSync(distDir)) {
+      fs.rmSync(distDir, { recursive: true, force: true });
+      cleaned += 1;
     }
-    // Also clean any existing HUD release binary to prevent stale packaging
-    const hudExe = path.resolve(root, 'agent-hud', 'target', 'release', 'ai-one-hud.exe');
+    // Also remove built HUD release binary so stale builds cannot be packaged
+    const hudExe = path.join(releaseDir, 'ai-one-hud.exe');
     if (fs.existsSync(hudExe)) {
       fs.unlinkSync(hudExe);
       cleaned += 1;
     }
+    // Touch clean provenance marker and remove original marker
+    fs.mkdirSync(releaseDir, { recursive: true });
+    fs.writeFileSync(path.join(releaseDir, '.hud-art-clean'), `${Date.now()}`, 'utf8');
+    const origMarker = path.join(releaseDir, '.hud-art-original');
+    if (fs.existsSync(origMarker)) fs.unlinkSync(origMarker);
+
     console.log(`[fetch-clawd-sprites] Cleaned ${cleaned} proprietary asset(s) and build artifact(s).`);
     process.exit(0);
   }
@@ -171,6 +186,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
     const tmp = `${target}.tmp.${Date.now()}`;
     fs.writeFileSync(tmp, text, 'utf8');
     fs.renameSync(tmp, target);
+
+    // Record provenance marker
+    fs.mkdirSync(releaseDir, { recursive: true });
+    fs.writeFileSync(path.join(releaseDir, '.hud-art-original'), `${Date.now()}`, 'utf8');
+    const cleanMarker = path.join(releaseDir, '.hud-art-clean');
+    if (fs.existsSync(cleanMarker)) fs.unlinkSync(cleanMarker);
+
     console.log('[fetch-clawd-sprites] Successfully downloaded, validated and saved clawd-sprites.json.');
   } catch (error) {
     if (strict) {

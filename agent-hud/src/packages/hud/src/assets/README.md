@@ -17,9 +17,10 @@ are preserved here without applying those rendering transformations.
 The on-demand `clawd-sprites.json` (when fetched via `pnpm hud:fetch-art`) is consumed by the original Clawd bot renderer; it is not committed to the repository.
 It contains Anthropic's artwork copied unchanged from Claude for macOS
 2.37337.1's Clawd Quest sprite table. Copyright Anthropic PBC, all rights
-reserved; this artwork is **not covered by this repository's license**. See
-the Clawd entry in the copied `THIRD_PARTY_NOTICES.txt` for its original source
-and extraction details. The other original bots are drawn procedurally by
+reserved; this artwork is **not covered by this repository's license**. Public binary distribution
+of builds containing this artwork requires Anthropic permission; when absent, the renderer
+falls back to the procedural bot. See the Clawd entry in the copied `THIRD_PARTY_NOTICES.txt`
+for its original source and extraction details. The other original bots are drawn procedurally by
 `Bots/BotRenderer.swift` and related source files and have no raster sprite
 assets to copy.
 

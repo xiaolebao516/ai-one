@@ -171,3 +171,32 @@ test('--clean-art fails when stale binary contains embedded Clawd sprites even i
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('--clean-art fails when dist contains clawd-sprites asset', () => {
+  const proprietaryArt = path.join(root, 'agent-hud', 'src', 'packages', 'hud', 'src', 'assets', 'clawd-sprites.json');
+  const backup = path.join(root, 'agent-hud', 'src', 'packages', 'hud', 'src', 'assets', 'clawd-sprites.json.bak');
+  const wasPresent = fs.existsSync(proprietaryArt);
+  if (wasPresent) {
+    fs.renameSync(proprietaryArt, backup);
+  }
+  const distDir = path.join(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist');
+  const dummyFile = path.join(distDir, 'clawd-sprites-test.json');
+  fs.mkdirSync(distDir, { recursive: true });
+  fs.writeFileSync(dummyFile, 'dummy');
+  const { dir, out, result } = pack((tmp) => {
+    const hud = path.join(tmp, 'ai-one-hud.exe');
+    fs.writeFileSync(hud, 'clean hud');
+    return ['--hud', hud, '--clean-art'];
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /bundled asset "clawd-sprites-test\.json" in HUD dist/);
+    assert.ok(!fs.existsSync(out));
+  } finally {
+    if (fs.existsSync(dummyFile)) fs.unlinkSync(dummyFile);
+    if (wasPresent && fs.existsSync(backup)) {
+      fs.renameSync(backup, proprietaryArt);
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
