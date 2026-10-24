@@ -29,6 +29,10 @@ afterEach(async () => {
 
 const githubLoader: GitHubLoader = async (repos) => repos.map((repo) => ({ repo, tasks: [], status: 'complete', errors: [], pagination: {}, observedAt: '2026-10-23T08:00:00Z' }));
 
+function demoPrefs() {
+  window.localStorage.setItem(STORAGE_KEYS.prefs, JSON.stringify({ source: 'demo', repos: ['o/a'], theme: 'light', dispatchRepo: '' }));
+}
+
 function realPrefs(dispatchRepo: string) {
   window.localStorage.setItem(STORAGE_KEYS.prefs, JSON.stringify({ source: 'github', repos: ['o/a'], theme: 'light', dispatchRepo }));
 }
@@ -39,13 +43,13 @@ async function mount(options: { dispatchLoader?: DispatchLoader; isDesktop?: boo
   const root = createRoot(container);
   live.push(root);
   await act(async () =>
-    root.render(<Workbench locale={options.locale ?? 'en'} onOpenClassic={() => {}} githubLoader={githubLoader} dispatchLoader={options.dispatchLoader} isDesktop={options.isDesktop} />),
+    root.render(<Workbench locale={options.locale ?? 'en'} renderChat={() => null} githubLoader={githubLoader} dispatchLoader={options.dispatchLoader} isDesktop={options.isDesktop} />),
   );
   return container;
 }
 
 async function openResources(container: HTMLElement) {
-  await act(async () => (container.querySelector('[data-testid="channel-button"]') as HTMLElement).click());
+  await act(async () => (container.querySelector('nav li:last-child button') as HTMLElement).click());
 }
 
 const channel = (container: HTMLElement) => container.querySelector('[data-testid="prodex-channel"]')?.textContent ?? '';
@@ -67,9 +71,10 @@ const RAW = {
 
 describe('resources page', () => {
   it('replaces the placeholder and shows demo dispatch records labelled as demo', async () => {
+    demoPrefs();
     const container = await mount();
     await openResources(container);
-    expect(container.querySelector('main h1')?.textContent).toBe('Resources');
+    expect(container.querySelector('main h1')?.textContent).toBe('Quota');
     expect(container.textContent).not.toContain('Being built');
     expect(channel(container)).toContain('Demo dispatch records');
     expect(container.querySelector('[data-testid="dispatch-receipts"]')).not.toBeNull();
@@ -85,7 +90,6 @@ describe('resources page', () => {
     await openResources(container);
     expect(loader).not.toHaveBeenCalled();
     expect(channel(container)).toContain('Enter the local repository folder');
-    expect(container.querySelector('[data-testid="channel-button"]')?.getAttribute('aria-label')).toContain('Not read');
   });
 
   it('reads local records, counts recent problems and keeps reply text out', async () => {
@@ -99,7 +103,6 @@ describe('resources page', () => {
     // The old mismatch is counted above but is outside the last-24-hours window.
     expect(text).toContain('Last 24 h: 1 timed out or mismatched, 0 blocked for other reasons');
     expect(text).toContain('Slots: 1 claimed · 1 free · 0 stale heartbeat · 0 unreadable');
-    expect(container.querySelector('[data-testid="channel-button"]')?.getAttribute('aria-label')).toContain('Recent problems');
   });
 
   it('says the read failed instead of showing old records', async () => {
@@ -160,9 +163,10 @@ describe('resources page', () => {
   });
 
   it('shows Chinese copy in a Chinese locale', async () => {
+    demoPrefs();
     const container = await mount({ locale: 'zh-CN' });
     await openResources(container);
-    expect(container.querySelector('main h1')?.textContent).toBe('资源');
+    expect(container.querySelector('main h1')?.textContent).toBe('额度');
     expect(channel(container)).toContain('演示派工记录');
     expect(container.textContent).toContain('协调者与本地 Agent');
   });

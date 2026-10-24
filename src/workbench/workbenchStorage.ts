@@ -20,7 +20,7 @@ export interface WorkbenchPrefs {
   dispatchRepo: string;
 }
 
-export const DEFAULT_PREFS: WorkbenchPrefs = { source: 'demo', repos: [...DEFAULT_REPOS], theme: 'system', dispatchRepo: '' };
+export const DEFAULT_PREFS: WorkbenchPrefs = { source: 'github', repos: [...DEFAULT_REPOS], theme: 'system', dispatchRepo: '' };
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
 
@@ -89,7 +89,7 @@ export function loadPrefs(storage: StorageLike | undefined = defaultStorage()): 
   if (!raw) return { ...DEFAULT_PREFS, repos: [...DEFAULT_PREFS.repos] };
   try {
     const parsed = JSON.parse(raw) as Partial<Record<keyof WorkbenchPrefs, unknown>>;
-    const source = parsed.source === 'github' ? 'github' : 'demo';
+    const source = parsed.source === 'demo' ? 'demo' : 'github';
     const theme = parsed.theme === 'light' || parsed.theme === 'dark' ? parsed.theme : 'system';
     const repos = Array.isArray(parsed.repos)
       ? [...new Set(parsed.repos.map((repo) => (typeof repo === 'string' ? normalizeRepo(repo) : undefined)).filter((repo): repo is string => Boolean(repo)))].slice(0, MAX_REPOS)

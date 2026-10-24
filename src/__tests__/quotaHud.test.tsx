@@ -461,7 +461,7 @@ describe('Workbench quota title button', () => {
     const loader: QuotaHudLoader = async () => rawReading('absent', null, new Date().toISOString());
     const missing = JSON.stringify({ started: false, reason: 'exe-not-found' });
     const mounted = await mount(
-      <Workbench locale="zh-CN" onOpenClassic={noOp} isDesktop={true} quotaHudLoader={loader} quotaHudStarter={async () => missing} />,
+      <Workbench locale="zh-CN" renderChat={() => null} isDesktop={true} quotaHudLoader={loader} quotaHudStarter={async () => missing} />,
     );
     await flush();
     await flush();
@@ -480,7 +480,7 @@ describe('Workbench quota title button', () => {
       providers: [{ id: 'codex', detected: true, accountStatus: { status: 'ready', notice: null, checkedAt: freshAt } }],
     }), new Date().toISOString());
     const mounted = await mount(
-      <Workbench locale="zh-CN" onOpenClassic={noOp} isDesktop={true} quotaHudLoader={loader} quotaHudStarter={async () => ({ started: true })} />,
+      <Workbench locale="zh-CN" renderChat={() => null} isDesktop={true} quotaHudLoader={loader} quotaHudStarter={async () => ({ started: true })} />,
     );
     await flush();
     await flush();
@@ -496,7 +496,7 @@ describe('Workbench quota title button', () => {
   it('uses the neutral dot and unknown label when no fresh usage is available', async () => {
     const loader: QuotaHudLoader = async () => rawReading('absent', null, new Date().toISOString());
     const mounted = await mount(
-      <Workbench locale="zh-CN" onOpenClassic={noOp} isDesktop={true} quotaHudLoader={loader} quotaHudStarter={async () => ({ started: false })} />,
+      <Workbench locale="zh-CN" renderChat={() => null} isDesktop={true} quotaHudLoader={loader} quotaHudStarter={async () => ({ started: false })} />,
     );
     await flush();
     await flush();

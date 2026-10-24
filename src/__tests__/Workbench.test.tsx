@@ -8,11 +8,9 @@ vi.mock('@tauri-apps/api/app', () => ({ getVersion: vi.fn() }));
 import { TASK_HUD_MOCK_TASKS } from '../ui/taskHudMockData';
 import { Workbench } from '../workbench/Workbench';
 import { paletteCommands } from '../workbench/paletteCommands';
-import { HomeView } from '../workbench/views/HomeView';
 import { TaskView } from '../workbench/views/TaskView';
 import { TasksView } from '../workbench/views/TasksView';
 import { workbenchText } from '../workbench/workbenchText';
-import type { AcceptanceState } from '../workbench/useUserAcceptance';
 
 function visibleText(html: string): string {
   return html
@@ -26,74 +24,45 @@ function visibleText(html: string): string {
 const noop = () => {};
 
 describe('Workbench shell', () => {
-  it('opens on the overview with navigation, the status island and the demo-data notice', () => {
-    const html = renderToStaticMarkup(<Workbench locale="zh-CN" onOpenClassic={noop} />);
+  const chat = (suspended: boolean) => <div data-testid="chat-stub" data-suspended={String(suspended)} />;
+
+  it('opens straight on the chat, with the four tabs and nothing else in the way', () => {
+    const html = renderToStaticMarkup(<Workbench locale="zh-CN" renderChat={chat} />);
     const text = visibleText(html);
     expect(html).toContain('data-testid="workbench"');
     expect(html).toContain('aria-label="主导航"');
-    for (const label of ['总览', '任务', '聊天', '阶段与流程', '资源']) expect(text).toContain(label);
-    expect(html).toContain('aria-current="page"');
-    expect(text).toContain('演示数据：这里的任务、提交、审查都是虚构的示例');
-    expect(text).toMatch(/\d+ 进行中/);
-    expect(text).toContain('旧版聊天界面');
+    for (const label of ['聊天与讨论', '派活', '任务', '额度']) expect(text).toContain(label);
+    expect(html).toContain('data-testid="chat-stub" data-suspended="false"');
+    expect(text).not.toContain('旧版聊天界面');
+    expect(text).not.toContain('阶段与流程');
+    expect(text).not.toContain('总览');
   });
 
-  it('has palette commands for every view, the data source, the theme and the classic UI', () => {
+  it('has palette commands for every tab, the data source and the theme', () => {
     const ids = paletteCommands(workbenchText('en'), TASK_HUD_MOCK_TASKS, 'en').map((command) => command.id);
-    for (const id of ['go-home', 'go-tasks', 'go-chat', 'go-flows', 'go-resources', 'source-demo', 'source-github', 'refresh', 'theme', 'classic']) {
+    for (const id of ['go-chat', 'go-chatled', 'go-tasks', 'go-resources', 'source-demo', 'source-github', 'refresh', 'theme']) {
       expect(ids).toContain(id);
     }
+    expect(ids).not.toContain('classic');
     expect(ids.filter((id) => id.startsWith('task-'))).toHaveLength(TASK_HUD_MOCK_TASKS.length);
-  });
-  it('retains the demo task model acceptance count', () => {
-    const html = renderToStaticMarkup(<Workbench locale="en" onOpenClassic={noop} />);
-    const count = TASK_HUD_MOCK_TASKS.filter((task) => task.status === 'accept').length;
-    expect(html).toContain(`aria-label="${count} acceptances"`);
   });
 });
 
-describe('Overview', () => {
-  it('leads with the needs-you count and lists needs-you before in-progress work', () => {
-    const text = visibleText(renderToStaticMarkup(<HomeView locale="en" tasks={TASK_HUD_MOCK_TASKS} health="demo" onOpenTask={noop} onShowTasks={noop} />));
-    expect(text).toMatch(/\d+ tasks moving, \d+ waiting for you/);
-    expect(text.indexOf('Needs you')).toBeLessThan(text.indexOf('In progress'));
-    expect(text).toContain('From the demo data on this page.');
-  });
-
-  it('cannot start work yet and says why instead of pretending', () => {
-    const html = renderToStaticMarkup(<HomeView locale="en" tasks={[]} health="demo" onOpenTask={noop} onShowTasks={noop} />);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*title="Not connected yet[^"]*"/);
-    expect(visibleText(html)).toContain('ai-one cannot dispatch work on its own');
-  });
-
+describe('Task list', () => {
   it('never turns a failed or pending GitHub read into "no tasks"', () => {
-    const failed = visibleText(renderToStaticMarkup(<HomeView locale="en" tasks={[]} health="failed" onOpenTask={noop} onShowTasks={noop} />));
-    expect(failed).toContain('GitHub could not be read');
-    expect(failed).not.toContain('No tasks here yet');
     const loading = visibleText(renderToStaticMarkup(<TasksView locale="en" tasks={[]} health="loading" onOpenTask={noop} />));
     expect(loading).toContain('Reading GitHub');
     expect(loading).not.toContain('No tasks in this view');
+    const failed = visibleText(renderToStaticMarkup(<TasksView locale="en" tasks={[]} health="failed" onOpenTask={noop} />));
+    expect(failed).toContain('GitHub could not be read');
     const empty = visibleText(renderToStaticMarkup(<TasksView locale="en" tasks={[]} health="complete" onOpenTask={noop} />));
     expect(empty).toContain('GitHub returned no open Issues or PRs');
-    const partial = visibleText(renderToStaticMarkup(<HomeView locale="en" tasks={[]} health="partial" onOpenTask={noop} onShowTasks={noop} />));
-    expect(partial).toContain('Only part of GitHub could be read');
-    expect(partial).not.toContain('No tasks here yet');
   });
 
-  it('never says "nothing waiting for you" while some task state is unreadable', () => {
-    const running = TASK_HUD_MOCK_TASKS.find((item) => item.status === 'running')!;
-    const unreadable = { ...running, id: 'x-unknown', status: 'unknown' as const };
-    const text = visibleText(renderToStaticMarkup(<HomeView locale="en" tasks={[running, unreadable]} health="complete" onOpenTask={noop} onShowTasks={noop} />));
-    expect(text).toContain('1 more with an unreadable state');
-    expect(text).not.toContain('nothing waiting for you');
-  });
-  it.each(['blocked', 'decide'] as const)('keeps independent %s work after the same Issue acceptance is acknowledged', (status) => {
-    const task = { ...TASK_HUD_MOCK_TASKS[0], repo: 'o/r', issue: 7, status, title: { en: 'Independent action', zh: '仍需处理' } };
-    const item = { key: 'o/r:7:test', repo: 'o/r', issue: 7, title: 'Check appearance' };
-    const acceptance: AcceptanceState = { items: [item], records: { [item.key]: { ...item, kind: 'approved', sync: 'confirmed' } },
-      loading: false, partial: false, errors: [], storageError: false, issueStates: {}, progress: {}, submit: async () => {}, retryFix: async () => {} };
-    const html = renderToStaticMarkup(<HomeView locale="en" tasks={[task]} health="complete" acceptance={acceptance} onOpenTask={noop} onShowTasks={noop} />);
-    expect(visibleText(html)).toContain('Independent action');
+  it('shows the lead (acceptance cards) above the list', () => {
+    const html = renderToStaticMarkup(<TasksView locale="en" tasks={TASK_HUD_MOCK_TASKS} health="demo" onOpenTask={noop} lead={<p id="lead">lead</p>} />);
+    expect(html.indexOf('id="lead"')).toBeGreaterThan(html.indexOf('<h1'));
+    expect(html.indexOf('id="lead"')).toBeLessThan(html.indexOf('<section'));
   });
 });
 

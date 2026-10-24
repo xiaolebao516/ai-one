@@ -208,7 +208,7 @@ fn unix_millis() -> u128 {
 /// The hand-over prompt. Fixed wording; only the repository, Issue number and a session tag vary.
 fn build_prompt(repo: &str, issue: u64, agent: Agent, session: &str) -> String {
     format!(
-        "按 AGENTS.md 快速开发模式接手 {repo} 的 Issue #{issue}。先在仓库根目录运行：node scripts/agent-entry/cli.mjs take {issue} --agent \"{id}\"；认领成功（退出码 0）才按输出开工，退出码 2 表示已被别人认领，立即停手。全程遵守 AGENTS.md，做完在 Issue 留一段说人话的总结。",
+        "按 AGENTS.md 接手 {repo} 的 Issue #{issue}。先在仓库根目录运行：node scripts/agent-entry/cli.mjs take {issue} --agent \"{id}\"；认领成功（退出码 0）才按输出开工，退出码 2 表示已被别人认领，立即停手。全程遵守 AGENTS.md，做完在 Issue 留一段说人话的总结。",
         id = agent_id(agent, session)
     )
 }

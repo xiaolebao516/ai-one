@@ -4,10 +4,9 @@ import { NAV_VIEWS, type NavView, type PaletteCommand } from './workbenchModel';
 import type { WorkbenchText, WorkbenchTextKey } from './workbenchText';
 
 export const NAV_KEY: Record<NavView, WorkbenchTextKey> = {
-  home: 'navHome',
-  tasks: 'navTasks',
   chat: 'navChat',
-  flows: 'navFlows',
+  chatled: 'navChatLed',
+  tasks: 'navTasks',
   resources: 'navResources',
 };
 
@@ -28,12 +27,10 @@ export function paletteCommands(text: WorkbenchText, tasks: readonly HudTask[], 
   }));
   return [
     ...views,
-    { id: 'go-chatled', label: text.t('chatLedPageTitle'), keywords: 'chat-led coordinator forward', action: { kind: 'go', route: { view: 'chatled' } } },
     { id: 'source-demo', label: text.t('paletteSourceDemo'), keywords: 'demo mock', action: { kind: 'source', source: 'demo' } },
     { id: 'source-github', label: text.t('paletteSourceGithub'), keywords: 'github', action: { kind: 'source', source: 'github' } },
     { id: 'refresh', label: text.t('paletteRefresh'), keywords: 'refresh reload', action: { kind: 'refresh' } },
     { id: 'theme', label: text.t('paletteTheme'), keywords: 'theme dark light', action: { kind: 'theme' } },
-    { id: 'classic', label: text.t('paletteClassic'), keywords: 'classic chat legacy', action: { kind: 'classic' } },
     ...taskCommands,
   ];
 }

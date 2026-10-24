@@ -1,23 +1,17 @@
-# ai-one：AI 协作工作台
+# ai-one：多 AI 协作桌面工具
 
-ai-one 的目标是做一个服务自己实际开发的、任务驱动的多 AI 协作工作台：先把已在仓库外跑通的 Claude Code 经 Prodex 派 ChatGPT 开发、独立审计、返工、复审的工作方式，集中到一个有明确进度的入口，复用用户已有的 AI 网页订阅。
+ai-one 是一个 Windows 桌面应用，复用你已经登录的 AI 网页订阅（ChatGPT、Claude、Gemini、Grok），把日常最常用的几件事放在一个窗口里。打开就是四个标签页：
 
-**当前产品需求的唯一入口是 [Spec #32](https://github.com/xiaolebao516/ai-one/issues/32)。** 协作规则见 [`AGENTS.md`](AGENTS.md)，文档导航见 [`docs/README.md`](docs/README.md)，技术调研见 [`TECHNICAL-RESEARCH-V1.md`](TECHNICAL-RESEARCH-V1.md)。
-
-## 当前状态
-
-下表区分四类状态；愿景不等于已实现，状态以对应 Issue / PR 为准。
-
-| 状态 | 内容 |
+| 标签 | 能做什么 |
 |---|---|
-| **已进入 `main`** | 应用代码以 [Multi-AI Chat Desktop](https://github.com/TED-H-com/multi-ai-chat-desktop) `v1.9.7`（`6bcf904`）为基线导入，加一处截断保护修复（#2、#3 / PR #14）；发送忙碌门禁与停止失败可见（#15 / PR #16）；Issue-first 的 Spec / Task / Handoff 模板与协作规则（#29 / PR #30）。目前运行的仍是上游应用的功能加这些改动。另有 v2 产品形态与交互原型的**设计稿**（#33 / PR #34：[`docs/design/v2-product-design.md`](docs/design/v2-product-design.md)、[`docs/design/v2-prototype/`](docs/design/v2-prototype/index.html)），只是设计，不含功能实现。 |
-| **进行中，待验收** | 多轮双 AI 讨论与独立审计（[#18](https://github.com/xiaolebao516/ai-one/issues/18) / PR #19，Draft，真实三 provider 的 Windows WebView 测试待核实）。其余进行中的 Task 以 GitHub 上的开放 PR 为准。 |
-| **外部实验已验证，未集成** | Claude Code 经 Prodex 派 ChatGPT 执行 GitHub 写入、独立审查、按评论返工、多 HEAD 复审与恢复（#26 / #27 / PR #28）。这是在 ai-one 之外跑通的工作流；ai-one 应用内**没有**自动派工或无人值守调度。 |
-| **设计 / 规划** | 任务 HUD、跨仓库视图、自动解析 REVISE 并调度、阶段预设与自定义、CC 与网页 Chat 的双向派工、可靠额度显示（见 Spec #32）。 |
+| **聊天与讨论** | 一句话同时问多个 AI、并排看回答；或选一个预设模式，让几个 AI 互相讨论、交叉审查，最后出结论。 |
+| **派活** | 让一个网页 Chat（ChatGPT）当协调者，ai-one 把它的指令转发给其他已登录的 Chat，并把完整回复送回去。 |
+| **任务** | 看 GitHub 仓库里各任务在做什么、哪些等你验收；在任意一行点「派工」，把任务交给 Claude Code、Codex、WorkBuddy 或 Antigravity。 |
+| **额度** | 看各 AI 的登录状态和额度；可启动额度 HUD 小窗。读不到的额度如实显示“未知”。 |
 
-本地测试通过不代表网页登录、工具调用或完整回复转发已在真实账号下验收；真机结论只来自各 Task 的实际运行记录。
+聊天页一直保留：切到别的标签再回来，正在进行的对话还在。快捷键 `Ctrl+1…4` 切标签，`Ctrl+K` 打开命令面板。
 
-来源、未导入的内容和许可见 [`NOTICE.md`](NOTICE.md)。上游原 README 见 [上游 `6bcf904` 的 README](https://github.com/TED-H-com/multi-ai-chat-desktop/blob/6bcf904dfce890f7ebe198cbfc329bf8d685ce62/README.md)。
+协作规则见 [`AGENTS.md`](AGENTS.md)。应用基于 [Multi-AI Chat Desktop](https://github.com/TED-H-com/multi-ai-chat-desktop) `v1.9.7`，来源与许可见 [`NOTICE.md`](NOTICE.md)。
 
 ## 目录
 
@@ -152,7 +146,7 @@ node scripts/agent/stop.mjs --json
 
 ## 协作方式
 
-任务以 GitHub Issue 为准，每个 Issue 对应一个分支和一个 PR，交接写在 Issue 或 PR 评论里。详见 [`AGENTS.md`](AGENTS.md)。
+一件事一个 Issue、一个分支、一个 PR；自己测、真机看过就合并，只有高风险改动才找一轮独立审计。详见 [`AGENTS.md`](AGENTS.md)。
 
 ## 许可
 

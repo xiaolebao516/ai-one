@@ -64,7 +64,7 @@ export function ConversationSidebar({
         </button>
         {!collapsed ? (
           <span className="min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            Multi-AI Chat
+            ai-one
             <span className="ai-sister-only ai-sister-brand-subtitle">AI-Sister Edition</span>
           </span>
         ) : null}
