@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const script = path.join(root, 'scripts', 'pack-portable.mjs');
@@ -399,6 +400,68 @@ test('fails closed when binary contains full single-encoded Base64 Clawd sprite 
 test('default packaging fails closed when arbitrary extension (.dat, .pak, .txt) in main app contains sprite table with --no-hud', () => {
   const { dir, out, result } = pack((tmp, input) => {
     fs.writeFileSync(path.join(input, 'cache.dat'), 'data payload with {"sprites":{},"palette":["#000"],"deltas":["00"]} table');
+    return ['--no-hud'];
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /proprietary Clawd sprite table was detected/);
+    assert.ok(!fs.existsSync(out));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('default packaging fails closed when input directory contains spoofed NOTICE.md with sprite table', () => {
+  const { dir, out, result } = pack((tmp, input) => {
+    fs.writeFileSync(path.join(input, 'NOTICE.md'), 'spoofed notice containing {"sprites":{},"palette":["#000"],"deltas":["00"]} table');
+    return ['--no-hud'];
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /proprietary Clawd sprite table was detected/);
+    assert.ok(!fs.existsSync(out));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('fails closed when binary or input contains multiline wrapped Base64 sprite table', () => {
+  const { dir, out, result } = pack((tmp, input) => {
+    const raw = JSON.stringify({
+      sprites: {
+        Walking: {
+          palette: ['#fff'],
+          deltas: ['00'],
+        },
+      },
+    });
+    const b64 = Buffer.from(raw).toString('base64');
+    // Multiline chunking with mixed newlines (\r\n and \n)
+    const multiline = b64.match(/.{1,12}/g).join('\r\n');
+    fs.writeFileSync(path.join(input, 'script.js'), `// Some script\nconst data = "${multiline}";\n`);
+    return ['--no-hud'];
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /proprietary Clawd sprite table was detected/);
+    assert.ok(!fs.existsSync(out));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('fails closed when input contains compressed gzip/zlib payload with sprite table', () => {
+  const { dir, out, result } = pack((tmp, input) => {
+    const raw = Buffer.from(JSON.stringify({
+      sprites: {
+        Walking: {
+          palette: ['#fff'],
+          deltas: ['00'],
+        },
+      },
+    }));
+    const gzipped = zlib.gzipSync(raw);
+    fs.writeFileSync(path.join(input, 'archive.bin'), gzipped);
     return ['--no-hud'];
   });
   try {

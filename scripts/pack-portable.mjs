@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { deflateRawSync } from 'node:zlib';
+import zlib, { deflateRawSync } from 'node:zlib';
 import { Buffer } from 'node:buffer';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -246,7 +246,7 @@ export function hasProprietarySpriteSignatures(content) {
     return true;
   }
 
-  // 4. Base64 encoded payload scanning:
+  // 4. Base64 encoded payload scanning (including multiline wrapped with newlines/whitespace)
   // Direct key fragment matches
   const base64Sprites = content.includes(Buffer.from('InNwcml0ZXMi')) || content.includes(Buffer.from('c3ByaXRlc')) || content.includes(Buffer.from('eyJzcHJpdGVzI'));
   const base64Palette = content.includes(Buffer.from('InBhbGV0dGUi')) || content.includes(Buffer.from('cGFsZXR0Z'));
@@ -255,12 +255,13 @@ export function hasProprietarySpriteSignatures(content) {
     return true;
   }
 
-  // General Base64 string decoding
+  // General Base64 string decoding (handles single line, multiline, arbitrary MIME chunking)
   const str = content.toString('latin1');
-  const base64Regex = /[A-Za-z0-9+/]{8,}={0,2}/g;
+  const multilineBase64Regex = /(?:[A-Za-z0-9+/][ \t\r\n]*){8,}={0,2}/g;
   let match;
-  while ((match = base64Regex.exec(str)) !== null) {
-    const rawChunk = match[0];
+  while ((match = multilineBase64Regex.exec(str)) !== null) {
+    const rawChunk = match[0].replace(/\s+/g, '');
+    if (rawChunk.length < 8) continue;
     try {
       const decoded = Buffer.from(rawChunk, 'base64');
       if (
@@ -273,6 +274,37 @@ export function hasProprietarySpriteSignatures(content) {
       }
     } catch {
       // Ignore decode errors on non-base64 noise
+    }
+  }
+
+  // 5. Decompression scan for compressed payloads (gzip, zlib, deflate)
+  if (content.length >= 2) {
+    // gzip magic: 0x1f, 0x8b
+    if (content[0] === 0x1f && content[1] === 0x8b) {
+      try {
+        const uncompressed = zlib.gunzipSync(content);
+        if (hasProprietarySpriteSignatures(uncompressed)) return true;
+      } catch {
+        // Ignore decompression errors on corrupted or non-gzip payloads
+      }
+    }
+    // zlib magic: 0x78 (0x01, 0x9c, 0xda)
+    if (content[0] === 0x78 && (content[1] === 0x01 || content[1] === 0x9c || content[1] === 0xda)) {
+      try {
+        const uncompressed = zlib.inflateSync(content);
+        if (hasProprietarySpriteSignatures(uncompressed)) return true;
+      } catch {
+        // Ignore decompression errors on non-zlib payloads
+      }
+    }
+    // raw deflate (if moderately sized)
+    if (content.length > 10 && content.length < 10 * 1024 * 1024) {
+      try {
+        const uncompressed = zlib.inflateRawSync(content);
+        if (hasProprietarySpriteSignatures(uncompressed)) return true;
+      } catch {
+        // Ignore decompression errors on non-deflate payloads
+      }
     }
   }
 
@@ -372,11 +404,20 @@ function hudEntriesFor(hudPath, cleanArt = true) {
   if (taintedReason) {
     console.log(`Note: Built HUD contains local on-demand Clawd sprite table (#168; ${taintedReason}) under explicit "--allow-proprietary-art" permission. Distributing this binary publicly requires Anthropic permission.`);
   }
-  const entries = [{ source: exe, archivePath: HUD_ARCHIVE_NAME, mtime: fs.statSync(exe).mtime }];
+  const exeBuffer = fs.readFileSync(exe);
+  const entries = [{ source: exe, archivePath: HUD_ARCHIVE_NAME, mtime: fs.statSync(exe).mtime, data: exeBuffer, isOfficialNotice: false }];
   const missing = [];
   for (const [source, archivePath] of HUD_NOTICES) {
-    if (fs.existsSync(source)) entries.push({ source: path.resolve(source), archivePath, mtime: fs.statSync(source).mtime });
-    else missing.push(source);
+    if (fs.existsSync(source)) {
+      const fullSource = path.resolve(source);
+      entries.push({
+        source: fullSource,
+        archivePath,
+        mtime: fs.statSync(fullSource).mtime,
+        data: fs.readFileSync(fullSource),
+        isOfficialNotice: true,
+      });
+    } else missing.push(source);
   }
   // Shipping the HUD without the licences that come with it is not allowed.
   if (missing.length > 0) throw new Error('Cannot ship the quota HUD, required notice files are missing: ' + missing.join(', '));
@@ -507,35 +548,33 @@ export const OFFICIAL_NOTICE_FILENAMES = new Set([
 ]);
 
 export function assertCleanZipEntries(entries, cleanArt = true) {
-  if (!cleanArt) return;
   for (const entry of entries) {
-    const archivePath = entry.archivePath || '';
-    const base = path.basename(archivePath).toLowerCase();
-
-    // 1. Check archive entry path against proprietary asset names
-    if (/clawd-sprites/i.test(base)) {
-      throw new Error(`Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd assets were detected in package contents ("${archivePath}"). Remove it or use "--allow-proprietary-art" for private local packaging.`);
-    }
-
-    // Skip official notice/license documentation entries as they discuss licensing policies in English prose
-    if (OFFICIAL_NOTICE_FILENAMES.has(base)) {
-      continue;
-    }
-
-    // 2. For all other entries (regardless of extension: .dat, .pak, .txt, .bin, .json, .js, .exe, etc.):
-    // Read the actual file bytes into entry.data (freezing the buffer for zip writing) and scan
-    let content = null;
-    if (entry.data && Buffer.isBuffer(entry.data)) {
-      content = entry.data;
-    } else if (entry.source && fs.existsSync(entry.source)) {
+    // 1. Ensure buffer is read and frozen in memory to prevent TOCTOU modifications
+    if (!entry.data && entry.source && fs.existsSync(entry.source)) {
       try {
-        content = fs.readFileSync(entry.source);
-        entry.data = content; // Freeze buffer to guarantee identical content is written to zip
+        entry.data = fs.readFileSync(entry.source);
       } catch (err) {
         throw new Error(`Could not read entry "${entry.source}" for verification: ${err.message}`, { cause: err });
       }
     }
 
+    if (!cleanArt) continue;
+
+    const archivePath = entry.archivePath || '';
+    const base = path.basename(archivePath).toLowerCase();
+
+    // 2. Check archive entry path against proprietary asset names
+    if (/clawd-sprites/i.test(base)) {
+      throw new Error(`Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd assets were detected in package contents ("${archivePath}"). Remove it or use "--allow-proprietary-art" for private local packaging.`);
+    }
+
+    // 3. Skip official notice/license documentation entries ONLY if explicitly tagged by packaging as official notice
+    if (entry.isOfficialNotice === true && OFFICIAL_NOTICE_FILENAMES.has(base)) {
+      continue;
+    }
+
+    // 4. Content scan across all files, binaries, and formats (using frozen in-memory buffer)
+    const content = entry.data;
     if (content && hasProprietarySpriteSignatures(content)) {
       throw new Error(`Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd sprite table was detected in "${archivePath}".`);
     }
@@ -563,15 +602,16 @@ function main() {
     // never taken along on its own (it would have no notices) and never added twice.
     .filter((file) => file.archivePath.toLowerCase() !== HUD_ARCHIVE_NAME)
     .map((file) => ({
-    ...file,
-    archivePath: withPrefix(prefix, file.archivePath),
-  }));
+      ...file,
+      archivePath: withPrefix(prefix, file.archivePath),
+      isOfficialNotice: false,
+    }));
 
   const entries = [
     ...files,
     ...hudEntries.map((entry) => ({ ...entry, archivePath: withPrefix(prefix, entry.archivePath) })),
-    { archivePath: withPrefix(prefix, 'PORTABLE'), data: Buffer.alloc(0), mtime: now },
-    { archivePath: withPrefix(prefix, 'README-portable.txt'), data: Buffer.from(README_PORTABLE, 'utf8'), mtime: now },
+    { archivePath: withPrefix(prefix, 'PORTABLE'), data: Buffer.alloc(0), mtime: now, isOfficialNotice: true },
+    { archivePath: withPrefix(prefix, 'README-portable.txt'), data: Buffer.from(README_PORTABLE, 'utf8'), mtime: now, isOfficialNotice: true },
   ];
 
   assertCleanZipEntries(entries, options.cleanArt);
