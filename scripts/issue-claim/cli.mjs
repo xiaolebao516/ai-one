@@ -5,7 +5,7 @@
 // claiming at once exactly one succeeds. The ref points at an empty commit whose message records
 // who holds it. Release deletes it with a lease on that commit.
 import { spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export const EXIT = { ok: 0, error: 1, held: 2 };
@@ -178,18 +178,43 @@ export async function watchClaim(issue, agent, { cwd, remote = 'origin', pid, in
   return { stopped: 'max-beats', beats };
 }
 
+/** Linux /proc/<pid>/stat -> start-time ticks, or undefined for a zombie/dead process. */
+export function identityFromProcStat(text) {
+  // The command name sits in parentheses and may contain spaces or ')', so split after the last ')'.
+  const rest = String(text).slice(String(text).lastIndexOf(')') + 1).trim().split(/\s+/);
+  const [state] = rest;
+  if (!state || state === 'Z' || state === 'X') return undefined;
+  const startTicks = rest[19]; // field 22 overall (starttime)
+  return startTicks && /^\d+$/.test(startTicks) ? `proc:${startTicks}` : undefined;
+}
+
+/** `ps -o state=,lstart=` output -> fingerprint, or undefined for a zombie. */
+export function identityFromPs(text) {
+  const line = String(text).trim();
+  if (!line || line.startsWith('Z')) return undefined;
+  return line.replace(/^\S+\s+/, '') || undefined;
+}
+
 /**
- * Start-time fingerprint of a process, or undefined when it is gone or cannot be read reliably.
- * Same pid with another fingerprint means the number was reused by a different process.
+ * Start-time fingerprint of a live process, or undefined when it is gone, a zombie, or cannot be
+ * read reliably. Same pid with another fingerprint means the number was reused by a different process.
  */
 export function processIdentity(pid) {
+  const id = Number(pid);
   try {
-    const result =
-      process.platform === 'win32'
-        ? spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${Number(pid)} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], { encoding: 'utf8' })
-        : spawnSync('ps', ['-o', 'lstart=', '-p', String(Number(pid))], { encoding: 'utf8' });
-    const text = result.status === 0 ? result.stdout.trim() : '';
-    return text || undefined;
+    if (process.platform === 'win32') {
+      const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${id} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], { encoding: 'utf8' });
+      return result.status === 0 ? result.stdout.trim() || undefined : undefined;
+    }
+    if (process.platform === 'linux') {
+      try {
+        return identityFromProcStat(readFileSync(`/proc/${id}/stat`, 'utf8'));
+      } catch {
+        return undefined;
+      }
+    }
+    const result = spawnSync('ps', ['-o', 'state=,lstart=', '-p', String(id)], { encoding: 'utf8' });
+    return result.status === 0 ? identityFromPs(result.stdout) : undefined;
   } catch {
     return undefined;
   }

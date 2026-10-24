@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
-import { EXIT, heartbeat, main, processIdentity, takeover, watchClaim } from '../cli.mjs';
+import { EXIT, heartbeat, identityFromPs, identityFromProcStat, main, processIdentity, takeover, watchClaim } from '../cli.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli.mjs');
 let root;
@@ -247,4 +247,25 @@ test('processIdentity is stable for a live process and absent for a dead one', (
   assert.equal(processIdentity(process.pid), mine);
   const dead = spawnSync(process.execPath, ['-e', '0']);
   assert.equal(processIdentity(dead.pid), undefined);
+});
+
+test('process identity parsers treat zombies as gone and keep a stable start-time fingerprint', () => {
+  const live = '1234 (my cmd) with ) paren) S 1 1234 1234 0 -1 4194560 100 0 0 0 1 1 0 0 20 0 1 0 98765 1000 100 18446744073709551615';
+  assert.equal(identityFromProcStat(live), 'proc:98765');
+  assert.equal(identityFromProcStat(live.replace(') S ', ') Z ')), undefined);
+  assert.equal(identityFromProcStat(live.replace(') S ', ') X ')), undefined);
+  assert.equal(identityFromProcStat('garbage'), undefined);
+  assert.equal(identityFromPs('S Sat Oct 24 02:00:00 2026'), 'Sat Oct 24 02:00:00 2026');
+  assert.equal(identityFromPs('Z+ Sat Oct 24 02:00:00 2026'), undefined);
+  assert.equal(identityFromPs(''), undefined);
+});
+
+test('a killed but unreaped child stops being "alive" (Unix only)', { skip: process.platform === 'win32' }, async () => {
+  const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+  const before = processIdentity(child.pid);
+  assert.ok(before);
+  child.kill('SIGKILL');
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  // Node reaps the child on exit, so this checks the dead-process path; the parser tests above cover Z.
+  assert.equal(processIdentity(child.pid), undefined);
 });

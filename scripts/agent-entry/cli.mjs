@@ -282,6 +282,8 @@ export function main(argv, { cwd = process.cwd(), out = console.log, err = conso
       const fetchJson = handoffFetch ?? gh;
       const issue = fetchJson(['issue', 'view', String(options.issue), '--json', 'number,title,body,comments'], cwd);
       const prList = fetchJson(['pr', 'list', '--state', 'all', '--limit', '200', '--json', 'number,title,body,state,headRefName,headRefOid,closingIssuesReferences,files,reviewDecision,statusCheckRollup,comments,reviews'], cwd);
+      // A truncated list could hide the Issue's own PR: fail closed instead of printing a misleading handoff.
+      if (prList.length >= 200) throw new Error('PR list reached the 200 limit; the rebuilt handoff would be incomplete');
       const linked = prLinks(prList).get(options.issue) ?? [];
       const prs = prList.filter((pr) => linked.includes(pr.number));
       const claimEntry = (state?.claims ?? listClaims({ cwd })).find((entry) => entry.issue === options.issue);
