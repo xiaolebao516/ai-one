@@ -28,6 +28,9 @@ describe('acceptance action lines', () => {
     expect(withActions).toHaveLength(1);
     expect(withActions[0].steps).toBe('点开');
     expect(withActions[0].raw).toBeUndefined();
+    const loose = parseAcceptanceSection('o/r', 1, '## 待用户验收\n- 看一下首页\n  - 命令：pnpm dev\n  - 顺便确认颜色');
+    expect(loose[0].raw).toBe('- 看一下首页\n  - 顺便确认颜色');
+    expect(loose[0].actions).toEqual([{ kind: 'command', value: 'pnpm dev' }]);
     expect(withActions[0].actions).toEqual([{ kind: 'command', value: 'pnpm dev' }, { kind: 'open', value: 'https://example.com/x', url: 'https://example.com/x' }]);
   });
 });

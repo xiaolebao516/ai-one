@@ -13,8 +13,22 @@ const FIX_TEXT: Record<FixProgress, 'acceptanceFixNotStarted' | 'acceptanceFixCr
 };
 
 const copyToClipboard = async (value: string): Promise<void> => {
-  if (!navigator.clipboard) throw new Error('Clipboard unavailable');
-  await navigator.clipboard.writeText(value);
+  try {
+    if (!navigator.clipboard) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(value);
+  } catch {
+    // WebViews reject the async API when the page is not focused; the legacy path still copies on a click.
+    const area = document.createElement('textarea');
+    area.value = value;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.append(area);
+    try {
+      area.select();
+      if (!document.execCommand('copy')) throw new Error('Copy command rejected');
+    } finally { area.remove(); }
+  }
 };
 export function UserAcceptanceSection({ locale, state, demo, onCopy = copyToClipboard, onOpen = host.app.openExternal }: {
   locale: Locale; state: AcceptanceState; demo: boolean;
