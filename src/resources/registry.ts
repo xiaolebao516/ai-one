@@ -39,8 +39,12 @@ const AGENTS = [
 ] as const;
 
 const FRESH_MS = 30 * 60 * 1000;
-/** Logins change rarely, but a snapshot older than this says nothing about them now. */
-const LOGIN_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+/**
+ * The HUD re-checks an idle account at most every 24 h and rewrites its snapshot only when something
+ * changed, so how old the snapshot is says nothing; how old the account check is does. A "ready" older
+ * than this (24 h plus margin) is history, not a login we can vouch for.
+ */
+const LOGIN_CHECK_MAX_AGE_MS = 36 * 60 * 60 * 1000;
 /** A time this far ahead of now is a clock fault, not an observation. */
 const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
 
@@ -63,11 +67,6 @@ function snapshotTrusted(reading: QuotaHudReading, now: number): boolean {
   return generatedAt !== null && generatedAt <= now + FUTURE_TOLERANCE_MS;
 }
 
-function snapshotAgeMs(reading: QuotaHudReading, now: number): number | null {
-  const generatedAt = parseTime(reading.snapshot?.generatedAt);
-  return generatedAt === null ? null : Math.max(0, now - generatedAt);
-}
-
 function quotaLevel(usedPercent: number | null): QuotaWindowLevel {
   if (usedPercent === null) return 'unknown';
   if (usedPercent >= 90) return 'critical';
@@ -75,7 +74,7 @@ function quotaLevel(usedPercent: number | null): QuotaWindowLevel {
   return 'ok';
 }
 
-function loginState(reading: QuotaHudReading, providerId: string, trusted: boolean): { login: ResourceLogin; notice?: string } {
+function loginState(reading: QuotaHudReading, providerId: string, trusted: boolean, now: number): { login: ResourceLogin; notice?: string } {
   const snapshot = reading.snapshot;
   // A stopped HUD or an untrusted snapshot says nothing about who is logged in now.
   if (!snapshot || !trusted) return { login: 'unknown' };
@@ -84,7 +83,12 @@ function loginState(reading: QuotaHudReading, providerId: string, trusted: boole
   if (provider.detected === false) return { login: 'not-detected' };
   if (provider.detected !== true) return { login: 'unknown' };
   const accountStatus = provider.accountStatus;
-  if (accountStatus?.status === 'ready') return { login: 'ok' };
+  if (accountStatus?.status === 'ready') {
+    // "ready" counts only with a believable, recent check time.
+    const checkedAt = parseTime(accountStatus.checkedAt);
+    const believable = checkedAt !== null && checkedAt <= now + FUTURE_TOLERANCE_MS && now - checkedAt <= LOGIN_CHECK_MAX_AGE_MS;
+    return believable ? { login: 'ok' } : { login: 'unknown' };
+  }
   const notice = accountStatus?.notice?.trim() || undefined;
   if (accountStatus?.status === 'error') return notice ? { login: 'attention', notice } : { login: 'attention' };
   if (accountStatus?.status === 'unavailable') return notice ? { login: 'unknown', notice } : { login: 'unknown' };
@@ -141,20 +145,15 @@ function quotaState(reading: QuotaHudReading, providerId: string, trusted: boole
 /** Derive only the two local agents represented by the HUD; web chats remain unknown elsewhere. */
 export function deriveResources(reading: QuotaHudReading, now: number): ResourceStatus[] {
   const trusted = snapshotTrusted(reading, now);
-  const age = snapshotAgeMs(reading, now);
-  // The heartbeat is independent of the snapshot, so a running HUD can still hold an old snapshot:
-  // logins and activity must not be read from one that has not been refreshed for long.
-  const loginTrusted = trusted && age !== null && age <= LOGIN_MAX_AGE_MS;
-  const activityTrusted = trusted && age !== null && age <= FRESH_MS;
   return AGENTS.map((agent) => {
-    const login = loginState(reading, agent.providerId, loginTrusted);
+    const login = loginState(reading, agent.providerId, trusted, now);
     return {
       id: agent.id,
       name: agent.name,
       providerId: agent.providerId,
       login: login.login,
       ...(login.notice ? { loginNotice: login.notice } : {}),
-      activity: activityState(reading, agent.providerId, activityTrusted),
+      activity: activityState(reading, agent.providerId, trusted),
       quota: quotaState(reading, agent.providerId, trusted, now),
     };
   });

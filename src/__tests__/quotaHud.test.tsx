@@ -229,16 +229,26 @@ describe('deriveResources', () => {
     }
   });
 
-  it('does not read login or activity from a snapshot the running HUD has not refreshed for long', () => {
-    const providers = [{ id: 'codex', detected: true, accountStatus: { status: 'ready', notice: null, checkedAt: freshAt } }];
+  it('vouches for a login by the age of its account check, not by the age of the snapshot', () => {
+    const HOUR = 60 * 60 * 1000;
     const sessions = [{ id: 's', title: 't', source: 'codex', state: 'running', updatedAt: freshAt, tokens: 1 }];
-    const at = (msAgo: number) => ({ ...snapshot({ providers, sessions }), generatedAt: new Date(NOW - msAgo).toISOString() });
-    const fresh = resource(parsed('running', at(60_000)), 'codex');
-    expect([fresh.login, fresh.activity]).toEqual(['ok', 'busy']);
-    const hoursOld = resource(parsed('running', at(2 * 60 * 60 * 1000)), 'codex');
-    expect([hoursOld.login, hoursOld.activity]).toEqual(['ok', 'unknown']);
-    const daysOld = resource(parsed('running', at(3 * 24 * 60 * 60 * 1000)), 'codex');
-    expect([daysOld.login, daysOld.activity]).toEqual(['unknown', 'unknown']);
+    const checked = (checkedAt: string | null) => [{ id: 'codex', detected: true, accountStatus: { status: 'ready', notice: null, checkedAt } }];
+    const login = (checkedAt: string | null, generatedMsAgo = 60_000) => resource(
+      parsed('running', { ...snapshot({ providers: checked(checkedAt), sessions }), generatedAt: new Date(NOW - generatedMsAgo).toISOString() }),
+      'codex',
+    );
+    expect(login(new Date(NOW - HOUR).toISOString()).login).toBe('ok');
+    expect(login(new Date(NOW - 35 * HOUR).toISOString()).login).toBe('ok');
+    // An old "ready", a missing or unreadable check time, or one in the future is not a login to vouch for.
+    expect(login(new Date(NOW - 37 * HOUR).toISOString()).login).toBe('unknown');
+    expect(login(null).login).toBe('unknown');
+    expect(login(new Date(NOW + HOUR).toISOString()).login).toBe('unknown');
+    // A fresh snapshot does not rescue an old check.
+    expect(login(new Date(NOW - 3 * 24 * HOUR).toISOString(), 1000).login).toBe('unknown');
+    // The snapshot is rewritten only on change, so a steady, old snapshot with a recent check and a
+    // running HUD is still a valid reading (activity included).
+    const steady = login(new Date(NOW - HOUR).toISOString(), 5 * 24 * HOUR);
+    expect([steady.login, steady.activity]).toEqual(['ok', 'busy']);
   });
 
   it('shows login as unknown once the HUD has stopped, even if the old snapshot said ready', () => {
