@@ -4,6 +4,7 @@ import { providerInstanceName } from '../../shared/providerInstances';
 import {
   buildFeedbackPrompt,
   buildIntroPrompt,
+  goalNamesProvider,
   buildViolationReminder,
   parseCoordinatorReply,
 } from '../workflow/chatLed/protocol';
@@ -238,6 +239,14 @@ describe('chat-led template modes', () => {
     expect(lines[2]).toContain('不要改派给列表里的其他 AI 顶替');
     expect(lines[2]).toContain('ai-one-done');
     expect(buildIntroPrompt({ ...input, unavailable: [] })).toBe(buildIntroPrompt(input));
+  });
+  it('counts an AI as named by id, display name or Chinese alias; extra workers always count', () => {
+    expect(goalNamesProvider('派gpt和gemini argon分别解决', 'gemini')).toBe(true);
+    expect(goalNamesProvider('派gpt和gemini argon分别解决', 'grok')).toBe(false);
+    expect(goalNamesProvider('让 Claude 审一下', 'claude')).toBe(true);
+    expect(goalNamesProvider('让克劳德和双子讨论', 'claude')).toBe(true);
+    expect(goalNamesProvider('让克劳德和双子讨论', 'gemini')).toBe(true);
+    expect(goalNamesProvider('随便讨论', 'chatgpt#2')).toBe(true);
   });
   it('asks independent opinions and coordinator synthesis in discussion mode', () => {
     const prompt = buildIntroPrompt({ ...input, mode: 'discuss' });

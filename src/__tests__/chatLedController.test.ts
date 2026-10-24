@@ -136,9 +136,10 @@ describe('ChatLedController', () => {
     expect(run.available).toEqual(['claude']);
     expect(run.unavailable).toEqual([
       { provider: 'gemini', reason: 'gemini page did not become ready in time.' },
-      { provider: 'grok', reason: 'Not logged in or the page is not ready.' },
+      // grok is not ready either, but the task never names it: no notice for it (#194).
       { provider: 'chatgpt#2', reason: 'Not logged in or the page is not ready.' },
     ]);
+    expect(calls[0].text).not.toContain('grok（');
     expect(calls[0].provider).toBe('chatgpt');
     expect(calls[0].text).toContain('gemini（Gemini，原因：gemini page did not become ready in time.）');
     expect(calls[0].text).toContain('不要改派给列表里的其他 AI 顶替');

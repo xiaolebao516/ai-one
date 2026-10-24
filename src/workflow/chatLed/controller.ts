@@ -24,7 +24,7 @@ import {
   stopRun,
   updateForward,
 } from './machine';
-import { buildFeedbackPrompt, buildIntroPrompt, buildViolationReminder, PROVIDER_LABELS } from './protocol';
+import { buildFeedbackPrompt, buildIntroPrompt, buildViolationReminder, goalNamesProvider, PROVIDER_LABELS } from './protocol';
 import { providerResponseError } from '../providerResponse';
 import type { ChatLedMode, ChatLedRun, CleanupItemResult, ForwardRecord, SessionInitializationStatus } from './types';
 import { DEFAULT_COORDINATOR, DEFAULT_ROUND_LIMIT } from './types';
@@ -308,7 +308,7 @@ export class ChatLedController {
 
       // Never drop a candidate silently: the user and the coordinator both see who is missing and why (#189).
       const unavailable = this.candidates
-        .filter((provider) => provider !== coordinator && !available.includes(provider))
+        .filter((provider) => provider !== coordinator && !available.includes(provider) && goalNamesProvider(this.run.goal, provider))
         .map((provider) => ({ provider, reason: failures.get(provider) ?? 'Not logged in or the page is not ready.' }));
       this.set(setAvailableProviders(this.run, available, this.env.now(), unavailable));
       this.assertPersisted();

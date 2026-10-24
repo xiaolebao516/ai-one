@@ -155,6 +155,9 @@ const providerApi = {
     providersWithUnknownSend.add(provider);
     throw new Error(`${provider} send rejected: malformed outbox drain result; reload the provider page before retrying`);
   },
+  /** True while send() refuses this page (unconfirmed stop or unknown send); reload() clears it. */
+  isSendBlocked: (provider: ProviderInstance): boolean =>
+    providersWithUnconfirmedStop.has(provider) || providersWithUnknownSend.has(provider),
   fill: (provider: ProviderInstance, text: string): Promise<void> =>
     invoke('provider_eval', {
       provider,

@@ -17,6 +17,23 @@ export const PROVIDER_LABELS: Record<AIProvider, string> = {
   meta: AI_PROVIDERS.meta.name,
 };
 
+/** Common Chinese names users type for an AI, besides its id and display name. */
+const PROVIDER_ALIASES: Partial<Record<AIProvider, string[]>> = {
+  claude: ['克劳德'],
+  gemini: ['双子'],
+};
+
+/**
+ * Whether the user's task names this AI (#194). Only named AIs are worth a "not ready" notice; an
+ * extra ChatGPT worker always counts, because the user switched it on for this run.
+ */
+export function goalNamesProvider(goal: string, provider: ProviderInstance): boolean {
+  if (!(provider in PROVIDER_LABELS)) return true;
+  const base = provider as AIProvider;
+  const text = goal.toLowerCase();
+  return [base, PROVIDER_LABELS[base].toLowerCase(), ...(PROVIDER_ALIASES[base] ?? [])].some((name) => text.includes(name));
+}
+
 type DirectiveFenceName = typeof SEND_FENCE | typeof DONE_FENCE;
 
 interface DirectiveFence {
