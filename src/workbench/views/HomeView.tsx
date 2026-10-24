@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { AI_PROVIDERS, ALL_AI_PROVIDERS } from '../../../shared/constants';
+import type { AIProvider } from '../../../shared/types';
+import { discussionText } from '../../stages/discussionText';
 import type { Locale } from '../../i18n/resolve';
 import { formatAge, inProgressTasks, needsYouTasks, pickText, type HudTask } from '../../ui/taskHudModel';
 import { taskHudText } from '../../ui/taskHudText';
@@ -25,12 +28,13 @@ export interface HomeViewProps {
   acceptance?: AcceptanceState;
   onOpenTask: (task: HudTask) => void;
   onShowTasks: () => void;
+  onStartDiscussion?: (question: string, roles: { first: AIProvider; second: AIProvider; auditor: AIProvider }) => Promise<string | undefined>;
   /** What the Prodex channel looks like right now; the rest of the resources is not readable yet. */
   channel?: ChannelView;
   onShowResources?: () => void;
 }
 
-export function HomeView({ locale, tasks, health, acceptance, channel, onOpenTask, onShowTasks, onShowResources }: HomeViewProps) {
+export function HomeView({ locale, tasks, health, acceptance, channel, onOpenTask, onShowTasks, onShowResources, onStartDiscussion }: HomeViewProps) {
   const text = workbenchText(locale);
   const lead = headline(tasks);
   const acceptanceIssues = acceptance ? acceptanceIssueKeys(acceptance) : new Set<string>();
@@ -84,7 +88,7 @@ export function HomeView({ locale, tasks, health, acceptance, channel, onOpenTas
       </header>
 
       {acceptance ? <UserAcceptanceSection locale={locale} state={acceptance} demo={health === 'demo'} /> : null}
-      <Composer locale={locale} />
+      <Composer locale={locale} onStartDiscussion={onStartDiscussion} />
 
       <div className="grid gap-v2-lg min-[1100px]:grid-cols-[minmax(0,1fr)_300px]">
         <div className="grid content-start gap-v2-lg">
@@ -201,21 +205,40 @@ function NeedsYouCard({ task, locale, onOpen }: { task: HudTask; locale: Locale;
  * The one input from the design (§0.2). Nothing here can dispatch yet, so the start button is
  * disabled with the reason written out instead of pretending (Spec #79 v2).
  */
-function Composer({ locale }: { locale: Locale }) {
+function Composer({ locale, onStartDiscussion }: {
+  locale: Locale;
+  onStartDiscussion?: HomeViewProps['onStartDiscussion'];
+}) {
   const text = workbenchText(locale);
+  const t = discussionText(locale);
   const [mode, setMode] = useState<ComposerMode>('cc');
   const [draft, setDraft] = useState('');
+  const [roles, setRoles] = useState<{ first: AIProvider; second: AIProvider; auditor: AIProvider }>({
+    first: 'chatgpt', second: 'gemini', auditor: 'claude',
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const start = async () => {
+    if (mode !== 'grill' || !draft.trim() || busy || !onStartDiscussion) return;
+    setBusy(true); setError('');
+    try {
+      const failure = await onStartDiscussion(draft, roles);
+      if (failure) setError(failure);
+      else setDraft('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
+  };
   return (
     <Card className="grid gap-v2-sm">
-      <label className="sr-only" htmlFor="workbench-composer">
-        {text.t('composerPlaceholder')}
-      </label>
+      <label className="sr-only" htmlFor="workbench-composer">{text.t('composerPlaceholder')}</label>
       <textarea
         id="workbench-composer"
         rows={2}
         value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        placeholder={text.t('composerPlaceholder')}
+        onChange={(event) => { setDraft(event.target.value); setError(''); }}
+        onKeyDown={(event) => { if (event.ctrlKey && event.key === 'Enter' && mode === 'grill') { event.preventDefault(); void start(); } }}
+        placeholder={mode === 'grill' ? t.prompt : text.t('composerPlaceholder')}
         className="w-full resize-none bg-transparent text-v2-lead text-v2-ink placeholder:text-v2-ink-3 focus:outline-none"
       />
       <div className="flex flex-wrap items-center justify-between gap-v2-sm">
@@ -223,7 +246,7 @@ function Composer({ locale }: { locale: Locale }) {
           idBase="home-composer-mode"
           label={text.t('composerPlaceholder')}
           value={mode}
-          onChange={(value) => setMode(value as ComposerMode)}
+          onChange={(value) => { setMode(value as ComposerMode); setError(''); }}
           options={[
             { value: 'chat', label: text.t('composerModeChat') },
             { value: 'grill', label: text.t('composerModeGrill') },
@@ -231,11 +254,34 @@ function Composer({ locale }: { locale: Locale }) {
             { value: 'flow', label: text.t('composerModeFlow') },
           ]}
         />
-        <Button variant="primary" disabled disabledReason={text.t('composerNotYet')}>
-          {text.t('composerStart')}
+        <Button variant="primary" disabled={mode !== 'grill' || busy || !draft.trim() || !onStartDiscussion}
+          disabledReason={mode !== 'grill' ? text.t('composerNotYet') : t.preflight}
+          onClick={() => { void start(); }}>
+          {busy ? t.running : mode === 'grill' ? t.start : text.t('composerStart')}
         </Button>
       </div>
-      <p className="text-v2-meta text-v2-ink-3">{text.t('composerNotYet')}</p>
+      {mode === 'grill' ? (
+        <div className="grid gap-v2-sm text-v2-meta text-v2-ink-2">
+          <p>{t.team}</p>
+          <div className="grid gap-v2-sm sm:grid-cols-3">
+            {(['first','second','auditor'] as const).map((role) => (
+              <label key={role} className="grid gap-v2-xs">
+                <span>{t[role]}</span>
+                <select value={roles[role]} onChange={(event) => setRoles((current) =>
+                  ({ ...current, [role]: event.target.value as AIProvider }))}
+                  className="rounded-v2-md border border-v2-line bg-v2-surface p-v2-sm text-v2-ink">
+                  {ALL_AI_PROVIDERS.map((provider) => (
+                    <option key={provider} value={provider}>{AI_PROVIDERS[provider].name}</option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+          <p>{t.hint}</p>
+          <p>{t.preflight}</p>
+        </div>
+      ) : <p className="text-v2-meta text-v2-ink-3">{text.t('composerNotYet')}</p>}
+      {error ? <p role="alert" className="text-v2-meta text-v2-block">{error}</p> : null}
     </Card>
   );
 }

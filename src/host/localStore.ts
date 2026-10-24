@@ -126,6 +126,15 @@ export const browserLocalStoreFs: LocalStoreFs = {
       throw new Error('Invalid JSON');
     }
 
+    if (name === 'localTasks') {
+      const store = localStorageRef();
+      if (!store) throw new Error('Persistent browser storage is unavailable.');
+      try { store.setItem(storageKey(name), json); }
+      catch { throw new Error('Persistent browser storage is full or unavailable. Nothing was saved.'); }
+      memory.set(name, json);
+      memoryOverrides.delete(name);
+      return;
+    }
     memory.set(name, json);
     memoryOverrides.add(name);
     const storage = localStorageRef();

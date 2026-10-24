@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { discussionText } from '../../stages/discussionText';
 import type { Locale } from '../../i18n/resolve';
 import type { HudTask } from '../../ui/taskHudModel';
 import { Card, EmptyState, SectionHeader, SegmentedControl } from '../../ui/v2';
@@ -23,6 +24,7 @@ export function TasksView({ locale, tasks, health, onOpenTask }: TasksViewProps)
   const groups = groupByRepo(filterTasks(tasks, filter));
   // Repository subtotals follow the active filter: the total for "all", counts by state otherwise.
   const groupPrecision = filter === 'all' ? health : categoryHealth(health, tasks);
+  const localTitle = discussionText(locale).group;
   return (
     <div className="mx-auto grid max-w-[1180px] gap-v2-section p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:p-v2-page">
       <header className="flex flex-wrap items-end justify-between gap-v2-md">
@@ -58,8 +60,8 @@ export function TasksView({ locale, tasks, health, onOpenTask }: TasksViewProps)
           <section key={group.repo} aria-label={group.repo}>
             <SectionHeader
               level={3}
-              title={isExact(groupPrecision) ? group.repo : `${group.repo} ${countLabel(group.tasks.length, groupPrecision)}`}
-              count={isExact(groupPrecision) ? group.tasks.length : undefined}
+              title={group.repo === 'local' ? localTitle : isExact(groupPrecision) ? group.repo : `${group.repo} ${countLabel(group.tasks.length, groupPrecision)}`}
+              count={group.repo === 'local' || isExact(groupPrecision) ? group.tasks.length : undefined}
             />
             <Card padding="none" className="mt-v2-sm">
               <ul className="divide-y divide-v2-line p-v2-xs">

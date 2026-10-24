@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { ALL_AI_PROVIDERS } from '../../shared/constants';
+import type { AIProvider, ModeRoles } from '../../shared/types';
+import { preflightGraph } from '../workflow/graph/preflight';
+import { deliberationGraph } from '../workflow/graph/deliberationGraph';
+import { runWorkflow } from '../workflow';
+import { newDiscussionTask, roundFromSnapshot } from '../stages/localTasks';
+import { discussionText } from '../stages/discussionText';
+import { DiscussionTaskView } from './views/DiscussionTaskView';
 import { host } from '../host';
 import type { Locale } from '../i18n/resolve';
 import { STATUS_TONE, pickText, summarize, type HudTask } from '../ui/taskHudModel';
@@ -121,6 +128,54 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
     leaveTo(pendingLeave);
   };
   const openTask = (task: HudTask) => go({ view: 'task', taskId: task.id });
+  /** An executable discussion entry with no implicit page reload or resume. */
+  const startDiscussion = async (question: string, roles: { first: AIProvider; second: AIProvider; auditor: AIProvider }): Promise<string | undefined> => {
+    const t = discussionText(locale);
+    if (!data.local.ready) return data.local.error ?? t.storageLoading;
+    if (!(isDesktop ?? host.app.isDesktop())) return t.preflight;
+    if (new Set(Object.values(roles)).size !== 3) return t.preflight;
+    try {
+      const check = await preflightGraph(deliberationGraph, roles);
+      if (!check.ok) return t.preflight;
+    } catch { return t.preflight; }
+    const draft = newDiscussionTask(question);
+    draft.rounds[0].participants = [roles.first, roles.second, roles.auditor];
+    if (!(await data.local.create(draft))) return t.storageError;
+    setRoute({ view: 'task', taskId: draft.id });
+    let observed = false;
+    void runWorkflow({
+      text: question, mode: 'consult', presetId: 'deliberation', roles: roles as unknown as ModeRoles, locale,
+      onSnapshotProgress: (snapshot) => {
+        if (snapshot.graphId !== 'deliberation') return;
+        void data.local.update(draft.id, (task) => ({
+          ...task, rounds: task.rounds.map((round, i) => i === 0 ? roundFromSnapshot(round, snapshot) : round),
+          updatedAt: new Date().toISOString(),
+        }));
+      },
+      onSnapshotComplete: async (snapshot) => {
+        if (snapshot.graphId !== 'deliberation') return;
+        observed = true;
+        const failed = snapshot.steps.some((step) => step.status === 'error' || step.status === 'cancelled');
+        const hasAudit = snapshot.steps.some((step) => /^audit[1-3]$/.test(step.nodeId) && step.status === 'done');
+        const ok = await data.local.update(draft.id, (task) => ({
+          ...task, rounds: task.rounds.map((round, i) => i === 0 ? roundFromSnapshot(round, snapshot) : round),
+          status: hasAudit && !failed ? 'needs-you' : 'interrupted',
+          updatedAt: new Date().toISOString(),
+        }));
+        if (!ok) {
+          // The full replies were rejected (for example, 5 MB limit); retain the last good copy.
+          await data.local.update(draft.id, (task) => ({ ...task, status: 'interrupted', updatedAt: new Date().toISOString() }));
+        }
+      },
+    }).then(async (result) => {
+      if (!result.ok || !observed) {
+        await data.local.update(draft.id, (task) => ({ ...task, status: 'interrupted', updatedAt: new Date().toISOString() }));
+      }
+    }).catch(async () => {
+      await data.local.update(draft.id, (task) => ({ ...task, status: 'interrupted', updatedAt: new Date().toISOString() }));
+    });
+    return undefined;
+  };
 
   useHideProviderWebviews();
 
@@ -176,6 +231,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
         acceptance={acceptance}
         channel={channel}
         onOpenTask={openTask}
+        onStartDiscussion={startDiscussion}
         onShowTasks={() => go({ view: 'tasks' })}
         onShowResources={() => go({ view: 'resources' })}
       />
@@ -183,7 +239,11 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
   } else if (current.view === 'tasks') {
     view = <TasksView locale={locale} tasks={data.tasks} health={data.health} onOpenTask={openTask} />;
   } else if (current.view === 'task' && task) {
-    view = <TaskView key={task.id} locale={locale} task={task} onBack={() => go({ view: 'tasks' })} />;
+    const localTask = data.local.tasks.find((item) => item.id === task.id);
+    view = localTask
+      ? <DiscussionTaskView key={localTask.id} task={localTask} store={data.local} locale={locale}
+          source={data.prefs.source} defaultRepo={data.prefs.repos[0] ?? ''} onBack={() => go({ view: 'tasks' })} />
+      : <TaskView key={task.id} locale={locale} task={task} onBack={() => go({ view: 'tasks' })} />;
   } else if (current.view === 'chat') {
     view = (
       <PlannedView
@@ -244,6 +304,8 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
         />
         <main ref={mainRef} tabIndex={-1} className="min-w-0 flex-1 overflow-auto rounded-tl-v2-xl border-l border-t border-v2-line bg-v2-panel">
           <SourceBar text={text} data={data} locale={locale} />
+          {data.local.warning ? <Notice tone="unknown" title={discussionText(locale).storageRecovered}>{data.local.warning}</Notice> : null}
+          {data.local.error ? <Notice tone="block" title={discussionText(locale).storageError}>{data.local.error}</Notice> : null}
           {view}
         </main>
       </div>

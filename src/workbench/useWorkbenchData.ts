@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { localTaskToHud } from '../stages/localTasks';
+import { useLocalTasks, type LocalTasksState } from '../stages/useLocalTasks';
 import { host } from '../host';
 import { TASK_HUD_MOCK_TASKS } from '../ui/taskHudMockData';
 import { loadGitHubTasks, type GitHubRepoTasks } from '../ui/taskHudGithub';
@@ -96,6 +98,7 @@ export type AddRepoResult = 'added' | 'present' | 'invalid' | 'full';
 export interface WorkbenchData {
   prefs: WorkbenchPrefs;
   tasks: readonly HudTask[];
+  local: LocalTasksState;
   health: DataHealth;
   github: GitHubReadState;
   setSource: (source: WorkbenchSource) => void;
@@ -112,6 +115,7 @@ const readGitHub: GitHubLoader = (repos) => loadGitHubTasks(repos, host.github, 
 
 export function useWorkbenchData(load: GitHubLoader = readGitHub): WorkbenchData {
   const [prefs, setPrefs] = useState<WorkbenchPrefs>(() => loadPrefs());
+  const local = useLocalTasks();
   const [github, setGithub] = useState<GitHubReadState>({ loading: false, results: [] });
   const [refreshToken, setRefreshToken] = useState(0);
   const requestRef = useRef(0);
@@ -157,12 +161,14 @@ export function useWorkbenchData(load: GitHubLoader = readGitHub): WorkbenchData
   const health = dataHealth(prefs.source, github, reposKey);
   // Same repositories: the last snapshot stays visible while it refreshes (health says it is not
   // current). Different repositories: nothing is shown until they are read.
-  const tasks =
+  const remoteTasks =
     prefs.source === 'demo' ? TASK_HUD_MOCK_TASKS : github.reposKey === reposKey ? github.results.flatMap((result) => result.tasks) : [];
+  const tasks: readonly HudTask[] = [...remoteTasks, ...local.tasks.map(localTaskToHud)];
 
   return {
     prefs,
     tasks,
+    local,
     health,
     github,
     setSource: (source) => update({ source }),

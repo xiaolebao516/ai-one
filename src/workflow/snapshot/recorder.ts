@@ -13,6 +13,7 @@ const SNAPSHOT_APP_VERSION = '0.0.0';
 
 let currentSnapshot: ExecutionSnapshot | undefined;
 let lastSnapshot: ExecutionSnapshot | undefined;
+let onProgress: ((snapshot: ExecutionSnapshot) => void) | undefined;
 
 export interface BeginSnapshotParams {
   graph: WorkflowGraph;
@@ -20,6 +21,7 @@ export interface BeginSnapshotParams {
   roleMap: Record<string, AIProviderV2>;
   adapterVersions?: Partial<Record<AIProviderV2, number>>;
   appVersion?: string;
+  onProgress?: (snapshot: ExecutionSnapshot) => void;
 }
 
 export interface RecordStepParams {
@@ -48,7 +50,9 @@ export function beginSnapshot({
   roleMap,
   adapterVersions,
   appVersion = SNAPSHOT_APP_VERSION,
+  onProgress: progress,
 }: BeginSnapshotParams): ExecutionSnapshot {
+  onProgress = progress;
   const snapshot: ExecutionSnapshot = {
     snapshotId: nextSnapshotId(),
     graphId: graph.id,
@@ -73,6 +77,7 @@ export function recordStep({ input, output, ...params }: RecordStepParams): void
     inputRef: inlineRef(input),
     outputRef: inlineRef(output),
   });
+  try { onProgress?.(currentSnapshot); } catch { /* A UI observer cannot fail the engine. */ }
 }
 
 export function recordHumanEdit({ before, after, editedAt, ...params }: RecordHumanEditParams): void {
@@ -91,6 +96,7 @@ export function completeSnapshot(completedAt = nowIso()): ExecutionSnapshot | un
   currentSnapshot.completedAt = completedAt;
   lastSnapshot = currentSnapshot;
   currentSnapshot = undefined;
+  onProgress = undefined;
   return lastSnapshot;
 }
 
@@ -105,6 +111,7 @@ export function getLastSnapshot(): ExecutionSnapshot | undefined {
 export function resetSnapshotRecorderForTests(): void {
   currentSnapshot = undefined;
   lastSnapshot = undefined;
+  onProgress = undefined;
 }
 
 function inlineRef(text: string): RedactedValueRef {

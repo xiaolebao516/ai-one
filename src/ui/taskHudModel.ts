@@ -47,7 +47,7 @@ const IN_PROGRESS: ReadonlySet<TaskStatus> = new Set<TaskStatus>(['running', 're
 /** Decisions first, then blockers, then acceptances (design §D). */
 const NEEDS_YOU_ORDER: Readonly<Partial<Record<TaskStatus, number>>> = { decide: 0, blocked: 1, accept: 2 };
 
-export type DataSource = 'mock' | 'github';
+export type DataSource = 'mock' | 'github' | 'local';
 
 export type CiState = 'success' | 'failure' | 'running' | 'unknown';
 

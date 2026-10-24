@@ -13,7 +13,7 @@ import type { ResponseLanguagePolicy } from './responseLanguage';
 import { isProviderPageReloadedError } from './providerResponse';
 import { isSendable } from './sendability';
 import { persistSnapshotIfEnabled } from './snapshot/persistence';
-import type { SnapshotRedactionTier } from './snapshot/types';
+import type { ExecutionSnapshot, SnapshotRedactionTier } from './snapshot/types';
 import { tearDownWaiters } from './teardown';
 import { cancelPendingStepTimeoutAction } from './stepTimeout';
 import { startDeliberationAuditTrace } from '../dev/deliberationPromptTrace';
@@ -31,6 +31,8 @@ export interface RunWorkflowParams {
   snapshotPersistence?: boolean;
   snapshotRedactionTier?: SnapshotRedactionTier;
   responseLanguagePolicy?: ResponseLanguagePolicy;
+  onSnapshotComplete?: (snapshot: ExecutionSnapshot) => Promise<void> | void;
+  onSnapshotProgress?: (snapshot: ExecutionSnapshot) => void;
 }
 
 export type RunWorkflowResult = { ok: true } | { ok: false; preflight: PreflightResult };
@@ -65,6 +67,8 @@ async function runPreparedWorkflow({
   snapshotPersistence,
   snapshotRedactionTier,
   responseLanguagePolicy,
+  onSnapshotComplete,
+  onSnapshotProgress,
 }: RunWorkflowParams): Promise<RunWorkflowResult> {
   setStopNoticeLocale(locale);
   const snapshotOptions = {
@@ -79,8 +83,11 @@ async function runPreparedWorkflow({
     }
     const appVersion = await getRuntimeAppVersion();
     const graphOptions = {
-      onSnapshotComplete: (snapshot: Parameters<typeof persistSnapshotIfEnabled>[0]) =>
-        persistSnapshotIfEnabled(snapshot, snapshotOptions),
+      onSnapshotProgress,
+      onSnapshotComplete: async (snapshot: Parameters<typeof persistSnapshotIfEnabled>[0]) => {
+        await onSnapshotComplete?.(snapshot);
+        await persistSnapshotIfEnabled(snapshot, snapshotOptions);
+      },
       ...(appVersion ? { appVersion } : {}),
     };
     if (presetId === 'deliberation') {

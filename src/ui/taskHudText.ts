@@ -1,5 +1,5 @@
 import type { Locale } from '../i18n/resolve';
-import { hudLocale, type CiView, type EvidenceKind, type HudStage, type TaskStatus } from './taskHudModel';
+import { hudLocale, type CiView, type DataSource, type EvidenceKind, type HudStage, type TaskStatus } from './taskHudModel';
 
 /**
  * Task HUD copy (#40). Kept in its own table instead of the shared i18n dictionaries so this
@@ -228,7 +228,7 @@ export interface TaskHudText {
   status: (status: TaskStatus) => string;
   needKind: (status: TaskStatus) => string;
   /** Mock read-backs say so: they must not pass for a GitHub read in this run. */
-  evidence: (kind: EvidenceKind, dataSource: 'mock' | 'github') => string;
+  evidence: (kind: EvidenceKind, dataSource: DataSource) => string;
   ci: (state: CiView['state']) => string;
   ciReason: (reason: CiReason) => string;
   stage: (state: HudStage['state']) => string;
