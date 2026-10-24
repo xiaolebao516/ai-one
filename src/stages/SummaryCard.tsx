@@ -41,7 +41,7 @@ export function SummaryCard({ model, locale = 'zh-CN', onPlan, onFollowUp, onFin
         </div>
         <Notice title={t.caution}>{model.disclaimer}</Notice>
         <div className="flex flex-wrap gap-v2-sm">
-          <Button disabled={!onPlan} disabledReason={onPlan ? undefined : t.planHint} onClick={onPlan}>{t.plan}</Button>
+          <Button disabled={!onPlan} disabledReason={onPlan ? undefined : t.planUnavailable} onClick={onPlan}>{t.plan}</Button>
           <Button disabled={!onFollowUp} disabledReason={onFollowUp ? undefined : t.noFollowUp} onClick={onFollowUp}>{t.followUp}</Button>
           <Button disabled={!onFinishAndSave} disabledReason={onFinishAndSave ? undefined : t.saved} onClick={onFinishAndSave}>{t.finish}</Button>
         </div>

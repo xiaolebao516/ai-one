@@ -94,6 +94,7 @@ export function DiscussionTaskView({ task, store, locale, source, defaultRepo, o
       <DiscussionMatrix model={summary.matrix} locale={locale} />
       {task.rounds.some((round) => round.steps.length > 0) ? <SummaryCard
         model={summary.summary} locale={locale}
+        onPlan={() => { document.getElementById('discussion-plan-repo')?.focus(); }}
         onFinishAndSave={task.status !== 'running' && task.status !== 'ended' ? () => { void finish(); } : undefined}
       /> : null}
       {task.rounds.map((round) => (
@@ -112,7 +113,7 @@ export function DiscussionTaskView({ task, store, locale, source, defaultRepo, o
         <SectionHeader level={3} title={t.plan} />
         <p className="text-v2-meta text-v2-ink-2">{t.planHint}</p>
         <div className="grid gap-v2-sm sm:grid-cols-2">
-          <label className="grid gap-v2-xs text-v2-meta">{t.planRepo}<input className="rounded-v2-md border border-v2-line bg-v2-surface p-v2-sm text-v2-ink" value={repo} onChange={(e) => setRepo(e.target.value)} disabled={!planEnabled} /></label>
+          <label className="grid gap-v2-xs text-v2-meta">{t.planRepo}<input id="discussion-plan-repo" className="rounded-v2-md border border-v2-line bg-v2-surface p-v2-sm text-v2-ink" value={repo} onChange={(e) => setRepo(e.target.value)} disabled={!planEnabled} /></label>
           <label className="grid gap-v2-xs text-v2-meta">{t.parent}<input className="rounded-v2-md border border-v2-line bg-v2-surface p-v2-sm text-v2-ink" value={parent} onChange={(e) => setParent(e.target.value)} disabled={!planEnabled} /></label>
         </div>
         <Button disabled={!planEnabled || sending || store.busy} disabledReason={task.issueCreation ? t.planSent : t.planDisabled} onClick={() => { void plan(); }}>{sending ? t.running : t.prepare}</Button>
