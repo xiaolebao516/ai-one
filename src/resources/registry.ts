@@ -38,6 +38,14 @@ const AGENTS = [
   { id: 'codex', name: 'Codex CLI', providerId: 'codex' },
 ] as const;
 
+/**
+ * A quota reading counts as current for this long after the HUD observed it. Deliberately short and
+ * deliberately the same for every provider: an idle Claude is re-read by the HUD only about every
+ * 24 h (and keeps its old observation time), so its quota shows as expired in between. Showing it as
+ * current would need the HUD to export what the front end cannot know from the snapshot alone (full
+ * per-provider activity coverage, and which windows the last read did not report again); until then
+ * "expired / unknown" is the honest answer. Follow-up recorded on Spec #82.
+ */
 const FRESH_MS = 30 * 60 * 1000;
 /**
  * The HUD re-checks an idle account at most every 24 h and rewrites its snapshot only when something

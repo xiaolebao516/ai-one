@@ -218,6 +218,17 @@ describe('deriveResources', () => {
     expect(resource(parsed('running', snapshot({ quotas: [noReset] })), 'codex').quota.source).toBe('known');
   });
 
+  it('shows an old reading as expired, whichever provider it is, rather than guessing the tool was idle', () => {
+    const HOUR = 60 * 60 * 1000;
+    for (const vendor of ['claude', 'codex'] as const) {
+      const old = { ...quota(vendor, 40, new Date(NOW - 2 * HOUR).toISOString()), resetAt: new Date(NOW + 2 * HOUR).toISOString() };
+      const result = resource(parsed('running', snapshot({ quotas: [old], sessions: [] })), vendor === 'claude' ? 'claude-code' : 'codex');
+      expect(result.quota.source).toBe('unknown');
+      expect(result.quota.stale).toBe(true);
+      expect(result.quota.windows[0]?.level).toBe('unknown');
+    }
+  });
+
   it('does not trust demo, unlabelled or future-dated snapshots as current', () => {
     const providers = [{ id: 'codex', detected: true, accountStatus: { status: 'ready', notice: null, checkedAt: freshAt } }];
     for (const overrides of [{ mode: 'demo' }, { mode: null }, { generatedAt: null }, { generatedAt: 'tomorrow-ish' }, { generatedAt: new Date(NOW + 60 * 60 * 1000).toISOString() }]) {
