@@ -21,6 +21,8 @@ const EXE_NAME: &str = if cfg!(windows) {
 /// The HUD writes its heartbeat every 5 seconds; older than this means it is gone.
 const HEARTBEAT_LIMIT_SECONDS: i64 = 30;
 const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
+/// A heartbeat time this far ahead of now is a clock fault, not a live HUD.
+const FUTURE_TOLERANCE_SECONDS: i64 = 5;
 
 #[derive(Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -51,14 +53,18 @@ fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 /// Read a bounded JSON file. The HUD replaces its files by rename, and on Windows a reader that
-/// opens one at that instant can fail, so a failed read is retried a few times.
+/// opens one at that instant can fail, so a failed read is retried a few times. The size limit is
+/// enforced on the one open handle (reading at most the limit plus one byte), so a file swapped
+/// in after a separate size check cannot slip past it.
 fn read_json(path: &Path) -> Result<Option<Value>, String> {
+    use std::io::Read;
     let mut last = String::new();
     for attempt in 0..4 {
         if attempt > 0 {
             std::thread::sleep(Duration::from_millis(60));
         }
-        match fs::metadata(path) {
+        let file = match fs::File::open(path) {
+            Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 if attempt == 3 {
                     return Ok(None);
@@ -70,15 +76,18 @@ fn read_json(path: &Path) -> Result<Option<Value>, String> {
                 last = error.to_string();
                 continue;
             }
-            Ok(meta) if meta.len() > MAX_FILE_BYTES => return Err("file too large".into()),
-            Ok(_) => {}
+        };
+        let mut bytes = Vec::new();
+        if let Err(error) = file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes) {
+            last = error.to_string();
+            continue;
         }
-        match fs::read(path)
-            .map_err(|error| error.to_string())
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).map_err(|e| e.to_string()))
-        {
+        if bytes.len() as u64 > MAX_FILE_BYTES {
+            return Err("file too large".into());
+        }
+        match serde_json::from_slice::<Value>(&bytes) {
             Ok(value) => return Ok(Some(value)),
-            Err(error) => last = error,
+            Err(error) => last = error.to_string(),
         }
     }
     Err(last)
@@ -87,7 +96,12 @@ fn read_json(path: &Path) -> Result<Option<Value>, String> {
 fn heartbeat_age(status: &Value, now: chrono::DateTime<chrono::Utc>) -> Option<i64> {
     let at = status.get("heartbeatAt")?.as_str()?;
     let at = chrono::DateTime::parse_from_rfc3339(at).ok()?;
-    Some((now - at.with_timezone(&chrono::Utc)).num_seconds().max(0))
+    let age = (now - at.with_timezone(&chrono::Utc)).num_seconds();
+    // A time well in the future (clock set back, bad file) is no heartbeat at all.
+    if age < -FUTURE_TOLERANCE_SECONDS {
+        return None;
+    }
+    Some(age.max(0))
 }
 
 /// Pure so it can be tested: classify what was read.
@@ -111,7 +125,11 @@ fn classify(
     let Some(status) = status else {
         // No heartbeat file: the HUD never ran here, or only an old export exists.
         return Reading {
-            state: if snapshot.is_some() { "stopped" } else { "absent" },
+            state: if snapshot.is_some() {
+                "stopped"
+            } else {
+                "absent"
+            },
             heartbeat_age_seconds: None,
             snapshot,
             read_at,
@@ -206,7 +224,13 @@ pub fn quota_hud_start(app: AppHandle) -> Result<String, String> {
         command.creation_flags(0x0000_0208);
     }
     match command.spawn() {
-        Ok(_) => Ok(result(true, "spawned").to_string()),
+        Ok(mut child) => {
+            // Reap the child when it exits so a long-running ai-one never leaves a zombie on Unix.
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            Ok(result(true, "spawned").to_string())
+        }
         Err(_) => Ok(result(false, "error").to_string()),
     }
 }
@@ -217,7 +241,9 @@ mod tests {
     use chrono::TimeZone;
 
     fn now() -> chrono::DateTime<chrono::Utc> {
-        chrono::Utc.with_ymd_and_hms(2026, 10, 23, 12, 0, 0).unwrap()
+        chrono::Utc
+            .with_ymd_and_hms(2026, 10, 23, 12, 0, 0)
+            .unwrap()
     }
     fn status(seconds_ago: i64, running: bool) -> Value {
         json!({
@@ -229,7 +255,11 @@ mod tests {
 
     #[test]
     fn fresh_heartbeat_is_running() {
-        let reading = classify(Ok(Some(status(5, true))), Ok(Some(json!({"quotas": []}))), now());
+        let reading = classify(
+            Ok(Some(status(5, true))),
+            Ok(Some(json!({"quotas": []}))),
+            now(),
+        );
         assert_eq!(reading.state, "running");
         assert_eq!(reading.heartbeat_age_seconds, Some(5));
         assert!(reading.snapshot.is_some());
@@ -262,6 +292,47 @@ mod tests {
         let reading = classify(Ok(Some(json!({"running": true}))), Ok(None), now());
         assert_eq!(reading.state, "stopped");
         assert_eq!(reading.heartbeat_age_seconds, None);
+    }
+
+    #[test]
+    fn a_heartbeat_from_the_future_is_never_running() {
+        // Clock set back or a bad file: far-future time must not read as a live HUD.
+        let ahead = classify(Ok(Some(status(-3600, true))), Ok(Some(json!({}))), now());
+        assert_eq!(ahead.state, "stopped");
+        assert_eq!(ahead.heartbeat_age_seconds, None);
+        // Small skew inside the tolerance still counts as fresh.
+        let skew = classify(
+            Ok(Some(status(-FUTURE_TOLERANCE_SECONDS, true))),
+            Ok(None),
+            now(),
+        );
+        assert_eq!(skew.state, "running");
+        assert_eq!(skew.heartbeat_age_seconds, Some(0));
+        let past_tolerance = classify(
+            Ok(Some(status(-FUTURE_TOLERANCE_SECONDS - 1, true))),
+            Ok(None),
+            now(),
+        );
+        assert_eq!(past_tolerance.state, "stopped");
+    }
+
+    #[test]
+    fn an_oversized_file_is_refused_by_what_is_read_not_by_a_size_check() {
+        let dir = std::env::temp_dir().join(format!("ai-one-quota-hud-big-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let big = dir.join("big.json");
+        // Valid JSON just over the limit: it must be rejected for its size, not parsed.
+        let mut bytes = vec![b' '; MAX_FILE_BYTES as usize];
+        bytes.extend_from_slice(b"{}");
+        fs::write(&big, &bytes).unwrap();
+        assert_eq!(read_json(&big).unwrap_err(), "file too large");
+        // Exactly at the limit is still read.
+        let mut at_limit = vec![b' '; MAX_FILE_BYTES as usize - 2];
+        at_limit.extend_from_slice(b"{}");
+        let ok = dir.join("ok.json");
+        fs::write(&ok, &at_limit).unwrap();
+        assert!(read_json(&ok).unwrap().is_some());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
