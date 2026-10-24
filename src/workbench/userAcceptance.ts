@@ -1,19 +1,25 @@
-import type { GithubWriteResult, GithubWriteStatus } from '../host/githubWrite';
+import type { GithubWriteCreateIssueArgs, GithubWriteResult, GithubWriteStatus } from '../host/githubWrite';
+import { parseActionLine, type AcceptanceAction } from './acceptanceActions';
+import { issueStateKey, type AcceptanceFix, type IssueStates } from './acceptanceFix';
 
 export interface AcceptanceItem {
   key: string; repo: string; issue: number; title: string;
   raw?: string; steps?: string; expected?: string;
+  actions?: AcceptanceAction[];
 }
-export interface AcceptanceRead { items: AcceptanceItem[]; partial: boolean; errors: string[] }
+export interface AcceptanceRead { items: AcceptanceItem[]; partial: boolean; errors: string[]; issueStates?: IssueStates }
 export interface AcceptanceReader { get(path: string): Promise<unknown> }
 export interface AcceptanceWriter {
   status(): Promise<GithubWriteStatus>;
   comment(args: { repo: string; issue: number; text: string }): Promise<GithubWriteResult>;
+  createIssue?(args: GithubWriteCreateIssueArgs): Promise<GithubWriteResult>;
 }
+export type AcceptanceKind = 'approved' | 'feedback' | 'done' | 'choice';
 export interface AcceptanceRecord {
   key: string; repo: string; issue: number; title: string;
-  kind: 'approved' | 'feedback'; sync: 'pending' | 'confirmed' | 'failed' | 'unconfirmed';
+  kind: AcceptanceKind; sync: 'pending' | 'confirmed' | 'failed' | 'unconfirmed';
   feedback?: string;
+  fix?: AcceptanceFix;
 }
 export type AcceptanceRecords = Record<string, AcceptanceRecord>;
 export const ACCEPTANCE_STORAGE_KEY = 'ai-one.workbench.userAcceptance.v1';
@@ -33,8 +39,11 @@ function parseEntry(repo: string, issue: number, raw: string, index: number): Ac
   const lines = clean.split(/\r?\n/u).map((line) => line.trim().replace(/^(?:[-*+]\s+|\d+[.)、]\s+)/u, ''));
   if (lines.length === 1 && /^(?:无|暂无|没有|none|n\/a|无待验收事项)[。.!！\s]*$/iu.test(lines[0])) return undefined;
   let description = '', steps = '', expected = '', loose = false;
+  const actions: AcceptanceAction[] = [];
   for (const line of lines) {
     if (!line) continue;
+    const action = parseActionLine(line);
+    if (action) { actions.push(action); continue; }
     const step = line.match(/^(?:操作步骤|验收步骤|测试步骤|步骤|怎么操作|操作|位置|路径|How to test|Steps?)\s*[:：]\s*(.*)$/iu);
     const want = line.match(/^(?:预期结果|预期表现|预期|期望结果|Expected(?: result)?)\s*[:：]\s*(.*)$/iu);
     if (step) steps += (steps ? '\n' : '') + step[1];
@@ -45,7 +54,8 @@ function parseEntry(repo: string, issue: number, raw: string, index: number): Ac
   const structured = Boolean(steps.trim() && expected.trim() && description && !loose);
   const key = repo.toLowerCase() + ':' + issue + ':' + index + ':' + fingerprint(clean);
   return { key, repo, issue, title: firstSentence(description || lines[0] || clean),
-    ...(structured ? { steps: steps.trim(), expected: expected.trim() } : { raw: clean }) };
+    ...(structured ? { steps: steps.trim(), expected: expected.trim() } : { raw: clean }),
+    ...(actions.length ? { actions } : {}) };
 }
 /** A missing/empty section means no acceptance. Unstructured nonempty entries remain verbatim. */
 export function parseAcceptanceSection(repo: string, issue: number, body: string): AcceptanceItem[] {
@@ -94,7 +104,7 @@ function labelNames(value: unknown): string[] {
 }
 /** Read only fixed paths accepted by github_readonly.rs; bound scan and expose partial reads. */
 export async function loadAcceptanceIssues(repos: readonly string[], api: AcceptanceReader): Promise<AcceptanceRead> {
-  const items: AcceptanceItem[] = [], errors: string[] = [];
+  const items: AcceptanceItem[] = [], errors: string[] = [], issueStates: IssueStates = {};
   let partial = false;
   for (const repo of repos) {
     if (!/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/u.test(repo)) { errors.push(repo); continue; }
@@ -109,6 +119,10 @@ export async function loadAcceptanceIssues(repos: readonly string[], api: Accept
         for (const issue of data) {
           if (issue.pull_request || seen.has(issue.number)) continue;
           seen.add(issue.number);
+          issueStates[issueStateKey(repo, issue.number)] = {
+            state: issue.state,
+            ...(typeof issue.state_reason === 'string' ? { reason: issue.state_reason } : {}),
+          };
           if (!labelNames(issue.labels).includes('needs-user')) continue;
           if (typeof issue.body !== 'string') {
             errors.push(`${repo} #${issue.number}: issue body unavailable`);
@@ -124,9 +138,16 @@ export async function loadAcceptanceIssues(repos: readonly string[], api: Accept
       }
     }
   }
-  return { items, errors, partial: partial || errors.length > 0 };
+  return { items, errors, partial: partial || errors.length > 0, issueStates };
 }
 export interface AcceptanceStorage { getItem(key: string): string | null; setItem(key: string, value: string): void }
+function validFix(value: unknown): value is AcceptanceFix {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const fix = value as AcceptanceFix;
+  return ['ready', 'pending', 'confirmed', 'failed', 'unconfirmed'].includes(fix.sync)
+    && (fix.issue === undefined || Number.isSafeInteger(fix.issue))
+    && (fix.url === undefined || typeof fix.url === 'string');
+}
 export function readAcceptanceRecords(storage: AcceptanceStorage): AcceptanceRecords {
   const raw = storage.getItem(ACCEPTANCE_STORAGE_KEY);
   if (raw === null) return {};
@@ -137,9 +158,10 @@ export function readAcceptanceRecords(storage: AcceptanceStorage): AcceptanceRec
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid acceptance record');
     const row = value as AcceptanceRecord;
     if (row.key !== key || typeof row.repo !== 'string' || !Number.isSafeInteger(row.issue) ||
-      typeof row.title !== 'string' || !['approved', 'feedback'].includes(row.kind) ||
+      typeof row.title !== 'string' || !['approved', 'feedback', 'done', 'choice'].includes(row.kind) ||
       !['pending', 'confirmed', 'failed', 'unconfirmed'].includes(row.sync) ||
-      (row.feedback !== undefined && typeof row.feedback !== 'string')) throw new Error('invalid acceptance record');
+      (row.feedback !== undefined && typeof row.feedback !== 'string') ||
+      (row.fix !== undefined && !validFix(row.fix))) throw new Error('invalid acceptance record');
     records[key] = row;
   }
   return records;
@@ -149,12 +171,19 @@ export function saveAcceptanceRecords(storage: AcceptanceStorage, records: Accep
 }
 /** Only one existing #106 whitelisted comment action. Never mutate labels or PRs. */
 export async function sendAcceptanceComment(
-  writer: AcceptanceWriter, item: AcceptanceItem, kind: 'approved' | 'feedback', feedback = '',
+  writer: AcceptanceWriter, item: AcceptanceItem, kind: AcceptanceKind, feedback = '',
   canSend: () => boolean = () => true,
 ): Promise<'confirmed' | 'failed' | 'unconfirmed'> {
-  const text = kind === 'approved'
-    ? `用户验收：没问题。\n验收项：${item.title.slice(0, 220)}`
-    : `用户验收：有问题。\n验收项：${item.title.slice(0, 220)}\n反馈：${feedback.trim()}`;
+  const title = item.title.slice(0, 220);
+  const text = kind === 'approved' ? `用户验收：没问题。
+验收项：${title}`
+    : kind === 'done' ? `用户已完成：${title}`
+    : kind === 'choice' ? `用户决定：${feedback.trim()}
+事项：${title}`
+    : `用户验收：有问题。
+验收项：${title}
+反馈：${feedback.trim()}
+ai-one 将据此自动创建修复任务。`;
   try {
     if (!canSend() || !(await writer.status()).available || !canSend()) return 'failed';
     const result = await writer.comment({ repo: item.repo, issue: item.issue, text });

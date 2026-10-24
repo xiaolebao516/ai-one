@@ -91,7 +91,7 @@ describe('Overview', () => {
     const task = { ...TASK_HUD_MOCK_TASKS[0], repo: 'o/r', issue: 7, status, title: { en: 'Independent action', zh: '仍需处理' } };
     const item = { key: 'o/r:7:test', repo: 'o/r', issue: 7, title: 'Check appearance' };
     const acceptance: AcceptanceState = { items: [item], records: { [item.key]: { ...item, kind: 'approved', sync: 'confirmed' } },
-      loading: false, partial: false, errors: [], storageError: false, submit: async () => {} };
+      loading: false, partial: false, errors: [], storageError: false, issueStates: {}, progress: {}, submit: async () => {}, retryFix: async () => {} };
     const html = renderToStaticMarkup(<HomeView locale="en" tasks={[task]} health="complete" acceptance={acceptance} onOpenTask={noop} onShowTasks={noop} />);
     expect(visibleText(html)).toContain('Independent action');
   });

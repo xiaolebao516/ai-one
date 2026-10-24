@@ -3,9 +3,10 @@ import { host } from '../host';
 import type { WorkbenchSource } from './workbenchModel';
 import {
   loadAcceptanceIssues, readAcceptanceRecords, saveAcceptanceRecords, sendAcceptanceComment,
-  type AcceptanceItem, type AcceptanceRead, type AcceptanceReader, type AcceptanceRecord,
+  type AcceptanceItem, type AcceptanceKind, type AcceptanceRead, type AcceptanceReader, type AcceptanceRecord,
   type AcceptanceRecords, type AcceptanceStorage, type AcceptanceWriter,
 } from './userAcceptance';
+import { createFixTask, fixProgress, needsNewDecision, type FixProgress, type IssueStates } from './acceptanceFix';
 
 export type AcceptanceLoader = (repos: readonly string[], reader: AcceptanceReader) => Promise<AcceptanceRead>;
 export interface AcceptanceState {
@@ -16,7 +17,13 @@ export interface AcceptanceState {
   errors: string[];
   storageError: boolean;
   storageErrorPhase?: 'before-write' | 'after-write';
-  submit: (item: AcceptanceItem, kind: 'approved' | 'feedback', feedback?: string) => Promise<void>;
+  issueStates: IssueStates;
+  /** Per card key: where the Task created from the user's feedback stands. */
+  progress: Record<string, FixProgress>;
+  /** `text` is the user's words for feedback, or the chosen option for a choice. */
+  submit: (item: AcceptanceItem, kind: AcceptanceKind, text?: string) => Promise<void>;
+  /** Create the fix Task when it was never sent (ready) or definitely failed; never after an unknown result. */
+  retryFix: (item: AcceptanceItem) => Promise<void>;
 }
 function browserStorage(): AcceptanceStorage | undefined {
   try { return window.localStorage; } catch { return undefined; }
@@ -31,7 +38,12 @@ export function useUserAcceptance(
     try {
       const storage = browserStorage();
       if (!storage) throw new Error('storage unavailable');
-      return { records: readAcceptanceRecords(storage), storageError: false };
+      // A create_issue left 'pending' by a previous run may have been sent: never resend it.
+      const records = readAcceptanceRecords(storage);
+      for (const [key, record] of Object.entries(records)) {
+        if (record.fix?.sync === 'pending') records[key] = { ...record, fix: { ...record.fix, sync: 'unconfirmed' } };
+      }
+      return { records, storageError: false };
     } catch { return { records: {} as AcceptanceRecords, storageError: true }; }
   });
   const [records, setRecords] = useState<AcceptanceRecords>(initial.records);
@@ -91,24 +103,54 @@ export function useUserAcceptance(
       return false;
     }
   };
+  const resolved = (key: string): boolean => needsNewDecision(fixProgress(recordsRef.current[key], read.issueStates));
+  const makeFix = async (canonical: AcceptanceItem, record: AcceptanceRecord, generation: number) => {
+    const pending: AcceptanceRecord = { ...record, fix: { sync: 'pending' } };
+    if (!persist({ ...recordsRef.current, [record.key]: pending }, 'before-write')) return;
+    const writeFix = writer.createIssue
+      ? await createFixTask({ createIssue: writer.createIssue.bind(writer) }, canonical, record.feedback ?? '',
+        () => generation === requestRef.current && Boolean(currentItem.current(canonical)))
+      : { sync: 'failed' as const };
+    persist({ ...recordsRef.current, [record.key]: { ...record, fix: writeFix } }, 'after-write');
+  };
   const submit: AcceptanceState['submit'] = async (item, kind, feedback = '') => {
     const canonical = currentItem.current(item);
+    const needsText = kind === 'feedback' || kind === 'choice';
     if (!canonical || inflight.current.has(item.key)
-      || recordsRef.current[item.key] || (kind === 'feedback' && !feedback.trim())) return;
+      || (recordsRef.current[item.key] && !resolved(item.key)) || (needsText && !feedback.trim())) return;
+    // A choice must be one of the options the Issue itself offers.
+    if (kind === 'choice' && !canonical.actions?.some((a) => a.kind === 'choice' && a.options.includes(feedback.trim()))) return;
     const generation = requestRef.current;
     const record: AcceptanceRecord = { key: canonical.key, repo: canonical.repo, issue: canonical.issue,
-      title: canonical.title, kind, sync: 'pending', ...(kind === 'feedback' ? { feedback: feedback.trim() } : {}) };
+      title: canonical.title, kind, sync: 'pending', ...(needsText ? { feedback: feedback.trim() } : {}) };
     if (!persist({ ...recordsRef.current, [item.key]: record }, 'before-write')) return;
     inflight.current.add(item.key);
     try {
       const result = await sendAcceptanceComment(writer, canonical, kind, feedback,
         () => generation === requestRef.current && Boolean(currentItem.current(canonical)));
-      persist({ ...recordsRef.current, [item.key]: { ...record, sync: result } }, 'after-write');
+      // Comment result and "create_issue not yet sent" land in one write, so no unrecoverable gap exists.
+      const done: AcceptanceRecord = { ...record, sync: result,
+        ...(kind === 'feedback' && result === 'confirmed' ? { fix: { sync: 'ready' as const } } : {}) };
+      if (!persist({ ...recordsRef.current, [item.key]: done }, 'after-write')) return;
+      if (kind === 'feedback' && result === 'confirmed') await makeFix(canonical, done, generation);
     } finally { inflight.current.delete(item.key); }
+  };
+  const retryFix: AcceptanceState['retryFix'] = async (item) => {
+    const canonical = currentItem.current(item);
+    const record = recordsRef.current[item.key];
+    if (!canonical || !record || inflight.current.has(item.key) || record.kind !== 'feedback' || (record.fix?.sync !== 'failed' && record.fix?.sync !== 'ready')) return;
+    inflight.current.add(item.key);
+    try { await makeFix(canonical, record, requestRef.current); } finally { inflight.current.delete(item.key); }
   };
   const current = currentRead && !loading ? read : { items: [], errors: [], partial: false };
   const currentRepos = new Set(source === 'github' ? repos.map((repo) => repo.toLowerCase()) : []);
   const currentRecords = Object.fromEntries(Object.entries(records).filter(([, record]) => currentRepos.has(record.repo.toLowerCase())));
+  const issueStates = current.issueStates ?? {};
+  const progress: Record<string, FixProgress> = {};
+  for (const [key, record] of Object.entries(currentRecords)) {
+    const value = fixProgress(record, issueStates);
+    if (value) progress[key] = value;
+  }
   return { items: current.items, records: currentRecords, loading: source === 'github' && (loading || !currentRead),
-    partial: current.partial, errors: current.errors, storageError, storageErrorPhase, submit };
+    partial: current.partial, errors: current.errors, storageError, storageErrorPhase, issueStates, progress, submit, retryFix };
 }
