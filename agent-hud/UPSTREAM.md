@@ -26,7 +26,7 @@ Verification record (2026-10-23, Windows 11, Rust 1.99.1, Node 24.18, pnpm 11.22
 | `src/apps/mcp` | Built-in MCP server is out of scope (to be assessed separately); `src/packages/engine-client` and `crates/engine` are kept (the dev bridge needs them). `host/src/tools.rs`, `mcp_clients.rs` stay inside the host crate, unmodified; the local tools channel is off by default (setting "Let agents arrange the HUD"). |
 | `src/tooling/parity-oracle`, `src/tooling/parity-ledger.mjs`, `docs/parity` | Compare against the Swift app; not usable here. `src/fixtures/parity` stays because Rust/TS tests read it. |
 | `src/tooling/package-resources.mjs` | Packages the MCP bundle and engine as resources; ai-one does not ship them. |
-| `src/packages/hud/src/assets/clawd-sprites.json` | Anthropic's Clawd sprite table, copyrighted and not licensed for open redistribution. Not committed to this repository; fetched on demand for local builds (`pnpm hud:fetch-art` / `pnpm hud:build`) per user acceptance decision (#168 "以原版图像为准"). |
+| `src/packages/hud/src/assets/clawd-sprites.json` | Anthropic's Clawd sprite table, copyrighted and not licensed for open redistribution. Not committed to this repository; fetched on demand for local builds (`pnpm hud:fetch-art` / `pnpm hud:build`, supports `--strict`) per user acceptance decision (#168 "以原版图像为准"). Falls back to procedural bot if missing. |
 | `README*.md`, `docs/screenshots`, `docs/videos`, `docs/badges`, `docs/buttons`, `.github`, `updates/` | Marketing and upstream release plumbing. |
 
 ## Changes to upstream files ("ai-one change" comments mark the spots)
@@ -54,6 +54,7 @@ Apache-2.0 section 4(b): these are all the modified files.
 | File | Purpose |
 |---|---|
 | `src/apps/desktop/src-tauri/src/export.rs` | `ProductExtension`: writes `hud-snapshot.json` (quotas, accounts, providers, billing, short session list) and `hud-status.json` (heartbeat) into `AI_ONE_HUD_EXPORT_DIR`. ai-one reads these; it never computes quota itself. |
+| `src/packages/hud/test/clawd.test.ts` | Tests Clawd sprite decoding, procedural fallback boundary, and malformed payload handling (Issue #168). |
 | `UPSTREAM.md` | this file |
 
 `.gitignore` and `.gitattributes` are byte-identical to upstream (they already enforce LF endings). Also copied from upstream's root: `.cargo/config.toml`, `.editorconfig`, `.prettierrc.json`, `.prettierignore`, `rustfmt.toml`, `tsconfig.base.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`.

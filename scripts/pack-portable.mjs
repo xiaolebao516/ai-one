@@ -34,6 +34,7 @@ Requirements:
 Quota HUD:
 - ai-one-hud.exe (when present) is the quota HUD. Start it from the Resources page; it must stay next to the app .exe.
 - LICENSE-ai-one-hud.txt, NOTICE.md, agent-hud-third-party.md and the third-party folder hold the licences and notices that come with it.
+- When built locally with pnpm hud:fetch-art, original Clawd sprite artwork is fetched on demand for personal use (Issue #168). Public binary releases redistributing Anthropic proprietary assets require Anthropic permission; builds without clawd-sprites.json use procedural bot artwork.
 
 Portable notes:
 - Keep the PORTABLE marker file next to the .exe.
