@@ -120,6 +120,30 @@ describe('ChatLedController', () => {
     expect(controller.getRun().available).toEqual(['claude', 'gemini']);
   });
 
+  it('records candidates that were not ready and tells the coordinator not to substitute them', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [DONE('gemini missing')] }, ['chatgpt', 'claude']);
+    env.prepare = vi.fn(async (provider: ProviderInstance) => {
+      if (provider === 'gemini') throw new Error('gemini page did not become ready in time.');
+    });
+    const controller = await ChatLedController.create(env, {
+      id: 'run-1',
+      goal: '派 gpt 和 gemini 讨论',
+      candidates: ['claude', 'gemini', 'grok', 'chatgpt#2'],
+      workers: 1,
+    });
+    await controller.start();
+    const run = controller.getRun();
+    expect(run.available).toEqual(['claude']);
+    expect(run.unavailable).toEqual([
+      { provider: 'gemini', reason: 'gemini page did not become ready in time.' },
+      { provider: 'grok', reason: 'Not logged in or the page is not ready.' },
+      { provider: 'chatgpt#2', reason: 'Not logged in or the page is not ready.' },
+    ]);
+    expect(calls[0].provider).toBe('chatgpt');
+    expect(calls[0].text).toContain('gemini（Gemini，原因：gemini page did not become ready in time.）');
+    expect(calls[0].text).toContain('不要改派给列表里的其他 AI 顶替');
+  });
+
   it('surfaces bridge initialization failure instead of staying idle', async () => {
     const { env } = makeEnv({ chatgpt: [DONE('unused')] });
     env.initialize = vi.fn(async () => {

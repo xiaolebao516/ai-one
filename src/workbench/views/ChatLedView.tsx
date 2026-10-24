@@ -202,6 +202,21 @@ export function ChatLedView({
         </div>
       </Card>
 
+      {run.unavailable && run.unavailable.length > 0 ? (
+        <Notice tone="you" title={text.t("chatLedUnavailableTitle")} live="polite">
+          <ul className="grid gap-v2-xs">
+            {run.unavailable.map((item) => (
+              <li key={item.provider} className="break-words">
+                {text.t("chatLedUnavailableItem", {
+                  provider: providerName(item.provider, providerLabels),
+                  reason: item.reason,
+                })}
+              </li>
+            ))}
+          </ul>
+        </Notice>
+      ) : null}
+
       <section aria-labelledby="chat-led-goal" className="grid gap-v2-sm">
         <SectionHeader id="chat-led-goal" title={text.t("chatLedGoal")} />
         <Card className="v2-prose whitespace-pre-wrap break-words text-v2-ink">

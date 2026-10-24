@@ -130,6 +130,17 @@ describe('chat-led state machine', () => {
     expect(setAvailableProviders(idle, ['claude'], 13)).toBe(idle);
   });
 
+  it('keeps the providers that were not ready, never listing the coordinator or an available one', () => {
+    const configured = setAvailableProviders(start(), ['claude'], 12, [
+      { provider: 'gemini', reason: 'not logged in' },
+      { provider: 'chatgpt', reason: 'coordinator' },
+      { provider: 'claude', reason: 'stale' },
+    ]);
+    expect(configured.available).toEqual(['claude']);
+    expect(configured.unavailable).toEqual([{ provider: 'gemini', reason: 'not logged in' }]);
+    expect(setAvailableProviders(start(), ['claude'], 12).unavailable).toBeUndefined();
+  });
+
   it('marks initialization pending as active and clears it immutably', () => {
     const pending = setInitializationPending(makeRun(), true, 12);
     expect(isRunActive(pending)).toBe(true);
