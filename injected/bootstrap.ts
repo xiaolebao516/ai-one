@@ -171,6 +171,7 @@ interface MacBridge {
   let degradedReason: string | undefined;
   let titleTimer: number | undefined;
   let hintTimer: number | undefined;
+  let startupTimer: number | undefined;
   let lastTitleEmitAt = 0;
   let latestTitle: { action: MessageAction; payload?: unknown } | undefined;
   let titleEmitChain = Promise.resolve();
@@ -334,6 +335,8 @@ interface MacBridge {
     },
     onDispatch(handler: (message: BridgeMessage) => void) {
       dispatchHandler = handler;
+      if (startupTimer !== undefined) window.clearTimeout(startupTimer);
+      startupTimer = undefined;
       while (queue.length > 0) {
         const message = queue.shift();
         if (message) handler(message);
@@ -370,6 +373,16 @@ interface MacBridge {
   window.addEventListener('popstate', notifyRoute);
 
   emitTitle('STATUS_REPORT', { dom: 'unknown', bootId }, { immediate: true });
+  // A cached/reopened WebView can emit its first title before the host registers the child.
+  // Retry the handshake until the engine attaches; CHECK_STATUS alone only queues without it.
+  function retryStartup(): void {
+    if (dispatchHandler) return;
+    if (isProviderAppHost(location.hostname, window.__MAC_APP_HOSTS__) && !isProviderChallengeActive(provider)) {
+      emitTitle('STATUS_REPORT', { dom: 'unknown', bootId }, { immediate: true });
+    }
+    startupTimer = window.setTimeout(retryStartup, 1000);
+  }
+  startupTimer = window.setTimeout(retryStartup, 1000);
 
   function providerFromLabel(): string {
     if (typeof window.__MAC_PROVIDER__ === 'string' && window.__MAC_PROVIDER__) {
