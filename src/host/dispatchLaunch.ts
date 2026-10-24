@@ -12,7 +12,7 @@ export interface DispatchLaunchArgs {
 }
 export type DispatchCode =
   | 'launched' | 'opened' | 'invalid_input' | 'workdir_invalid' | 'program_not_found'
-  | 'spawn_failed' | 'open_failed' | 'unavailable';
+  | 'spawn_failed' | 'open_failed' | 'already_running' | 'issue_unverified' | 'unavailable';
 export interface DispatchLaunchResult { ok: boolean; code: DispatchCode; prompt?: string; runId?: string; pid?: number }
 export type DispatchRunState = 'running' | 'exited' | 'lost';
 export interface DispatchRun {
@@ -23,6 +23,7 @@ export interface DispatchRuns { runs: DispatchRun[]; defaultWorkdir?: string }
 
 const CODES = new Set<DispatchCode>([
   'launched', 'opened', 'invalid_input', 'workdir_invalid', 'program_not_found', 'spawn_failed', 'open_failed',
+  'already_running', 'issue_unverified',
 ]);
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);

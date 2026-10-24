@@ -27,9 +27,10 @@ function savePrefs(prefs: LaunchPrefs): void {
   try { window.localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
 }
 
-const FAILURE_TEXT: Record<Exclude<DispatchCode, 'launched' | 'opened'>, 'launchInvalid' | 'launchWorkdirInvalid' | 'launchNoProgram' | 'launchSpawnFailed' | 'launchOpenFailed' | 'launchUnknown'> = {
+const FAILURE_TEXT: Record<Exclude<DispatchCode, 'launched' | 'opened'>, 'launchInvalid' | 'launchWorkdirInvalid' | 'launchNoProgram' | 'launchSpawnFailed' | 'launchOpenFailed' | 'launchAlreadyRunning' | 'launchIssueUnverified' | 'launchUnknown'> = {
   invalid_input: 'launchInvalid', workdir_invalid: 'launchWorkdirInvalid', program_not_found: 'launchNoProgram',
-  spawn_failed: 'launchSpawnFailed', open_failed: 'launchOpenFailed', unavailable: 'launchUnknown',
+  spawn_failed: 'launchSpawnFailed', open_failed: 'launchOpenFailed', already_running: 'launchAlreadyRunning',
+  issue_unverified: 'launchIssueUnverified', unavailable: 'launchUnknown',
 };
 
 export function DispatchPanel({ locale, repo, issue, api = dispatchLaunch, onCopy = copyToClipboard }: {
@@ -101,7 +102,10 @@ export function DispatchPanel({ locale, repo, issue, api = dispatchLaunch, onCop
               </label>
             ))}
             {prefs.mode === 'cli' ? (
-              <p className="text-v2-meta text-v2-ink-2">{text.t(prefs.agent === 'claude' ? 'launchCliClaudeNote' : 'launchCliCodexNote')}</p>
+              <>
+                <p className="text-v2-meta text-v2-ink-2">{text.t(prefs.agent === 'claude' ? 'launchCliClaudeNote' : 'launchCliCodexNote')}</p>
+                <p className="text-v2-meta text-v2-ink-2">{text.t('launchCliWarning')}</p>
+              </>
             ) : null}
           </fieldset>
           <div className="grid gap-v2-xs">

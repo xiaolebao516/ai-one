@@ -7,10 +7,13 @@
 //! fixed parts, so a compromised control page cannot make ai-one run an arbitrary command.
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -18,19 +21,17 @@ const MAX_ISSUE: u64 = 9_007_199_254_740_991;
 const CLAUDE_MODELS: [&str; 3] = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
 const DEFAULT_CLAUDE_MODEL: &str = "claude-sonnet-5-5";
 const MAX_RUNS: usize = 20;
+static LAUNCH_LOCK: Mutex<()> = Mutex::new(());
+static NEXT_RUN: AtomicU32 = AtomicU32::new(0);
 const LOG_TAIL_BYTES: u64 = 4096;
-/// `~/.claude/settings.json` may route the command line through a local proxy or another model.
-/// The dispatched run must use the account's own Claude, so these are removed from its environment.
-const CLAUDE_ENV_REMOVE: [&str; 9] = [
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_MODEL",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "CLAUDECODE",
+/// The agent runs with a clean environment: only what a developer tool needs to find its own
+/// programs, config and network, plus the GitHub token variables the workflow itself uses. Anything
+/// else in ai-one's environment (cloud keys, API keys, a routing proxy for another model) is dropped.
+const ENV_ALLOW: [&str; 33] = [
+    "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "USERPROFILE", "HOME", "HOMEDRIVE",
+    "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432",
+    "TEMP", "TMP", "USERNAME", "USERDOMAIN", "COMPUTERNAME", "OS", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS",
+    "LANG", "LC_ALL", "TERM", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST",
 ];
 /// Commands the AGENTS.md workflow needs. Everything else is denied in the unattended run.
 const CLAUDE_ALLOW: [&str; 11] = [
@@ -104,6 +105,87 @@ fn valid_repo(repo: &str) -> bool {
         })
 }
 
+/// Pure filter so the rule is testable: names are compared case-insensitively (Windows).
+fn filter_env(vars: impl Iterator<Item = (OsString, OsString)>) -> Vec<(OsString, OsString)> {
+    vars.filter(|(name, _)| {
+        let upper = name.to_string_lossy().to_uppercase();
+        ENV_ALLOW.contains(&upper.as_str())
+    })
+    .collect()
+}
+
+fn child_env() -> Vec<(OsString, OsString)> {
+    filter_env(std::env::vars_os())
+}
+
+/// A helper process (git, gh, node) with the same clean environment and no console window.
+fn helper(program: &Path) -> Command {
+    let mut command = Command::new(program);
+    command.env_clear().envs(child_env()).stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    command
+}
+
+fn run_text(command: &mut Command) -> Option<String> {
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// "owner/name" (lower-case) from an https, ssh or scp-style GitHub remote URL.
+fn repo_from_remote(url: &str) -> Option<String> {
+    let url = url.trim().trim_end_matches('/');
+    let url = url.strip_suffix(".git").unwrap_or(url);
+    let rest = ["https://github.com/", "http://github.com/", "ssh://git@github.com/", "git@github.com:"]
+        .iter()
+        .find_map(|prefix| url.strip_prefix(prefix))?;
+    let repo = rest.to_lowercase();
+    valid_repo(&repo).then_some(repo)
+}
+
+/// The checkout must really be a clone of the repository the prompt names; marker files alone do not
+/// prove that. Anything unreadable counts as a mismatch.
+fn workdir_matches_repo(workdir: &Path, repo: &str) -> bool {
+    let Some(git) = find_on_path(if cfg!(windows) { &["git.exe"] } else { &["git"] }) else { return false };
+    let mut command = helper(&git);
+    command.args(["-C"]).arg(workdir).args(["config", "--get", "remote.origin.url"]);
+    run_text(&mut command)
+        .and_then(|url| repo_from_remote(&url))
+        .is_some_and(|found| found == repo.to_lowercase())
+}
+
+fn same_login(author: &str, me: &str) -> bool {
+    !author.trim().is_empty() && author.trim().eq_ignore_ascii_case(me.trim())
+}
+
+/// An unattended agent reads the Issue as its instructions, and this repository is public: only an
+/// Issue written by the signed-in GitHub user may be dispatched to the command line.
+fn issue_written_by_me(repo: &str, issue: u64) -> bool {
+    let Some(gh) = find_on_path(if cfg!(windows) { &["gh.exe"] } else { &["gh"] }) else { return false };
+    let mut author = helper(&gh);
+    author.args(["api", &format!("repos/{repo}/issues/{issue}"), "--jq", ".user.login"]);
+    let mut me = helper(&gh);
+    me.args(["api", "user", "--jq", ".login"]);
+    match (run_text(&mut author), run_text(&mut me)) {
+        (Some(author), Some(me)) => same_login(&author, &me),
+        _ => false,
+    }
+}
+
+fn next_session() -> String {
+    format!("dispatch-{}-{}", unix_millis(), NEXT_RUN.fetch_add(1, Ordering::SeqCst))
+}
+
+fn agent_id(agent: Agent, session: &str) -> String {
+    format!("{} / {}", agent.label(), session)
+}
+
 fn unix_millis() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -114,8 +196,8 @@ fn unix_millis() -> u128 {
 /// The hand-over prompt. Fixed wording; only the repository, Issue number and a session tag vary.
 fn build_prompt(repo: &str, issue: u64, agent: Agent, session: &str) -> String {
     format!(
-        "按 AGENTS.md 快速开发模式接手 {repo} 的 Issue #{issue}。先在仓库根目录运行：node scripts/agent-entry/cli.mjs take {issue} --agent \"{label} / {session}\"；认领成功（退出码 0）才按输出开工，退出码 2 表示已被别人认领，立即停手。全程遵守 AGENTS.md，做完在 Issue 留一段说人话的总结。",
-        label = agent.label()
+        "按 AGENTS.md 快速开发模式接手 {repo} 的 Issue #{issue}。先在仓库根目录运行：node scripts/agent-entry/cli.mjs take {issue} --agent \"{id}\"；认领成功（退出码 0）才按输出开工，退出码 2 表示已被别人认领，立即停手。全程遵守 AGENTS.md，做完在 Issue 留一段说人话的总结。",
+        id = agent_id(agent, session)
     )
 }
 
@@ -159,9 +241,16 @@ fn resolve_workdir(raw: &str) -> Result<PathBuf, String> {
     if raw.trim().is_empty() || raw.len() > 1024 {
         return Err("workdir is empty or too long".to_string());
     }
+    if raw.trim().starts_with(r"\\") || raw.trim().starts_with("//") {
+        return Err("network folders are not allowed".to_string());
+    }
     let path = fs::canonicalize(raw.trim()).map_err(|error| error.to_string())?;
     let path = strip_verbatim(path);
+    if path.to_string_lossy().starts_with(r"\\") {
+        return Err("network folders are not allowed".to_string());
+    }
     if !path.is_dir()
+        || !path.join(".git").exists()
         || !path.join("AGENTS.md").is_file()
         || !path.join("scripts").join("agent-entry").join("cli.mjs").is_file()
     {
@@ -306,9 +395,22 @@ fn launch_cli(
     };
     let dir = dispatch_dir(app)?;
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    // One launch at a time: the "already running" check and the spawn must not interleave.
+    let _guard = LAUNCH_LOCK.lock().map_err(|_| "dispatch lock poisoned".to_string())?;
+    if let Some(existing) = read_runs(&dir).iter().find(|run| {
+        run["state"] == "running"
+            && run["repo"].as_str().is_some_and(|repo| repo.eq_ignore_ascii_case(&args.repo))
+            && run["issue"].as_u64() == Some(args.issue)
+    }) {
+        return Ok(reply(false, "already_running", "这个 Issue 已有一个运行中的派工", json!({ "runId": existing["runId"] })));
+    }
     let run_id = session.to_string();
     let log_path = dir.join(format!("{run_id}.log"));
-    let log = fs::File::create(&log_path).map_err(|error| error.to_string())?;
+    let log = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&log_path)
+        .map_err(|error| error.to_string())?;
     let log_err = log.try_clone().map_err(|error| error.to_string())?;
     let mut command = Command::new(&program);
     match agent {
@@ -317,15 +419,14 @@ fn launch_cli(
             let settings = dir.join(format!("{run_id}.settings.json"));
             fs::write(&settings, claude_settings()).map_err(|error| error.to_string())?;
             command.args(claude_args(model, &settings));
-            for name in CLAUDE_ENV_REMOVE {
-                command.env_remove(name);
-            }
         }
         Agent::Codex => {
             command.args(codex_args());
         }
     }
     command
+        .env_clear()
+        .envs(child_env())
         .current_dir(workdir)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(log))
@@ -356,12 +457,39 @@ fn launch_cli(
         let _ = fs::write(exit_path, code.to_string());
     });
     prune_old_runs(&dir);
+    let watching = start_claim_watch(workdir, args.issue, &agent_id(agent, session), pid);
     Ok(reply(
         true,
         "launched",
         "已在后台启动",
-        json!({ "runId": run_id, "pid": pid, "prompt": prompt }),
+        json!({ "runId": run_id, "pid": pid, "prompt": prompt, "watching": watching }),
     ))
+}
+
+/// Keeps the claim's heartbeat alive only while the launched process is alive (scripts/issue-claim).
+/// Best effort: without it the claim merely looks silent after the default window, it is never lost.
+fn start_claim_watch(workdir: &Path, issue: u64, agent: &str, pid: u32) -> bool {
+    let Some(node) = find_on_path(if cfg!(windows) { &["node.exe"] } else { &["node"] }) else { return false };
+    let mut command = helper(&node);
+    command
+        .args(["scripts/issue-claim/dispatch-watch.mjs", &issue.to_string(), agent, &pid.to_string()])
+        .current_dir(workdir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0200);
+    }
+    match command.spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 fn prune_old_runs(dir: &Path) {
@@ -453,7 +581,13 @@ pub fn dispatch_launch(app: AppHandle, webview: tauri::Webview, args: LaunchArgs
             return Ok(reply(false, "workdir_invalid", "工作目录不是 ai-one 仓库（需含 AGENTS.md）", json!({})))
         }
     };
-    let session = format!("dispatch-{}", unix_millis());
+    if !workdir_matches_repo(&workdir, &args.repo) {
+        return Ok(reply(false, "workdir_invalid", "工作目录不是这个仓库的检出（origin 不一致）", json!({})));
+    }
+    if args.mode == "cli" && !issue_written_by_me(&args.repo, args.issue) {
+        return Ok(reply(false, "issue_unverified", "命令行派工只接受你自己创建的 Issue（无法核实作者）", json!({})));
+    }
+    let session = next_session();
     let prompt = build_prompt(&args.repo, args.issue, agent, &session);
     if args.mode == "desktop" {
         let url = client_url(agent, &prompt, &workdir);
@@ -501,6 +635,7 @@ mod tests {
     fn temp_checkout() -> PathBuf {
         let root = unique("checkout");
         fs::create_dir_all(root.join("scripts").join("agent-entry")).unwrap();
+        fs::create_dir_all(root.join(".git")).unwrap();
         fs::write(root.join("AGENTS.md"), "x").unwrap();
         fs::write(root.join("scripts").join("agent-entry").join("cli.mjs"), "x").unwrap();
         root
@@ -547,6 +682,49 @@ mod tests {
     }
 
     #[test]
+    fn remotes_resolve_to_owner_slash_name_and_foreign_hosts_do_not() {
+        for url in ["https://github.com/Owner/Repo.git", "git@github.com:owner/repo.git", "ssh://git@github.com/owner/repo", "https://github.com/owner/repo/"] {
+            assert_eq!(repo_from_remote(url).as_deref(), Some("owner/repo"), "{url}");
+        }
+        assert_eq!(repo_from_remote("https://evil.example/owner/repo.git"), None);
+        assert_eq!(repo_from_remote("https://github.com/owner/repo/extra"), None);
+        assert_eq!(repo_from_remote(""), None);
+    }
+
+    #[test]
+    fn network_folders_and_plain_folders_are_refused() {
+        assert!(resolve_workdir(r"\\server\share\ai-one").is_err());
+        assert!(resolve_workdir("//server/share/ai-one").is_err());
+        let plain = unique("plain");
+        fs::create_dir_all(plain.join("scripts").join("agent-entry")).unwrap();
+        fs::write(plain.join("AGENTS.md"), "x").unwrap();
+        fs::write(plain.join("scripts").join("agent-entry").join("cli.mjs"), "x").unwrap();
+        assert!(resolve_workdir(&plain.to_string_lossy()).is_err(), "marker files without .git must not pass");
+        let _ = fs::remove_dir_all(plain);
+    }
+
+    #[test]
+    fn only_a_short_allowlist_of_environment_reaches_the_agent() {
+        let vars = [("Path", "p"), ("GH_TOKEN", "t"), ("AWS_SECRET_ACCESS_KEY", "s"), ("ANTHROPIC_AUTH_TOKEN", "a"), ("ANTHROPIC_BASE_URL", "b"), ("OPENAI_API_KEY", "o")]
+            .map(|(name, value)| (OsString::from(name), OsString::from(value)));
+        let kept: Vec<String> = filter_env(vars.into_iter()).into_iter().map(|(name, _)| name.to_string_lossy().to_string()).collect();
+        assert_eq!(kept, vec!["Path".to_string(), "GH_TOKEN".to_string()]);
+    }
+
+    #[test]
+    fn only_the_signed_in_user_counts_as_the_issue_author() {
+        assert!(same_login("Octo", "octo"));
+        assert!(!same_login("someone-else", "octo"));
+        assert!(!same_login("", ""));
+    }
+
+    #[test]
+    fn run_ids_never_repeat_even_within_one_millisecond() {
+        let ids: std::collections::HashSet<String> = (0..500).map(|_| next_session()).collect();
+        assert_eq!(ids.len(), 500);
+    }
+
+    #[test]
     fn a_task_worktree_resolves_to_the_main_checkout() {
         let main = temp_checkout();
         fs::create_dir_all(main.join(".git").join("worktrees").join("w1")).unwrap();
@@ -570,8 +748,6 @@ mod tests {
         assert!(args.windows(2).any(|pair| pair == ["--setting-sources", "project,local"]));
         assert!(args.windows(2).any(|pair| pair == ["--model", "claude-sonnet-5-5"]));
         assert!(args.iter().all(|arg| !arg.contains("Issue")));
-        assert!(CLAUDE_ENV_REMOVE.contains(&"ANTHROPIC_BASE_URL"));
-        assert!(CLAUDE_ENV_REMOVE.contains(&"ANTHROPIC_AUTH_TOKEN"));
         let settings: Value = serde_json::from_str(&claude_settings()).unwrap();
         assert_eq!(settings["permissions"]["defaultMode"], "acceptEdits");
         let allow = settings["permissions"]["allow"].as_array().unwrap();

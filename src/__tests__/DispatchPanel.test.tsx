@@ -63,6 +63,7 @@ describe('one-click dispatch panel', () => {
     const radios = [...container.querySelectorAll('input[type="radio"]')] as HTMLInputElement[];
     await act(async () => radios.find((r) => r.parentElement?.textContent?.includes('命令行'))!.click());
     expect(container.textContent).toContain('不会出现在 Claude 桌面客户端里');
+    expect(container.textContent).toContain('只派你自己创建的 Issue');
     await click('派给 Claude Code');
     expect(fake.launch).toHaveBeenCalledWith(expect.objectContaining({ mode: 'cli' }));
     expect(container.textContent).toContain('进程 77');
@@ -110,6 +111,8 @@ describe('host result parsing', () => {
     expect(parseLaunchResult(JSON.stringify({ ok: false, code: 'launched' }))).toEqual({ ok: false, code: 'unavailable' });
     expect(parseLaunchResult('not json')).toEqual({ ok: false, code: 'unavailable' });
     expect(parseLaunchResult(JSON.stringify({ ok: true, code: 'launched', pid: 5, runId: 'r' }))).toMatchObject({ pid: 5, runId: 'r' });
+    expect(parseLaunchResult(JSON.stringify({ ok: false, code: 'already_running' }))).toEqual({ ok: false, code: 'already_running' });
+    expect(parseLaunchResult(JSON.stringify({ ok: false, code: 'issue_unverified' }))).toEqual({ ok: false, code: 'issue_unverified' });
   });
   it('drops malformed runs', () => {
     const good = { runId: 'a', agent: 'codex', repo: 'o/r', issue: 1, pid: 2, startedAt: 3, state: 'running', exitCode: null, tail: '' };
