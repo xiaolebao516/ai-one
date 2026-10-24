@@ -176,7 +176,7 @@ function formatResetTime(value: string, locale: Locale): string {
 
 function QuotaHudNotice({ text, quotaHud }: { text: WorkbenchText; quotaHud: QuotaHudData }) {
   const [starting, setStarting] = useState(false);
-  const [startFailed, setStartFailed] = useState(false);
+  const [startFailed, setStartFailed] = useState<string | null>(null);
   const reading = quotaHud.reading;
   const browserUnavailable = quotaHud.state === 'unavailable' || reading?.state === 'unavailable';
   const running = quotaHud.state === 'ready' && reading?.state === 'running';
@@ -199,11 +199,13 @@ function QuotaHudNotice({ text, quotaHud }: { text: WorkbenchText; quotaHud: Quo
   const canStart = !browserUnavailable && quotaHud.state !== 'loading' && reading?.state !== 'running';
   const startHud = async () => {
     setStarting(true);
-    setStartFailed(false);
+    setStartFailed(null);
     try {
-      await quotaHud.start();
+      const result = await quotaHud.start();
+      const failure = startFailure(result);
+      if (failure) setStartFailed(failure);
     } catch {
-      setStartFailed(true);
+      setStartFailed('error');
     } finally {
       setStarting(false);
     }
@@ -214,7 +216,7 @@ function QuotaHudNotice({ text, quotaHud }: { text: WorkbenchText; quotaHud: Quo
         <Notice tone={quotaHud.state === 'error' || reading?.state === 'unreadable' ? 'block' : 'unknown'}>
           {text.t(messageKey)}
         </Notice>
-        {startFailed ? <p role="alert" className="mt-1 text-v2-meta text-v2-block">{text.t('quotaHudStartError')}</p> : null}
+        {startFailed ? <p role="alert" className="mt-1 text-v2-meta text-v2-block">{text.t(startFailed === 'exe-not-found' ? 'quotaHudStartMissing' : 'quotaHudStartError')}</p> : null}
       </div>
       {canStart ? (
         <Button size="sm" loading={starting} onClick={() => void startHud()}>
@@ -223,6 +225,26 @@ function QuotaHudNotice({ text, quotaHud }: { text: WorkbenchText; quotaHud: Quo
       ) : null}
     </div>
   );
+}
+
+/** quota_hud_start answers {"started": bool, "reason": string}; "already-running" is not a failure. */
+function startFailure(result: unknown): string | null {
+  if (result === undefined) return null;
+  try {
+    const parsed: unknown = typeof result === 'string' ? JSON.parse(result) : result;
+    if (typeof parsed !== 'object' || parsed === null) return 'error';
+    const { started, reason } = parsed as { started?: unknown; reason?: unknown };
+    if (started === true || reason === 'already-running') return null;
+    return typeof reason === 'string' ? reason : 'error';
+  } catch {
+    return 'error';
+  }
+}
+
+/** The HUD's own notice text is shown only when it is short and cannot be an e-mail address. */
+function safeNotice(notice: string | undefined): string | undefined {
+  if (!notice || notice.length > 120 || notice.includes('@')) return undefined;
+  return notice;
 }
 
 function AgentResourceCard({ resource, locale, text }: { resource: ResourceStatus; locale: Locale; text: WorkbenchText }) {
@@ -244,7 +266,7 @@ function AgentResourceCard({ resource, locale, text }: { resource: ResourceStatu
             <Badge tone={ACTIVITY_TONE[resource.activity]}>{text.t(ACTIVITY_LABEL[resource.activity])}</Badge>
           </div>
           <p className="text-v2-meta text-v2-ink-3">{text.t('agentKind')}</p>
-          {resource.loginNotice ? <p className="mt-1 text-v2-meta text-v2-ink-2">{resource.loginNotice}</p> : null}
+          {safeNotice(resource.loginNotice) ? <p className="mt-1 text-v2-meta text-v2-ink-2">{safeNotice(resource.loginNotice)}</p> : null}
         </div>
       </div>
       <div className="grid min-w-0 gap-v2-sm">
@@ -257,7 +279,7 @@ function AgentResourceCard({ resource, locale, text }: { resource: ResourceStatu
         {resource.quota.windows.length > 0 ? (
           <div className="grid gap-v2-sm">
             {resource.quota.windows.map((window, index) => (
-              <QuotaWindowRow key={window.id ?? window.name + '-' + index} window={window} quota={resource.quota} locale={locale} text={text} />
+              <QuotaWindowRow key={window.id ?? window.name + '-' + index} window={window} locale={locale} text={text} />
             ))}
           </div>
         ) : (
@@ -278,16 +300,15 @@ function AgentResourceCard({ resource, locale, text }: { resource: ResourceStatu
 
 function QuotaWindowRow({
   window,
-  quota,
   locale,
   text,
 }: {
   window: ResourceStatus['quota']['windows'][number];
-  quota: ResourceStatus['quota'];
   locale: Locale;
   text: WorkbenchText;
 }) {
-  const level = quota.source === 'known' && !quota.stale ? window.level : 'unknown';
+  // window.level is already 'unknown' unless this very window is current (fresh, trusted, not reset).
+  const level = window.level;
   const usedPercent = window.usedPercent;
   return (
     <div className="grid gap-1" data-testid="quota-window">

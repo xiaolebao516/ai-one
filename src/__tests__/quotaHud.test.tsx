@@ -180,9 +180,55 @@ describe('deriveResources', () => {
 
   it('ignores stale and unknown quota windows in the title summary', () => {
     const live = parsed('running', snapshot({ quotas: [quota('claude', 70), quota('codex', 90)] }));
-    expect(quotaTitleView(deriveResources(live, NOW))).toEqual({ level: 'critical', usedPercent: 90 });
+    expect(quotaTitleView(deriveResources(live, NOW))).toEqual({ level: 'critical', usedPercent: 90, partial: false });
     const stopped = parsed('stopped', snapshot({ quotas: [quota('codex', 99)] }));
-    expect(quotaTitleView(deriveResources(stopped, NOW))).toEqual({ level: 'unknown', usedPercent: null });
+    expect(quotaTitleView(deriveResources(stopped, NOW))).toEqual({ level: 'unknown', usedPercent: null, partial: false });
+  });
+
+  it('never marks the title green while another window of the same agent is unknown', () => {
+    const partialOk = parsed('running', snapshot({ quotas: [quota('codex', 55), { ...quota('codex', null), name: 'Weekly limit' }] }));
+    expect(quotaTitleView(deriveResources(partialOk, NOW))).toEqual({ level: 'unknown', usedPercent: 55, partial: true });
+    // A high number is still a true warning, even with another window unknown.
+    const partialHigh = parsed('running', snapshot({ quotas: [quota('codex', 92), { ...quota('codex', null), name: 'Weekly limit' }] }));
+    expect(quotaTitleView(deriveResources(partialHigh, NOW))).toEqual({ level: 'critical', usedPercent: 92, partial: true });
+    const codex = resource(partialOk, 'codex');
+    expect(codex.quota.source).toBe('known');
+    expect(codex.quota.partial).toBe(true);
+    expect(codex.quota.windows.map((window) => window.level)).toEqual(['ok', 'unknown']);
+  });
+
+  it('does not show a window as current once its reset time has passed or its time is not believable', () => {
+    const past = { ...quota('codex', 55), resetAt: new Date(NOW - 1000).toISOString() };
+    const futureObserved = quota('codex', 55, new Date(NOW + 60 * 60 * 1000).toISOString());
+    const oldObserved = quota('codex', 55, new Date(NOW - 31 * 60 * 1000).toISOString());
+    for (const bad of [past, futureObserved, oldObserved]) {
+      const codex = resource(parsed('running', snapshot({ quotas: [bad] })), 'codex');
+      expect(codex.quota.source).toBe('unknown');
+      expect(codex.quota.stale).toBe(true);
+      expect(codex.quota.windows[0]?.level).toBe('unknown');
+      expect(quotaTitleView(deriveResources(parsed('running', snapshot({ quotas: [bad] })), NOW)).level).toBe('unknown');
+    }
+    const noReset = { ...quota('codex', 55), resetAt: null };
+    expect(resource(parsed('running', snapshot({ quotas: [noReset] })), 'codex').quota.source).toBe('known');
+  });
+
+  it('does not trust demo, unlabelled or future-dated snapshots as current', () => {
+    const providers = [{ id: 'codex', detected: true, accountStatus: { status: 'ready', notice: null, checkedAt: freshAt } }];
+    for (const overrides of [{ mode: 'demo' }, { mode: null }, { generatedAt: null }, { generatedAt: 'tomorrow-ish' }, { generatedAt: new Date(NOW + 60 * 60 * 1000).toISOString() }]) {
+      const reading = parsed('running', { ...snapshot({ quotas: [quota('codex', 55)], providers }), ...overrides });
+      const codex = resource(reading, 'codex');
+      expect(codex.quota.source).toBe('unknown');
+      expect(codex.login).toBe('unknown');
+      expect(codex.activity).toBe('unknown');
+    }
+  });
+
+  it('shows login as unknown once the HUD has stopped, even if the old snapshot said ready', () => {
+    const providers = [{ id: 'codex', detected: true, accountStatus: { status: 'ready', notice: null, checkedAt: freshAt } }];
+    expect(resource(parsed('running', snapshot({ providers })), 'codex').login).toBe('ok');
+    for (const state of ['stopped', 'unreadable']) {
+      expect(resource(parsed(state, snapshot({ providers })), 'codex').login).toBe('unknown');
+    }
   });
 });
 
@@ -354,9 +400,26 @@ describe('ResourcesView quota display', () => {
 });
 
 describe('Workbench quota title button', () => {
+  it('says so when the HUD program is missing instead of looking like it started', async () => {
+    const loader: QuotaHudLoader = async () => rawReading('absent', null, new Date().toISOString());
+    const missing = JSON.stringify({ started: false, reason: 'exe-not-found' });
+    const mounted = await mount(
+      <Workbench locale="zh-CN" onOpenClassic={noOp} isDesktop={true} quotaHudLoader={loader} quotaHudStarter={async () => missing} />,
+    );
+    await flush();
+    await flush();
+    await act(async () => { (mounted.container.querySelector('[data-testid="quota-button"]') as HTMLButtonElement).click(); });
+    const start = [...mounted.container.querySelectorAll('button')].find((button) => button.textContent?.trim() === '启动额度 HUD');
+    expect(start).toBeTruthy();
+    await act(async () => { (start as HTMLButtonElement).click(); });
+    await flush();
+    expect(mounted.container.querySelector('[role="alert"]')?.textContent).toContain('找不到额度 HUD 程序');
+  });
+
   it('shows the highest fresh percentage and maps critical usage to the red token', async () => {
     const loader: QuotaHudLoader = async () => rawReading('running', snapshot({
-      quotas: [quota('claude', 70, new Date().toISOString()), quota('codex', 95, new Date().toISOString())],
+      quotas: [quota('claude', 70, new Date().toISOString()), quota('codex', 95, new Date().toISOString())]
+        .map((item) => ({ ...item, resetAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() })),
       providers: [{ id: 'codex', detected: true, accountStatus: { status: 'ready', notice: null, checkedAt: freshAt } }],
     }), new Date().toISOString());
     const mounted = await mount(
@@ -365,7 +428,7 @@ describe('Workbench quota title button', () => {
     await flush();
     await flush();
     const button = mounted.container.querySelector('[data-testid="quota-button"]');
-    expect(button?.textContent).toContain('额度 95%');
+    expect(button?.textContent).toContain('最高已用 95%');
     expect(button?.getAttribute('aria-label')).toContain('额度 HUD');
     expect(button?.getAttribute('data-tone')).toBe('critical');
     expect(button?.querySelector('[data-testid="quota-button-dot"]')?.className).toContain('bg-v2-block');

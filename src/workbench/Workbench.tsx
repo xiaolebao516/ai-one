@@ -365,7 +365,7 @@ function QuotaButton({ text, quotaHud, onClick }: { text: WorkbenchText; quotaHu
   const summary = quotaTitleView(deriveResources(reading, Date.now()));
   const value = summary.usedPercent === null
     ? text.t('quotaButtonUnknown')
-    : text.t('quotaButtonValue', { percent: quotaPercentLabel(summary.usedPercent) });
+    : text.t(summary.partial ? 'quotaButtonValuePartial' : 'quotaButtonValue', { percent: quotaPercentLabel(summary.usedPercent) });
   const label = text.t('quotaButtonAria', { value });
   return (
     <button
