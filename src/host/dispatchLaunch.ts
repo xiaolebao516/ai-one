@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 
 /** One-click dispatch (Spec #155 C). Rust builds the prompt, program and arguments; the page only names them. */
-export type DispatchAgent = 'claude' | 'codex';
+export type DispatchAgent = 'claude' | 'codex' | 'antigravity' | 'workbuddy';
+export const DISPATCH_AGENTS: readonly DispatchAgent[] = ['claude', 'codex', 'antigravity', 'workbuddy'];
 export type DispatchMode = 'desktop' | 'cli';
 export interface DispatchLaunchArgs {
   agent: DispatchAgent;
@@ -51,7 +52,7 @@ export function parseRuns(raw: unknown): DispatchRuns {
     const value: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw;
     if (!isRecord(value) || !Array.isArray(value.runs)) return { runs: [] };
     const runs = value.runs.filter((run): run is Record<string, unknown> => isRecord(run)
-      && typeof run.runId === 'string' && (run.agent === 'claude' || run.agent === 'codex')
+      && typeof run.runId === 'string' && DISPATCH_AGENTS.includes(run.agent as DispatchAgent)
       && typeof run.repo === 'string' && Number.isSafeInteger(run.issue) && Number.isSafeInteger(run.pid)
       && ['running', 'exited', 'lost'].includes(run.state as string))
       .map((run) => ({

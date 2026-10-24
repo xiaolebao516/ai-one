@@ -75,6 +75,33 @@ describe('one-click dispatch panel', () => {
     await act(async () => ([...container.querySelectorAll('input[type="radio"]')] as HTMLInputElement[]).find((r) => r.parentElement?.textContent?.includes('命令行'))!.click());
     expect(container.textContent).toContain('沙箱里读不到你的 GitHub 登录');
   });
+  it('offers Antigravity and WorkBuddy as open-and-paste only, even if command line was chosen before', async () => {
+    localStorage.setItem('ai-one.dispatch.launch.v1', JSON.stringify({ agent: 'claude', mode: 'cli', workdir: 'D:/ai-one' }));
+    const fake = api();
+    const onCopy = await render(fake);
+    const pick = async (label: string) => act(async () => ([...container.querySelectorAll('input[type="radio"]')] as HTMLInputElement[])
+      .find((r) => r.parentElement?.textContent === label)!.click());
+    for (const [label, agent] of [['Antigravity', 'antigravity'], ['WorkBuddy', 'workbuddy']] as const) {
+      await pick(label);
+      const cli = ([...container.querySelectorAll('input[type="radio"]')] as HTMLInputElement[]).find((r) => r.parentElement?.textContent?.includes('命令行'))!;
+      expect(cli.disabled).toBe(true);
+      expect(container.textContent).toContain(`${label} 没有可无人值守运行的命令行`);
+      expect(container.textContent).toContain('请粘贴到它的对话框里再发送');
+      await click(`派给 ${label}`);
+      expect(fake.launch).toHaveBeenLastCalledWith(expect.objectContaining({ agent, mode: 'desktop' }));
+      expect(container.textContent).toContain(`已打开 ${label}，口令已复制`);
+    }
+    expect(onCopy).toHaveBeenCalledTimes(2);
+  });
+  it('does not show the result of one agent under another agent', async () => {
+    await render(api());
+    await click('派给 Claude Code');
+    expect(container.textContent).toContain('已打开桌面客户端');
+    const radios = [...container.querySelectorAll('input[type="radio"]')] as HTMLInputElement[];
+    await act(async () => radios.find((r) => r.parentElement?.textContent === 'WorkBuddy')!.click());
+    expect(container.textContent).not.toContain('已打开桌面客户端');
+    expect(container.textContent).not.toContain('口令也已复制');
+  });
   it('does not claim success for a failed or unknown result and never double-sends', async () => {
     let finish!: (value: { ok: false; code: 'unavailable' }) => void;
     const fake = api({ launch: vi.fn(() => new Promise((resolve) => { finish = resolve as never; })) as never });
