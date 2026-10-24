@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
-import { EXIT, heartbeat, main, takeover, watchClaim } from '../cli.mjs';
+import { EXIT, heartbeat, main, processIdentity, takeover, watchClaim } from '../cli.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli.mjs');
 let root;
@@ -201,35 +201,50 @@ test('a claim stamped in the future is not ACTIVE: it needs a human look', () =>
   assert.equal(run(a, ['release', '95', '--agent', 'skewed']).code, EXIT.ok);
 });
 
-test('watchClaim beats while the process lives, stops when it exits, and stops when fenced', async () => {
-  const [a, b] = clones;
+test('watchClaim beats while the same process lives and stops when it exits or its pid is reused', async () => {
+  const [a] = clones;
   assert.equal(run(a, ['claim', '96', '--agent', 'worker']).code, EXIT.ok);
-  const alive = [true, true, false];
-  const exited = await watchClaim(96, 'worker', { cwd: a, pid: 1, intervalMs: 0, isAlive: () => alive.shift() });
-  assert.deepEqual({ stopped: exited.stopped, beats: exited.beats }, { stopped: 'process-exited', beats: 2 });
-  // Taken over while the executor is still alive (forced here, since a fresh beat is not stale):
-  // the next beat fails and the loop reports fenced instead of writing again.
+  const identities = ['start-1', 'start-1', 'start-1', 'someone-else'];
+  const reused = await watchClaim(96, 'worker', { cwd: a, pid: 1, intervalMs: 0, identityOf: () => identities.shift() });
+  assert.deepEqual({ stopped: reused.stopped, beats: reused.beats }, { stopped: 'process-exited', beats: 2 });
+  const gone = await watchClaim(96, 'worker', { cwd: a, pid: 1, intervalMs: 0, identityOf: () => undefined });
+  assert.deepEqual({ stopped: gone.stopped, beats: gone.beats }, { stopped: 'unverifiable', beats: 0 });
+  assert.equal(run(a, ['release', '96', '--agent', 'worker']).code, EXIT.ok);
+});
+
+test('watchClaim stops as fenced once the claim has moved on', async () => {
+  const [a, b] = clones;
+  // Forced here, since a fresh beat is not stale: the next beat must fail instead of writing again.
   assert.equal(run(a, ['claim', '97', '--agent', 'old-owner']).code, EXIT.ok);
   const result = await watchClaim(97, 'old-owner', {
     cwd: a,
     pid: 1,
     intervalMs: 0,
-    isAlive: () => true,
+    identityOf: () => 'same',
     sleep: async () => {
       plantStaleClaim(b, 97, 'rescuer', { force: true });
     },
   });
   assert.equal(result.stopped, 'fenced');
   assert.equal(result.holder.agent, 'rescuer');
-  assert.equal(run(a, ['release', '96', '--agent', 'worker']).code, EXIT.ok);
   assert.equal(run(b, ['release', '97', '--agent', 'rescuer']).code, EXIT.ok);
 });
 
-test('watch CLI exits cleanly when the watched pid is gone and rejects bad input', async () => {
+test('watch CLI refuses a process it cannot identify and rejects bad input', async () => {
   const [a] = clones;
   assert.equal(run(a, ['claim', '98', '--agent', 'w']).code, EXIT.ok);
   const dead = spawnSync(process.execPath, ['-e', '0']);
-  assert.equal(await main(['watch', '98', '--agent', 'w', '--pid', String(dead.pid ?? 999999)], { cwd: a, out: () => {}, err: () => {} }), EXIT.ok);
+  const errors = [];
+  assert.equal(await main(['watch', '98', '--agent', 'w', '--pid', String(dead.pid ?? 999999)], { cwd: a, out: () => {}, err: (line) => errors.push(line) }), EXIT.error);
+  assert.match(errors.join('\n'), /cannot verify the identity/);
   assert.equal(await main(['watch', '98', '--agent', 'w', '--pid', 'abc'], { cwd: a, out: () => {}, err: () => {} }), EXIT.error);
   assert.equal(run(a, ['release', '98', '--agent', 'w']).code, EXIT.ok);
+});
+
+test('processIdentity is stable for a live process and absent for a dead one', () => {
+  const mine = processIdentity(process.pid);
+  assert.ok(mine, 'own process identity is readable');
+  assert.equal(processIdentity(process.pid), mine);
+  const dead = spawnSync(process.execPath, ['-e', '0']);
+  assert.equal(processIdentity(dead.pid), undefined);
 });

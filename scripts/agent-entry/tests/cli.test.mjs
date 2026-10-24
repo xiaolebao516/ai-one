@@ -161,27 +161,56 @@ test('board tags a silent or clock-skewed claim but leaves a healthy one plain',
   assert.match(text, /#3 P1 \[已认领: C\]/);
 });
 
-test('handoff rebuilds evidence from GitHub data, flags what is unverifiable, and writes nothing', () => {
+const SHA = 'a'.repeat(40);
+const handoffFixture = (extra = {}) => (args) => {
+  if (args[0] === 'issue') {
+    return {
+      number: 7,
+      title: '[Task] x',
+      body: '- Priority: P0\n- Depends on: #1',
+      comments: [{ createdAt: '2026-10-23T01:00:00Z', url: 'https://example.test/c1', body: 'token ghp_SECRET123 and chat text' }],
+    };
+  }
+  return [
+    { number: 70, title: 'feat(#7): x', body: 'Closes #7', state: 'OPEN', headRefName: 'ai/7-x', headRefOid: SHA, files: [{ path: 'a.mjs' }], reviewDecision: '', statusCheckRollup: [], comments: [], reviews: [], ...extra },
+    { number: 71, title: 'other', body: '', state: 'OPEN', headRefName: 'z', headRefOid: 'b'.repeat(40), files: [] },
+  ];
+};
+
+function handoff(fetcher, claims) {
+  const lines = [];
+  const code = main(['handoff', '7'], { out: (line) => lines.push(line), err: (line) => lines.push(line), handoffFetch: fetcher, state: { claims } });
+  return { code, text: lines.join('\n') };
+}
+
+test('handoff rebuilds evidence from GitHub data, flags what is unverifiable, and never copies comment text', () => {
   const old = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
   const calls = [];
-  const handoffFetch = (args) => {
+  const fetcher = (args, cwd) => {
     calls.push(args.join(' '));
-    if (args[0] === 'issue') return { number: 7, title: '[Task] x', body: '- Priority: P0\n- Depends on: #1', comments: [{ createdAt: '2026-10-23T01:00:00Z', body: 'did half\nmore' }] };
-    return [
-      { number: 70, title: 'feat(#7): x', body: 'Closes #7', state: 'OPEN', headRefName: 'ai/7-x', headRefOid: 'a'.repeat(40), files: [{ path: 'a.mjs' }], reviewDecision: '', statusCheckRollup: [] },
-      { number: 71, title: 'other', body: '', state: 'OPEN', headRefName: 'z', headRefOid: 'b'.repeat(40), files: [] },
-    ];
+    return handoffFixture()(args, cwd);
   };
-  const lines = [];
-  const code = main(['handoff', '7'], { out: (line) => lines.push(line), err: (line) => lines.push(line), handoffFetch, state: { claims: [{ issue: 7, agent: 'Dead / s', at: old, generation: 1 }] } });
-  const text = lines.join('\n');
+  const { code, text } = handoff(fetcher, [{ issue: 7, agent: 'Dead / s', at: old, generation: 1 }]);
   assert.equal(code, EXIT.ok);
   assert.match(text, /PR #70（OPEN）分支 `ai\/7-x`，完整 HEAD `a{40}`/);
   assert.doesNotMatch(text, /PR #71/);
-  assert.match(text, /did half/);
-  assert.doesNotMatch(text, /more/);
+  assert.match(text, /2026-10-23T01:00:00Z https:\/\/example\.test\/c1/);
+  assert.doesNotMatch(text, /ghp_SECRET123|chat text/);
   assert.match(text, /SUSPECT_STALE/);
   assert.match(text, /待核对/);
   assert.match(text, /takeover 7/);
   assert.ok(calls.every((call) => /^(issue view|pr list)/.test(call)), 'only read commands');
+});
+
+test('handoff reads the audit verdict from PR comments by HEAD, never reports "none", and never copies text', () => {
+  const stale = `**REVISE**\nfull HEAD ${'c'.repeat(40)}\nsecret ghp_LEAK`;
+  const current = `PASS — HEAD ${SHA}\nghp_LEAK2`;
+  const mixed = handoff(handoffFixture({ comments: [{ createdAt: '2026-10-23T02:00:00Z', body: stale }, { createdAt: '2026-10-23T03:00:00Z', body: current }] }), []);
+  assert.match(mixed.text, /审计：PASS 针对 a{12}，就是当前 HEAD/);
+  const outdated = handoff(handoffFixture({ comments: [{ createdAt: '2026-10-23T02:00:00Z', body: stale }] }), []);
+  assert.match(outdated.text, /审计：REVISE 针对 c{12}，不是当前 HEAD，旧审计已失效/);
+  const none = handoff(handoffFixture({ comments: [{ createdAt: 'x', body: 'looks fine to me' }] }), []);
+  assert.match(none.text, /审计待核对/);
+  assert.doesNotMatch(none.text, /审计：\(无\)/);
+  for (const result of [mixed, outdated, none]) assert.doesNotMatch(result.text, /ghp_LEAK|looks fine/);
 });

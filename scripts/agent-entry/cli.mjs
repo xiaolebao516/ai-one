@@ -156,6 +156,27 @@ export function briefing(row, agent) {
  * It lists what is evidenced and what still has to be checked by hand; it never writes to GitHub
  * and never claims that code only present in the old machine's worktree exists remotely.
  */
+/**
+ * Latest audit verdict found in a PR's conversation comments or reviews, reduced to verdict, the
+ * SHA it names and whether that is the current HEAD. Free text is never copied. Anything that does
+ * not clearly name a verdict and a full SHA is "to be checked", never "none".
+ */
+export function auditSummary(pr) {
+  const entries = [...(pr.comments ?? []), ...(pr.reviews ?? [])]
+    .map((entry) => {
+      const body = entry.body ?? '';
+      const verdict = /^\W*(?:\*\*)?\s*(PASS|REVISE|BLOCKED)\b/i.exec(body)?.[1]?.toUpperCase();
+      const sha = /\b([0-9a-f]{40})\b/i.exec(body)?.[1]?.toLowerCase();
+      return { verdict, sha, at: entry.createdAt ?? entry.submittedAt ?? '' };
+    })
+    .filter((entry) => entry.verdict && entry.sha)
+    .sort((a, b) => a.at.localeCompare(b.at));
+  const latest = entries.at(-1);
+  if (!latest) return `审计待核对：没有找到带完整 HEAD 的 PASS/REVISE/BLOCKED 评论（GitHub reviewDecision: ${pr.reviewDecision || '无'}）`;
+  const current = latest.sha === String(pr.headRefOid ?? '').toLowerCase();
+  return `${latest.verdict} 针对 ${latest.sha.slice(0, 12)}，${current ? '就是当前 HEAD' : '不是当前 HEAD，旧审计已失效'}（${latest.at}）`;
+}
+
 export function buildHandoff({ issue, prs, claimEntry }) {
   const meta = parseMeta(issue.body);
   const lines = [`# Handoff（自动重建，只读）：#${issue.number} ${issue.title}`, ''];
@@ -173,13 +194,16 @@ export function buildHandoff({ issue, prs, claimEntry }) {
       const checks = (pr.statusCheckRollup ?? []).map((check) => `${check.name ?? check.context}:${check.conclusion ?? check.state ?? 'pending'}`);
       lines.push(`- PR #${pr.number}（${pr.state}）分支 \`${pr.headRefName}\`，完整 HEAD \`${pr.headRefOid}\``);
       lines.push(`  - 改动文件${files.length ? `：${files.join('、')}` : '：(无)'}`);
-      lines.push(`  - 审查状态：${pr.reviewDecision || '(无)'}；CI：${checks.length ? checks.join('，') : '未运行或无数据'}`);
+      lines.push(`  - 审计：${auditSummary(pr)}`);
+      lines.push(`  - CI：${checks.length ? checks.join('，') : '未运行或无数据'}`);
     }
   } else {
     lines.push('- 没有关联的 PR：远端可能还没有任何成果');
   }
-  const recent = (issue.comments ?? []).slice(-3).map((comment) => `${comment.createdAt}: ${(comment.body ?? '').split('\n')[0].slice(0, 120)}`);
-  if (recent.length) lines.push('- Issue 最近评论（首行）：', ...recent.map((line) => `  - ${line}`));
+  // Comment text is free-form (it can hold conversation text, tokens or private links), so only
+  // times and links are carried over; the successor reads the comments themselves.
+  const recent = (issue.comments ?? []).slice(-3).map((comment) => `${comment.createdAt} ${comment.url ?? ''}`.trim());
+  if (recent.length) lines.push('- Issue 最近评论（只列时间和链接，正文请自行阅读）：', ...recent.map((line) => `  - ${line}`));
   lines.push('', '## 待核对（程序无法证实）');
   lines.push('- 旧执行者是否真的已停止写入（没有写入网关，旧进程仍可能直接 push）。');
   lines.push('- 旧机器上的未提交 / 未跟踪成果：只存在于旧工作树时无法从 GitHub 恢复，不要假设存在。');
@@ -257,7 +281,7 @@ export function main(argv, { cwd = process.cwd(), out = console.log, err = conso
       }
       const fetchJson = handoffFetch ?? gh;
       const issue = fetchJson(['issue', 'view', String(options.issue), '--json', 'number,title,body,comments'], cwd);
-      const prList = fetchJson(['pr', 'list', '--state', 'all', '--limit', '200', '--json', 'number,title,body,state,headRefName,headRefOid,closingIssuesReferences,files,reviewDecision,statusCheckRollup'], cwd);
+      const prList = fetchJson(['pr', 'list', '--state', 'all', '--limit', '200', '--json', 'number,title,body,state,headRefName,headRefOid,closingIssuesReferences,files,reviewDecision,statusCheckRollup,comments,reviews'], cwd);
       const linked = prLinks(prList).get(options.issue) ?? [];
       const prs = prList.filter((pr) => linked.includes(pr.number));
       const claimEntry = (state?.claims ?? listClaims({ cwd })).find((entry) => entry.issue === options.issue);

@@ -161,10 +161,14 @@ export function heartbeat(issue, agent, { cwd, remote = 'origin' } = {}) {
  * A failed beat means the claim moved on (taken over or released): the loop stops and reports
  * 'fenced' so the caller stops writing.
  */
-export async function watchClaim(issue, agent, { cwd, remote = 'origin', pid, intervalMs = 120000, isAlive = pidAlive, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), maxBeats = Infinity, onBeat = () => {} } = {}) {
+export async function watchClaim(issue, agent, { cwd, remote = 'origin', pid, intervalMs = 120000, identityOf = processIdentity, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), maxBeats = Infinity, onBeat = () => {} } = {}) {
+  // PIDs are reused: remember who the process was (its start time) and stop when that changes or
+  // can no longer be established, instead of renewing for whatever now owns the number.
+  const identity = identityOf(pid);
+  if (!identity) return { stopped: 'unverifiable', beats: 0 };
   let beats = 0;
   while (beats < maxBeats) {
-    if (!isAlive(pid)) return { stopped: 'process-exited', beats };
+    if (identityOf(pid) !== identity) return { stopped: 'process-exited', beats };
     const result = heartbeat(issue, agent, { cwd, remote });
     if (!result.ok) return { stopped: 'fenced', beats, holder: result.holder, missing: result.missing };
     beats += 1;
@@ -174,12 +178,20 @@ export async function watchClaim(issue, agent, { cwd, remote = 'origin', pid, in
   return { stopped: 'max-beats', beats };
 }
 
-export function pidAlive(pid) {
+/**
+ * Start-time fingerprint of a process, or undefined when it is gone or cannot be read reliably.
+ * Same pid with another fingerprint means the number was reused by a different process.
+ */
+export function processIdentity(pid) {
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === 'EPERM'; // exists but not ours
+    const result =
+      process.platform === 'win32'
+        ? spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${Number(pid)} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], { encoding: 'utf8' })
+        : spawnSync('ps', ['-o', 'lstart=', '-p', String(Number(pid))], { encoding: 'utf8' });
+    const text = result.status === 0 ? result.stdout.trim() : '';
+    return text || undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -336,6 +348,7 @@ async function watchMain(argv, { cwd, out, err }) {
     const intervalSec = options.intervalSec === undefined ? 120 : Number(options.intervalSec);
     if (options.issue === undefined || !options.agent || !Number.isInteger(pid) || pid <= 0 || !(intervalSec > 0)) throw new Error('watch needs <N>, --agent and a positive --pid');
     const result = await watchClaim(options.issue, options.agent, { cwd, remote: options.remote, pid, intervalMs: intervalSec * 1000, onBeat: (n) => out(`heartbeat #${options.issue} (${n})`) });
+    if (result.stopped === 'unverifiable') throw new Error(`cannot verify the identity of process ${pid}; refusing to renew a claim on a guess`);
     if (result.stopped === 'fenced') {
       err(`claim #${options.issue} is no longer ours (${result.missing ? 'released' : `now ${result.holder.agent}`}); stop writing.`);
       return EXIT.held;
