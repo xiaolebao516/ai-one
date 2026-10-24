@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
@@ -365,58 +365,55 @@ fn lock_file(dir: &Path, repo: &str, issue: u64) -> PathBuf {
     dir.join(format!("{}-{issue}.lock", repo.to_lowercase().replace('/', "__")))
 }
 
-/// Removes the lock when dropped unless it was handed to the running process's waiter thread.
+/// An OS-held exclusive lock on the Issue's lock file. The operating system releases it when the
+/// handle closes or the owning process dies, so there is no stale-lock guessing, no deleting and no
+/// ownership race. The file itself is never removed.
 struct IssueLock {
-    path: PathBuf,
-    armed: bool,
+    _file: fs::File,
 }
 
-impl IssueLock {
-    fn hand_over(mut self) -> PathBuf {
-        self.armed = false;
-        self.path.clone()
-    }
-}
-
-impl Drop for IssueLock {
-    fn drop(&mut self) {
-        if self.armed {
-            let _ = fs::remove_file(&self.path);
-        }
-    }
-}
-
-/// `Ok(None)` means another live dispatch holds the Issue. A lock whose process is gone, or that
-/// stayed at "starting" for over a minute (a crash between creating it and spawning), is stale.
+/// `Ok(None)` means another live ai-one dispatch holds the Issue. The lock is held (and so the Issue
+/// stays busy) until the launched agent exits; if ai-one itself dies the lock is released, and the
+/// agent's own claim lock (`take`) remains the safety net against a second worker.
+// `File::try_lock` is stable since Rust 1.89 (CI builds on current stable). The crate-wide
+// `rust-version` is left alone on purpose: raising it would turn on unrelated lints in other modules.
+#[allow(clippy::incompatible_msrv)]
 fn acquire_issue_lock(dir: &Path, repo: &str, issue: u64) -> Result<Option<IssueLock>, String> {
     fs::create_dir_all(dir).map_err(|error| error.to_string())?;
-    let path = lock_file(dir, repo, issue);
-    for _ in 0..2 {
-        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut file) => {
-                let _ = file.write_all(b"starting");
-                return Ok(Some(IssueLock { path, armed: true }));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let text = fs::read_to_string(&path).unwrap_or_default();
-                let fresh = fs::metadata(&path)
-                    .and_then(|meta| meta.modified())
-                    .ok()
-                    .and_then(|time| time.elapsed().ok())
-                    .is_some_and(|age| age.as_secs() < 60);
-                let held = match text.trim().parse::<u32>() {
-                    Ok(pid) => pid_alive(pid),
-                    Err(_) => fresh,
-                };
-                if held {
-                    return Ok(None);
-                }
-                let _ = fs::remove_file(&path);
-            }
-            Err(error) => return Err(error.to_string()),
-        }
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_file(dir, repo, issue))
+        .map_err(|error| error.to_string())?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(IssueLock { _file: file })),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(error)) => Err(error.to_string()),
     }
-    Ok(None)
+}
+
+/// Everything after `spawn` goes through here: if the prompt cannot be delivered or the run cannot be
+/// recorded, the already-running child is killed and reaped before the caller gives the Issue lock
+/// back, so a launch is either fully tracked or not running at all.
+fn finish_launch(
+    child: &mut Child,
+    prompt: &str,
+    record: impl FnOnce() -> std::io::Result<()>,
+) -> Result<(), String> {
+    let delivered = match child.stdin.take() {
+        // The prompt travels on stdin so no shell or argument quoting can alter it.
+        Some(mut stdin) => stdin.write_all(prompt.as_bytes()).and_then(|()| stdin.flush()),
+        None => Err(std::io::Error::other("no stdin")),
+    };
+    let result = delivered.and_then(|()| record());
+    if let Err(error) = result {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 fn dispatch_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -513,22 +510,20 @@ fn launch_cli(
         Err(_) => return Ok(reply(false, "spawn_failed", "命令行程序启动失败", json!({}))),
     };
     let pid = child.id();
-    let _ = fs::write(&lock.path, pid.to_string());
-    if let Some(mut stdin) = child.stdin.take() {
-        // The prompt travels on stdin so no shell or argument quoting can alter it.
-        let _ = stdin.write_all(prompt.as_bytes());
-    }
     let meta = json!({
         "runId": run_id, "agent": args.agent, "mode": "cli", "repo": args.repo, "issue": args.issue,
         "pid": pid, "startedAt": unix_millis() as u64, "logPath": log_path.to_string_lossy(),
     });
-    fs::write(dir.join(format!("{run_id}.json")), meta.to_string()).map_err(|error| error.to_string())?;
+    let meta_path = dir.join(format!("{run_id}.json"));
+    if finish_launch(&mut child, prompt, || fs::write(&meta_path, meta.to_string())).is_err() {
+        return Ok(reply(false, "spawn_failed", "命令行程序没能收到任务或运行记录写入失败，已停止它", json!({})));
+    }
     let exit_path = dir.join(format!("{run_id}.exit"));
-    let lock_path = lock.hand_over();
     std::thread::spawn(move || {
         let code = child.wait().ok().and_then(|status| status.code()).unwrap_or(-1);
         let _ = fs::write(exit_path, code.to_string());
-        let _ = fs::remove_file(lock_path);
+        // Held until the agent is done, so the Issue stays busy for exactly that long.
+        drop(lock);
     });
     prune_old_runs(&dir);
     let watching = start_claim_watch(workdir, args.issue, &agent_id(agent, session), pid);
@@ -815,21 +810,57 @@ mod tests {
     }
 
     #[test]
-    fn the_issue_lock_is_exclusive_and_stale_locks_are_replaced() {
+    fn the_issue_lock_is_os_exclusive_and_released_with_its_holder() {
         let dir = unique("locks");
         let first = acquire_issue_lock(&dir, "O/R", 7).unwrap().expect("first caller gets the lock");
         assert!(acquire_issue_lock(&dir, "o/r", 7).unwrap().is_none(), "same Issue, any letter case, is busy");
         assert!(acquire_issue_lock(&dir, "o/r", 8).unwrap().is_some(), "another Issue is independent");
-        // A live process holds it.
-        fs::write(&first.path, std::process::id().to_string()).unwrap();
-        assert!(acquire_issue_lock(&dir, "o/r", 7).unwrap().is_none());
-        // A dead process does not.
-        fs::write(&first.path, "4294967295").unwrap();
-        let replaced = acquire_issue_lock(&dir, "o/r", 7).unwrap();
-        assert!(replaced.is_some(), "a lock whose process is gone is stale");
-        drop(replaced);
-        assert!(!lock_file(&dir, "o/r", 7).exists(), "dropping an armed lock removes it");
+        drop(first);
+        let again = acquire_issue_lock(&dir, "o/r", 7).unwrap();
+        assert!(again.is_some(), "the lock is free as soon as its holder lets go");
+        assert!(lock_file(&dir, "o/r", 7).exists(), "the lock file is never deleted, so no one can delete a live lock");
+        drop(again);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    fn sleeper() -> Child {
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("ping");
+            command.args(["-n", "30", "127.0.0.1"]);
+            command
+        } else {
+            let mut command = Command::new("sleep");
+            command.arg("30");
+            command
+        };
+        command.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+        command.spawn().expect("spawn a harmless long-running child")
+    }
+
+    #[test]
+    fn a_launch_that_cannot_be_recorded_kills_the_child_instead_of_leaving_it_unmonitored() {
+        let mut child = sleeper();
+        let result = finish_launch(&mut child, "prompt", || Err(std::io::Error::other("disk full")));
+        assert!(result.is_err());
+        assert!(child.try_wait().unwrap().is_some(), "the child must be gone");
+    }
+
+    #[test]
+    fn a_launch_without_a_writable_stdin_is_rolled_back_too() {
+        let mut child = sleeper();
+        drop(child.stdin.take());
+        let result = finish_launch(&mut child, "prompt", || Ok(()));
+        assert!(result.is_err());
+        assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[test]
+    fn a_fully_tracked_launch_keeps_the_child_running() {
+        let mut child = sleeper();
+        assert!(finish_launch(&mut child, "prompt", || Ok(())).is_ok());
+        assert!(child.try_wait().unwrap().is_none());
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[test]
