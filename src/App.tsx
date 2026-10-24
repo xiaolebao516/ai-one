@@ -280,7 +280,15 @@ function isGeneratedImageResponse(content: string): boolean {
   return /^\[Image generated(?::[^\]]+)?\]$/.test(content.trim());
 }
 
-export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void } = {}) {
+export interface AppProps {
+  onOpenWorkbench?: () => void;
+  /** Rendered as the workbench's chat tab: fills its box and leaves tasks to the workbench. */
+  embedded?: boolean;
+  /** Another workbench tab is showing: keep the conversation, but park the native webviews. */
+  suspended?: boolean;
+}
+
+export default function App({ onOpenWorkbench, embedded = false, suspended = false }: AppProps = {}) {
   const { locale, t: translate, setLanguage } = useI18n();
   useEffect(() => {
     void Promise.resolve()
@@ -439,7 +447,8 @@ export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void 
   overlayGuardOpenRef.current = overlayGuardOpen;
   // The task HUD (#40) covers the whole window: guard it like the modal overlays so native provider
   // webviews stay hidden and the bounds sync does not push them back over the HUD.
-  const viewGuardOpen = overlayGuardOpen || taskHudOpen;
+  // Another workbench tab covers the chat the same way.
+  const viewGuardOpen = overlayGuardOpen || taskHudOpen || suspended;
   overlayGuardOpenRef.current = viewGuardOpen;
 
   const setCenterSurfaceMode = useCallback((surface: CenterSurface) => {
@@ -1929,7 +1938,7 @@ export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void 
     : undefined;
 
   return (
-    <main className="app-shell h-screen overflow-hidden bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+    <main className={`app-shell ${embedded ? 'h-full' : 'h-screen'} overflow-hidden bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100`}>
       <div
         ref={gridRef}
         {...(taskHudOpen ? TASK_HUD_HIDDEN_CHAT : undefined)}
@@ -2129,8 +2138,8 @@ export default function App({ onOpenWorkbench }: { onOpenWorkbench?: () => void 
                     </svg>
                   )}
                 </button>
-                <TaskHudEntry locale={locale} onOpen={() => setTaskHudOpen(true)} />
-                {onOpenWorkbench ? (
+                {embedded ? null : <TaskHudEntry locale={locale} onOpen={() => setTaskHudOpen(true)} />}
+                {onOpenWorkbench && !embedded ? (
                   <button
                     type="button"
                     className="border border-sky-300 dark:border-sky-800 px-2 py-1 text-xs text-sky-700 dark:text-sky-200 hover:bg-sky-50 dark:hover:bg-sky-950"

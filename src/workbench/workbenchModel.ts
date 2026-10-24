@@ -7,11 +7,14 @@ import { inProgressTasks, isInProgress, isNeedsYou, needsYouTasks, summarize } f
  * depend on data are testable without a DOM.
  */
 
-export const WORKBENCH_VIEWS = ['home', 'tasks', 'task', 'chat', 'flows', 'resources', 'chatled'] as const;
+export const WORKBENCH_VIEWS = ['chat', 'chatled', 'tasks', 'task', 'resources'] as const;
 export type WorkbenchView = (typeof WORKBENCH_VIEWS)[number];
 
-/** Views reachable from the sidebar; `task` is reached by opening a task. */
-export const NAV_VIEWS = ['home', 'tasks', 'chat', 'flows', 'resources'] as const satisfies readonly WorkbenchView[];
+/**
+ * The four tabs, in the order the user reaches for them: multi-AI chat and discussion, one chat
+ * dispatching the others, task progress and dispatch, quota. `task` is reached by opening a task.
+ */
+export const NAV_VIEWS = ['chat', 'chatled', 'tasks', 'resources'] as const satisfies readonly WorkbenchView[];
 export type NavView = (typeof NAV_VIEWS)[number];
 
 export interface WorkbenchRoute {
@@ -20,17 +23,16 @@ export interface WorkbenchRoute {
   taskId?: string;
 }
 
-export const HOME_ROUTE: WorkbenchRoute = { view: 'home' };
+/** The app opens straight on the chat, ready to type. */
+export const HOME_ROUTE: WorkbenchRoute = { view: 'chat' };
 
 export function isWorkbenchView(value: unknown): value is WorkbenchView {
   return typeof value === 'string' && (WORKBENCH_VIEWS as readonly string[]).includes(value);
 }
 
-/** The sidebar entry a route belongs to: a task page lights up "Tasks". */
+/** The tab a route belongs to: a task page lights up "Tasks". */
 export function navViewFor(route: WorkbenchRoute): NavView {
   if (route.view === 'task') return 'tasks';
-  // Chat-led (#113) is reached from the command palette until the overview composer (L4) opens it.
-  if (route.view === 'chatled') return 'chat';
   return route.view;
 }
 
@@ -68,7 +70,7 @@ interface KeyLike {
   shiftKey: boolean;
 }
 
-/** Ctrl/Cmd+K opens the palette, Ctrl/Cmd+1..5 switch views (design §7). */
+/** Ctrl/Cmd+K opens the palette, Ctrl/Cmd+1..4 switch tabs. */
 export function shortcutFor(event: KeyLike): WorkbenchShortcut | undefined {
   if (event.key === 'Escape') return { kind: 'escape' };
   const mod = event.ctrlKey || event.metaKey;
@@ -177,8 +179,7 @@ export type PaletteAction =
   | { kind: 'go'; route: WorkbenchRoute }
   | { kind: 'source'; source: WorkbenchSource }
   | { kind: 'refresh' }
-  | { kind: 'theme' }
-  | { kind: 'classic' };
+  | { kind: 'theme' };
 
 export interface PaletteCommand {
   id: string;

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { Locale } from '../../i18n/resolve';
 import type { HudTask } from '../../ui/taskHudModel';
 import { Card, EmptyState, SectionHeader, SegmentedControl } from '../../ui/v2';
@@ -12,12 +12,14 @@ export interface TasksViewProps {
   tasks: readonly HudTask[];
   health: DataHealth;
   onOpenTask: (task: HudTask) => void;
+  /** Shown between the title and the list (the acceptance cards). */
+  lead?: ReactNode;
 }
 
 const FILTERS: readonly TaskFilter[] = ['all', 'active', 'needsYou', 'done'];
 const FILTER_KEY = { all: 'filterAll', active: 'filterActive', needsYou: 'filterNeedsYou', done: 'filterDone' } as const;
 
-export function TasksView({ locale, tasks, health, onOpenTask }: TasksViewProps) {
+export function TasksView({ locale, tasks, health, onOpenTask, lead }: TasksViewProps) {
   const text = workbenchText(locale);
   const [filter, setFilter] = useState<TaskFilter>('all');
   const groups = groupByRepo(filterTasks(tasks, filter));
@@ -43,6 +45,7 @@ export function TasksView({ locale, tasks, health, onOpenTask }: TasksViewProps)
           })}
         />
       </header>
+      {lead}
       {groups.length === 0 ? (
         health === 'loading' || health === 'failed' ? (
           <EmptyState tone="unknown" title={text.t(health === 'loading' ? 'headlineLoading' : 'headlineFailed')} description={health === 'failed' ? text.t('headlineSubFailed') : undefined} />

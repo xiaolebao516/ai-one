@@ -181,11 +181,11 @@ export function briefing(row, agent) {
     `Priority: ${meta.priority ?? '未标'} | Depends on: ${meta.dependsOn ?? '未写（自行核对）'} | Ready when: ${meta.readyWhen ?? '未写'}`,
     row.prs.length ? `注意：已有开放 PR ${row.prs.map((n) => `#${n}`).join(', ')}，沿原分支继续，不要另开平行分支。` : '',
     '',
-    '下一步（AGENTS.md「快速开发模式 v2」）：',
+    '下一步（见 AGENTS.md「怎么干活」）：',
     `1. 读 AGENTS.md 与 Issue 正文，确认 Depends on 已满足；不满足就 \`node scripts/issue-claim/cli.mjs release ${row.number} --agent "${agent}"\` 并换一个。`,
     `2. git fetch && git worktree add ../ai-one-${row.number}-<简述> -b <类型>/${row.number}-<简述> origin/main`,
-    `3. 在 Issue 登记：调度 agent = ${agent}、工作树路径、分支。`,
-    '4. 按 Issue 步骤清单做；PR 标 Risk，MEDIUM/HIGH 找独立审计；合并后 release 认领锁并清理工作树。',
+    '3. 做完、`pnpm verify` 通过、真机看过，PR 写明证据后自己合并；只有高风险改动才找一轮独立审计。',
+    `4. 合并后关 Issue、删工作树和分支，并运行 node scripts/issue-claim/cli.mjs release ${row.number} --agent "${agent}"。`,
   ]
     .filter((line) => line !== '')
     .join('\n');

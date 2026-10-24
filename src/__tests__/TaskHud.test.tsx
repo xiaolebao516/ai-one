@@ -153,7 +153,7 @@ describe('App integration stays minimal', () => {
   const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 
   it('keeps the chat mounted and guards native webviews while the HUD is open', () => {
-    expect(app).toContain('const viewGuardOpen = overlayGuardOpen || taskHudOpen;');
+    expect(app).toContain('const viewGuardOpen = overlayGuardOpen || taskHudOpen || suspended;');
     expect(app).toContain('useOverlayGuard(viewGuardOpen, loadedModalProviders);');
     expect(app).toContain('{...(taskHudOpen ? TASK_HUD_HIDDEN_CHAT : undefined)}');
     expect(app).toContain("{taskHudOpen ? <TaskHud locale={locale} onClose={() => setTaskHudOpen(false)} /> : null}");

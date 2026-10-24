@@ -19,6 +19,8 @@ export const V2_ICON_PATHS = {
   moon: ['M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z'],
   sun: ['M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', 'M12 2v2', 'M12 20v2', 'm4.93 4.93 1.41 1.41', 'm17.66 17.66 1.41 1.41', 'M2 12h2', 'M20 12h2', 'm6.34 17.66-1.41 1.41', 'm19.07 4.93-1.41 1.41'],
   monitor: ['M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z', 'M8 21h8', 'M12 17v4'],
+  gauge: ['M12 14 16 9', 'M3.34 19a10 10 0 1 1 17.32 0'],
+  send: ['m22 2-7 20-4-9-9-4Z', 'M22 2 11 13'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type V2IconName = keyof typeof V2_ICON_PATHS;

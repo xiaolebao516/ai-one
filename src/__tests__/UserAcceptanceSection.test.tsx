@@ -184,9 +184,9 @@ describe('acceptance UI and guarded actions', () => {
     localStorage.setItem('ai-one.workbench.prefs', JSON.stringify({ source: 'github', repos: ['o/r'], theme: 'system', dispatchRepo: '' }));
     const root = createRoot(container);
     roots.push(root);
-    await act(async () => root.render(<Workbench locale="en" onOpenClassic={() => {}}
+    await act(async () => root.render(<Workbench locale="en" renderChat={() => null}
       acceptanceLoader={loader} githubLoader={async () => [{ repo: 'o/r', tasks: [], status: 'error', errors: [], pagination: {}, observedAt: 'now' }]} />));
     await flush();
-    expect(container.querySelector('header button[aria-label="1 acceptances"]')).not.toBeNull();
+    expect(container.querySelector('nav [aria-label="≥1 need you"]')).not.toBeNull();
   });
 });

@@ -23,7 +23,7 @@ node scripts/agent-entry/cli.mjs take --agent "Codex / 会话标识" --dry-run
 
 ## 让 agent 接手（给用户的一句话）
 
-> 按 AGENTS.md 快速开发模式接手 ai-one：在仓库根目录运行 `node scripts/agent-entry/cli.mjs take --agent "<你的工具名> / <会话标识>"`，按输出开工。
+> 按 AGENTS.md 接手 ai-one：在仓库根目录运行 `node scripts/agent-entry/cli.mjs take --agent "<你的工具名> / <会话标识>"`，按输出开工。
 
 ## 测试
 

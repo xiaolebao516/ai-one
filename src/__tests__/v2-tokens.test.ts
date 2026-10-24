@@ -111,7 +111,7 @@ describe('v2 design tokens', () => {
         const v = v2CssVariables(id, 'light');
         expect([v['--v2-space-page-narrow'], v['--v2-space-page-mid'], v['--v2-space-page']], id).toEqual(['20px', '28px', '40px']);
       }
-      for (const view of ['HomeView', 'TasksView', 'TaskView', 'ResourcesView', 'PlannedView']) {
+      for (const view of ['TasksView', 'TaskView', 'ResourcesView']) {
         const src = readFileSync(new URL(`../workbench/views/${view}.tsx`, import.meta.url), 'utf8');
         expect(src, view).toContain('p-v2-page-narrow min-[1100px]:p-v2-page-mid min-[1320px]:p-v2-page');
         // every page padding is the responsive triple; no bare `p-v2-page` left over

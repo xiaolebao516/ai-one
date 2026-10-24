@@ -43,12 +43,13 @@ const key = (k: string, mods: Partial<{ ctrlKey: boolean; metaKey: boolean; altK
 });
 
 describe('workbench navigation', () => {
-  it('maps Ctrl/Cmd+K to the palette and Ctrl/Cmd+1..5 to the sidebar views in order', () => {
+  it('maps Ctrl/Cmd+K to the palette and Ctrl/Cmd+1..4 to the tabs in order', () => {
     expect(shortcutFor(key('k', { ctrlKey: true }))).toEqual({ kind: 'palette' });
     expect(shortcutFor(key('K', { metaKey: true }))).toEqual({ kind: 'palette' });
-    expect(shortcutFor(key('1', { ctrlKey: true }))).toEqual({ kind: 'view', view: 'home' });
-    expect(shortcutFor(key('5', { ctrlKey: true }))).toEqual({ kind: 'view', view: 'resources' });
-    expect(shortcutFor(key('6', { ctrlKey: true }))).toBeUndefined();
+    expect(shortcutFor(key('1', { ctrlKey: true }))).toEqual({ kind: 'view', view: 'chat' });
+    expect(shortcutFor(key('2', { ctrlKey: true }))).toEqual({ kind: 'view', view: 'chatled' });
+    expect(shortcutFor(key('4', { ctrlKey: true }))).toEqual({ kind: 'view', view: 'resources' });
+    expect(shortcutFor(key('5', { ctrlKey: true }))).toBeUndefined();
     expect(shortcutFor(key('k'))).toBeUndefined();
     expect(shortcutFor(key('k', { ctrlKey: true, shiftKey: true }))).toBeUndefined();
     expect(shortcutFor(key('Escape'))).toEqual({ kind: 'escape' });
@@ -68,7 +69,7 @@ describe('workbench navigation', () => {
     expect(navViewFor({ view: 'task', taskId: 'a' })).toBe('tasks');
     expect(resolveRoute({ view: 'task', taskId: 'a' }, tasks)).toEqual({ view: 'task', taskId: 'a' });
     expect(resolveRoute({ view: 'task', taskId: 'gone' }, tasks)).toEqual({ view: 'tasks' });
-    expect(resolveRoute({ view: 'home' }, [])).toEqual({ view: 'home' });
+    expect(resolveRoute({ view: 'chat' }, [])).toEqual({ view: 'chat' });
   });
 });
 

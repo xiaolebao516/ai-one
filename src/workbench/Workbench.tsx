@@ -1,23 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { ALL_AI_PROVIDERS } from '../../shared/constants';
-import { host } from '../host';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import App from '../App';
 import type { Locale } from '../i18n/resolve';
-import { STATUS_TONE, pickText, summarize, type HudTask } from '../ui/taskHudModel';
-import { taskHudText } from '../ui/taskHudText';
-import { Badge, Button, Icon, IconButton, Notice, SegmentedControl, StatusIndicator, V2Scope, cx, type V2IconName } from '../ui/v2';
+import { needsYouTasks, type HudTask } from '../ui/taskHudModel';
+import { Badge, Button, Icon, IconButton, Notice, V2Scope, cx, type V2IconName } from '../ui/v2';
 import { CommandPalette } from './CommandPalette';
-import { channelView, type ChannelView } from './dispatchView';
 import { deriveResources, quotaTitleView, type QuotaTitleLevel } from '../resources/registry';
 import { useQuotaHud, type QuotaHudData, type QuotaHudLoader, type QuotaHudStarter } from '../resources/useQuotaHud';
 import { NAV_KEY, paletteCommands } from './paletteCommands';
 import { useDispatchData, type DispatchLoader } from './useDispatchData';
-import { categoryHealth, countLabel, isExact, observedAt, repoNotices, useWorkbenchData, type DataHealth, type GitHubLoader, type WorkbenchData } from './useWorkbenchData';
+import { categoryHealth, countLabel, observedAt, repoNotices, useWorkbenchData, type GitHubLoader, type WorkbenchData } from './useWorkbenchData';
 import {
   HOME_ROUTE,
   MAX_REPOS,
   NAV_VIEWS,
-  activeTasks,
-  groupByRepo,
   navViewFor,
   nextTheme,
   resolveRoute,
@@ -29,25 +24,18 @@ import {
   type WorkbenchRoute,
 } from './workbenchModel';
 import { workbenchText, type WorkbenchText } from './workbenchText';
-import { HomeView } from './views/HomeView';
-import { pendingAcceptanceCount } from './views/UserAcceptanceSection';
+import { UserAcceptanceSection, acceptanceIssueKeys, pendingAcceptanceCount } from './views/UserAcceptanceSection';
 import { useUserAcceptance, type AcceptanceLoader, type AcceptanceState } from './useUserAcceptance';
 import type { AcceptanceWriter } from './userAcceptance';
 import { ChatLedPage } from './views/ChatLedPage';
-import { FlowsView, type FlowsLeaveGuard } from './views/FlowsView';
-import { PlannedView } from './views/PlannedView';
 import { ResourcesView } from './views/ResourcesView';
 import { TaskView } from './views/TaskView';
 import { TasksView } from './views/TasksView';
 
-const NAV_ICON: Record<NavView, V2IconName> = { home: 'home', tasks: 'list', chat: 'message', flows: 'flow', resources: 'users' };
-
-type WorkbenchLeaveTarget = { kind: 'route'; route: WorkbenchRoute } | { kind: 'classic' };
+const NAV_ICON: Record<NavView, V2IconName> = { chat: 'message', chatled: 'flow', tasks: 'list', resources: 'gauge' };
 
 export interface WorkbenchProps {
   locale: Locale;
-  /** Leaves the workbench for the classic multi-AI chat UI. */
-  onOpenClassic: () => void;
   /** Reads GitHub; tests pass a controllable one. Must be a stable reference. */
   githubLoader?: GitHubLoader;
   acceptanceLoader?: AcceptanceLoader;
@@ -60,25 +48,28 @@ export interface WorkbenchProps {
   quotaHudLoader?: QuotaHudLoader;
   /** Starts the local quota HUD; tests can inject a no-op. */
   quotaHudStarter?: QuotaHudStarter;
+  /** The chat tab; tests pass a stub instead of the full multi-AI chat. */
+  renderChat?: (suspended: boolean) => ReactNode;
+  /** The tab the app opens on (tests). */
+  initialRoute?: WorkbenchRoute;
 }
 
-/** The new ai-one front end (Spec #79 v2). The classic chat UI is only a capability library now. */
-export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoader, acceptanceWriter, dispatchLoader, isDesktop, quotaHudLoader, quotaHudStarter }: WorkbenchProps) {
+const defaultChat = (suspended: boolean) => <App embedded suspended={suspended} />;
+
+/**
+ * ai-one: one window, four tabs. The multi-AI chat (ask several AIs at once, let them discuss or
+ * review each other) is the first tab and stays mounted, so switching away never loses a running
+ * conversation; its native webviews are parked while another tab is showing.
+ */
+export function Workbench({ locale, githubLoader, acceptanceLoader, acceptanceWriter, dispatchLoader, isDesktop, quotaHudLoader, quotaHudStarter, renderChat = defaultChat, initialRoute = HOME_ROUTE }: WorkbenchProps) {
   const text = workbenchText(locale);
   const data = useWorkbenchData(githubLoader);
   const acceptance = useUserAcceptance(data.prefs.source, data.prefs.repos, data.github.results, acceptanceLoader, acceptanceWriter);
   const dispatch = useDispatchData({ source: data.prefs.source, repoPath: data.prefs.dispatchRepo, loader: dispatchLoader, isDesktop });
   const quotaHud = useQuotaHud({ loader: quotaHudLoader, starter: quotaHudStarter, isDesktop });
-  const channel = channelView(dispatch);
-  const [route, setRoute] = useState<WorkbenchRoute>(HOME_ROUTE);
+  const [route, setRoute] = useState<WorkbenchRoute>(initialRoute);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [pendingLeave, setPendingLeave] = useState<WorkbenchLeaveTarget | null>(null);
-  const [leaveSaving, setLeaveSaving] = useState(false);
-  const flowsLeaveGuardRef = useRef<FlowsLeaveGuard | null>(null);
-  const registerFlowsLeaveGuard = useCallback((guard: FlowsLeaveGuard | null) => {
-    flowsLeaveGuardRef.current = guard;
-  }, []);
-  const mainRef = useRef<HTMLElement | null>(null);
+  const pageRef = useRef<HTMLDivElement | null>(null);
   const mode = resolveTheme(data.prefs.theme, useSystemDark());
   const current = resolveRoute(route, data.tasks);
   // A task that is gone from a settled data set is gone: make the fallback the real route, so the
@@ -87,54 +78,20 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
   useEffect(() => {
     if (fellBack && data.health !== 'loading') setRoute({ view: 'tasks' });
   }, [fellBack, data.health]);
-  const leaveTo = (target: WorkbenchLeaveTarget | null) => {
-    setPendingLeave(null);
-    if (!target) return;
-    if (target.kind === 'classic') onOpenClassic();
-    else setRoute(target.route);
-  };
-  const requestNavigation = (target: WorkbenchLeaveTarget) => {
-    // Do not let a second navigation race the in-flight save-and-leave operation.
-    if (leaveSaving) return;
-    const leavesFlows = current.view === 'flows' && (
-      target.kind === 'classic' ||
-      target.route.view !== current.view ||
-      target.route.taskId !== current.taskId
-    );
-    if (leavesFlows && flowsLeaveGuardRef.current?.hasUnsaved) {
-      setPendingLeave(target);
-      return;
-    }
-    leaveTo(target);
-  };
-  const go = (next: WorkbenchRoute) => requestNavigation({ kind: 'route', route: next });
-  const goRef = useRef(go);
-  goRef.current = go;
-  const openClassic = () => requestNavigation({ kind: 'classic' });
-  const saveAndLeave = async () => {
-    const target = pendingLeave;
-    const guard = flowsLeaveGuardRef.current;
-    if (!target || !guard || leaveSaving) return;
-    setLeaveSaving(true);
-    try {
-      if (!(await guard.saveForLeave())) return;
-      leaveTo(target);
-    } finally {
-      setLeaveSaving(false);
-    }
-  };
-  const discardAndLeave = () => {
-    if (leaveSaving) return;
-    leaveTo(pendingLeave);
-  };
+  const go = (next: WorkbenchRoute) => setRoute(next);
   const openTask = (task: HudTask) => go({ view: 'task', taskId: task.id });
 
-  useHideProviderWebviews();
+  // The chat mounts on first visit and then stays, hidden, behind the other tabs.
+  const onChat = current.view === 'chat';
+  const [chatMounted, setChatMounted] = useState(onChat);
+  useEffect(() => {
+    if (onChat) setChatMounted(true);
+  }, [onChat]);
 
   // Each page starts at its top; the scroll position of the previous page means nothing here.
   const routeKey = `${current.view}:${current.taskId ?? ''}`;
   useEffect(() => {
-    mainRef.current?.scrollTo?.({ top: 0 });
+    pageRef.current?.scrollTo?.({ top: 0 });
   }, [routeKey]);
 
   const paletteOpenRef = useRef(paletteOpen);
@@ -152,9 +109,9 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
         event.preventDefault();
         setPaletteOpen(false);
       } else if (!paletteOpenRef.current && !isEditableTarget(event.target)) {
-        // Page switching never steals keys from a text field or the open palette.
+        // Tab switching never steals keys from a text field or the open palette.
         event.preventDefault();
-        goRef.current({ view: shortcut.view });
+        setRoute({ view: shortcut.view });
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -168,93 +125,60 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
     if (action.kind === 'go') go(action.route);
     else if (action.kind === 'source') data.setSource(action.source);
     else if (action.kind === 'refresh') data.refresh();
-    else if (action.kind === 'theme') data.setTheme(nextTheme(data.prefs.theme));
-    else openClassic();
+    else data.setTheme(nextTheme(data.prefs.theme));
   };
 
   const task = current.view === 'task' ? data.tasks.find((item) => item.id === current.taskId) : undefined;
-  let view: ReactNode;
-  if (current.view === 'home') {
+  let view: ReactNode = null;
+  if (current.view === 'tasks') {
     view = (
-      <HomeView
-        locale={locale}
-        tasks={data.tasks}
-        health={data.health}
-        acceptance={acceptance}
-        channel={channel}
-        onOpenTask={openTask}
-        onShowTasks={() => go({ view: 'tasks' })}
-        onShowResources={() => go({ view: 'resources' })}
-      />
+      <>
+        <SourceBar text={text} data={data} locale={locale} />
+        <TasksView locale={locale} tasks={data.tasks} health={data.health} onOpenTask={openTask}
+          lead={<UserAcceptanceSection locale={locale} state={acceptance} demo={data.health === 'demo'} />} />
+      </>
     );
-  } else if (current.view === 'tasks') {
-    view = <TasksView locale={locale} tasks={data.tasks} health={data.health} onOpenTask={openTask} />;
   } else if (current.view === 'task' && task) {
-    view = <TaskView key={task.id} locale={locale} task={task} onBack={() => go({ view: 'tasks' })} canDispatch={data.health !== 'demo'} />;
-  } else if (current.view === 'chat') {
     view = (
-      <PlannedView
-        title={text.t('chatTitle')}
-        body={text.t('chatBody')}
-        badge={text.t('plannedBadge')}
-        action={
-          <Button onClick={openClassic} icon={<Icon name="external" size={14} />}>
-            {text.t('chatOpenClassic')}
-          </Button>
-        }
-      />
+      <>
+        <SourceBar text={text} data={data} locale={locale} />
+        <TaskView key={task.id} locale={locale} task={task} onBack={() => go({ view: 'tasks' })} canDispatch={data.health !== 'demo'} />
+      </>
     );
   } else if (current.view === 'chatled') {
     view = <ChatLedPage locale={locale} />;
-  } else if (current.view === 'flows') {
-    view = (
-      <FlowsView
-        locale={locale}
-        onLeaveGuardChange={registerFlowsLeaveGuard}
-        leavePrompt={pendingLeave !== null}
-        leaveSaving={leaveSaving}
-        onSaveAndLeave={() => { void saveAndLeave(); }}
-        onDiscardAndLeave={discardAndLeave}
-        onStayOnPage={() => setPendingLeave(null)}
-      />
-    );
-  } else {
-    view = <ResourcesView locale={locale} dispatch={dispatch} quotaHud={quotaHud} repoPath={data.prefs.dispatchRepo} onSetRepo={data.setDispatchRepo} onOpenClassic={openClassic} />;
+  } else if (current.view === 'resources') {
+    view = <ResourcesView locale={locale} dispatch={dispatch} quotaHud={quotaHud} repoPath={data.prefs.dispatchRepo} onSetRepo={data.setDispatchRepo} onOpenClassic={() => go({ view: 'chat' })} />;
   }
 
   return (
     <V2Scope mode={mode} className="fixed inset-0 flex flex-col overflow-hidden bg-v2-bg" data-testid="workbench">
-      <TitleBar
+      <TabBar
         text={text}
-        tasks={data.tasks}
-        health={data.health}
-        acceptance={acceptance}
-        channel={channel}
+        active={navViewFor(current)}
+        needsYou={needsYouCount(data, acceptance)}
         quotaHud={quotaHud}
+        theme={data.prefs.theme}
+        onNavigate={(next) => go({ view: next })}
         onPalette={() => setPaletteOpen(true)}
-        onShowTasks={() => go({ view: 'tasks' })}
-        onShowAcceptances={() => go({ view: 'home' })}
-        onShowResources={() => go({ view: 'resources' })}
+        onTheme={() => data.setTheme(nextTheme(data.prefs.theme))}
       />
-      <div className="flex min-h-0 flex-1">
-        <Sidebar
-          text={text}
-          locale={locale}
-          tasks={data.tasks}
-          health={data.health}
-          active={navViewFor(current)}
-          activeTaskId={current.taskId}
-          theme={data.prefs.theme}
-          onNavigate={(next) => go({ view: next })}
-          onOpenTask={openTask}
-          onTheme={() => data.setTheme(nextTheme(data.prefs.theme))}
-          onOpenClassic={openClassic}
-        />
-        <main ref={mainRef} tabIndex={-1} className="min-w-0 flex-1 overflow-auto rounded-tl-v2-xl border-l border-t border-v2-line bg-v2-panel">
-          <SourceBar text={text} data={data} locale={locale} />
-          {view}
-        </main>
-      </div>
+      <main className="relative min-h-0 flex-1 border-t border-v2-line bg-v2-panel">
+        {chatMounted ? (
+          <div
+            data-testid="chat-tab"
+            aria-hidden={onChat ? undefined : true}
+            className={cx('absolute inset-0', onChat ? '' : 'invisible pointer-events-none')}
+          >
+            {renderChat(!onChat)}
+          </div>
+        ) : null}
+        {onChat ? null : (
+          <div ref={pageRef} tabIndex={-1} className="absolute inset-0 overflow-auto" data-testid="page">
+            {view}
+          </div>
+        )}
+      </main>
       {paletteOpen ? (
         <CommandPalette
           title={text.t('paletteTitle')}
@@ -263,91 +187,89 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
           commands={commands}
           onRun={runCommand}
           onClose={() => setPaletteOpen(false)}
-          fallbackFocus={mainRef}
+          fallbackFocus={pageRef}
         />
       ) : null}
     </V2Scope>
   );
 }
 
-interface TitleBarProps {
-  text: WorkbenchText;
-  tasks: readonly HudTask[];
-  /** Loading or failed: counts would read as "nothing to do", so they show as "?". Partial: "at least". */
-  health: DataHealth;
-  channel: ChannelView;
-  acceptance: AcceptanceState;
-  quotaHud: QuotaHudData;
-  onPalette: () => void;
-  onShowTasks: () => void;
-  onShowAcceptances: () => void;
-  onShowResources: () => void;
+/** What waits for the user: acceptances plus decisions / blockers not already covered by one. */
+function needsYouCount(data: WorkbenchData, acceptance: AcceptanceState): string | undefined {
+  const acceptances = data.health === 'demo' || acceptance.loading ? 0 : pendingAcceptanceCount(acceptance);
+  // The acceptance list has its own read: a failed task read does not hide what is known to wait.
+  if (data.health === 'loading' || data.health === 'failed') return acceptances > 0 ? countLabel(acceptances, 'partial') : undefined;
+  const accepted = data.health === 'demo' ? new Set<string>() : acceptanceIssueKeys(acceptance);
+  const tasks = needsYouTasks(data.tasks).filter(
+    (task) => !(task.status === 'accept' && task.issue && accepted.has(task.repo.toLowerCase() + ':' + task.issue)),
+  );
+  const n = tasks.length + acceptances;
+  const precision = acceptance.partial && data.health !== 'demo' ? 'partial' : categoryHealth(data.health, data.tasks);
+  // "≥0" tells the user nothing; the task list itself says what could not be read.
+  if (n === 0) return undefined;
+  return countLabel(n, precision);
 }
 
-const CHANNEL_DOT: Record<ChannelView['tone'], string> = {
-  ok: 'bg-v2-done',
-  attention: 'bg-v2-block',
-  incomplete: 'bg-v2-unknown',
-  empty: 'bg-v2-unknown',
-  pending: 'bg-v2-unknown',
-  failed: 'bg-v2-block',
-};
+interface TabBarProps {
+  text: WorkbenchText;
+  active: NavView;
+  needsYou?: string;
+  quotaHud: QuotaHudData;
+  theme: WorkbenchData['prefs']['theme'];
+  onNavigate: (view: NavView) => void;
+  onPalette: () => void;
+  onTheme: () => void;
+}
 
-function TitleBar({ text, tasks, health, acceptance, channel, quotaHud, onPalette, onShowTasks, onShowAcceptances, onShowResources }: TitleBarProps) {
-  const summary = summarize(tasks);
-  // The island shows counts by state, so unreadable task states make them "at least" too.
-  const byState = categoryHealth(health, tasks);
-  const count = (n: number) => countLabel(n, byState);
-  const decisions = tasks.filter((task) => task.status === 'decide' || task.status === 'blocked').length;
-  const accepts = health === 'demo' ? tasks.filter((task) => task.status === 'accept').length : pendingAcceptanceCount(acceptance);
-  // Acceptance has its own read; task-list failures do not make this independent count unknown.
-  const acceptCount = health !== 'demo' && acceptance.loading ? '?' :
-    countLabel(accepts, health !== 'demo' && acceptance.partial ? 'partial' : 'complete');
-  const decisionLabel = text.t('islandDecision', { n: count(decisions) });
-  const acceptLabel = text.t('islandAcceptance', { n: acceptCount });
-  const islandLabel = text.t('islandAriaSplit', {
-    inProgress: count(summary.inProgress), decisions: count(decisions), acceptances: acceptCount,
-  });
+function TabBar({ text, active, needsYou, quotaHud, theme, onNavigate, onPalette, onTheme }: TabBarProps) {
+  const themeLabel = text.t(theme === 'system' ? 'themeSystem' : theme === 'light' ? 'themeLight' : 'themeDark');
   return (
-    <header className="grid h-11 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-v2-md px-v2-md">
-      <div className="flex min-w-0 items-center gap-v2-md">
-        <span className="flex items-center gap-v2-sm font-semibold text-v2-ink">
-          <span aria-hidden="true" className="inline-block h-4 w-4 rounded-v2-sm bg-v2-primary" />
-          {text.t('brand')}
-        </span>
-        <button
-          type="button"
-          onClick={onPalette}
-          className="hidden h-7 min-w-[220px] items-center justify-between gap-v2-sm rounded-v2-md border border-v2-line bg-v2-surface px-v2-sm text-v2-meta text-v2-ink-3 hover:bg-v2-hover min-[900px]:flex"
-        >
-          <span>{text.t('searchPlaceholder')}</span>
-          <kbd className="rounded-v2-sm border border-v2-line px-1 font-v2-mono text-v2-micro">Ctrl K</kbd>
-        </button>
-      </div>
-      <div className="flex h-7 items-center gap-v2-sm rounded-v2-pill bg-v2-island px-v2-sm text-v2-meta font-semibold text-v2-on-island" title={islandLabel}>
-        <button type="button" onClick={onShowTasks} aria-label={islandLabel}
-          className="flex items-center gap-v2-sm rounded-v2-pill px-v2-xs focus-visible:outline focus-visible:outline-2">
-          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-v2-run" />
-          {text.t('islandInProgress', { n: count(summary.inProgress) })}
-          <span aria-hidden="true" className="h-3 w-px bg-v2-on-island opacity-30" />
-          <span aria-hidden="true" className="h-1.5 w-1.5 rotate-45 bg-v2-you" />
-          {decisionLabel}
-          <span className="sr-only">{text.t('islandNeedsYou', { n: count(decisions) })}</span>
-        </button>
-        <span aria-hidden="true" className="h-3 w-px bg-v2-on-island opacity-30" />
-        <button type="button" onClick={onShowAcceptances} aria-label={acceptLabel}
-          className="rounded-v2-pill px-v2-xs focus-visible:outline focus-visible:outline-2">
-          {acceptLabel}
-        </button>
-      </div>
-      <div className="flex justify-end gap-v2-sm">
-        <QuotaButton text={text} quotaHud={quotaHud} onClick={onShowResources} />
-        <ChannelButton text={text} channel={channel} onClick={onShowResources} />
+    <header className="flex h-12 shrink-0 items-center gap-v2-md px-v2-md">
+      <span className="flex shrink-0 items-center gap-v2-sm font-semibold text-v2-ink">
+        <span aria-hidden="true" className="inline-block h-4 w-4 rounded-v2-sm bg-v2-primary" />
+        {text.t('brand')}
+      </span>
+      <nav aria-label={text.t('navAria')} className="flex min-w-0 flex-1 justify-center">
+        <ul className="flex items-center gap-1 rounded-v2-pill bg-v2-surface p-1 shadow-v2-card">
+          {NAV_VIEWS.map((view, index) => {
+            const label = text.t(NAV_KEY[view]);
+            const selected = active === view;
+            return (
+              <li key={view}>
+                <button
+                  type="button"
+                  aria-current={selected ? 'page' : undefined}
+                  title={`${label} · Ctrl ${index + 1}`}
+                  onClick={() => onNavigate(view)}
+                  className={cx(
+                    'flex h-8 items-center gap-v2-sm rounded-v2-pill px-v2-md text-v2-body',
+                    selected ? 'bg-v2-primary font-semibold text-v2-on-primary' : 'text-v2-ink-2 hover:bg-v2-hover',
+                  )}
+                >
+                  <Icon name={NAV_ICON[view]} />
+                  <span>{label}</span>
+                  {view === 'tasks' && needsYou ? (
+                    <span
+                      aria-label={text.t('islandNeedsYou', { n: needsYou })}
+                      className={cx('rounded-v2-pill px-1.5 text-v2-micro font-semibold', selected ? 'bg-v2-on-primary text-v2-primary' : 'bg-v2-you text-white')}
+                    >
+                      {needsYou}
+                    </span>
+                  ) : null}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+      <div className="flex shrink-0 items-center gap-v2-xs">
+        <QuotaButton text={text} quotaHud={quotaHud} onClick={() => onNavigate('resources')} />
+        <IconButton size="sm" variant="ghost" label={text.t('searchPlaceholder')} icon={<Icon name="filter" />} onClick={onPalette} />
+        <IconButton size="sm" variant="ghost" label={themeLabel} icon={<Icon name={theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'monitor'} />} onClick={onTheme} />
       </div>
     </header>
   );
 }
-
 
 const QUOTA_DOT: Record<QuotaTitleLevel, string> = {
   ok: 'bg-v2-done',
@@ -378,142 +300,12 @@ function QuotaButton({ text, quotaHud, onClick }: { text: WorkbenchText; quotaHu
       className="flex h-7 items-center gap-v2-sm rounded-v2-md px-v2-sm text-v2-meta text-v2-ink-2 hover:bg-v2-hover"
     >
       <span data-testid="quota-button-dot" aria-hidden="true" className={cx('h-1.5 w-1.5 rounded-full', QUOTA_DOT[summary.level])} />
-      <span>{value}</span>
+      <span className="max-[899px]:hidden">{value}</span>
     </button>
   );
 }
 
-/** Prodex dispatch channel at a glance (design: resource dots); the full picture is on the resources page. */
-function ChannelButton({ text, channel, onClick }: { text: WorkbenchText; channel: ChannelView; onClick: () => void }) {
-  const state = text.t(channel.labelKey);
-  const label = text.t('channelAria', { state });
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      data-testid="channel-button"
-      className="flex h-7 items-center gap-v2-sm rounded-v2-md px-v2-sm text-v2-meta text-v2-ink-2 hover:bg-v2-hover"
-    >
-      <span className="relative flex h-6 w-6 items-center justify-center rounded-v2-sm bg-[#3B3A36] text-[10px] font-semibold text-white" aria-hidden="true">
-        Px
-        <span className={cx('absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-v2-bg', CHANNEL_DOT[channel.tone])} />
-      </span>
-      <span className="max-[1099px]:hidden">{text.t('resourcesShort', { state })}</span>
-    </button>
-  );
-}
-
-interface SidebarProps {
-  text: WorkbenchText;
-  locale: Locale;
-  tasks: readonly HudTask[];
-  health: DataHealth;
-  active: NavView;
-  activeTaskId?: string;
-  theme: WorkbenchData['prefs']['theme'];
-  onNavigate: (view: NavView) => void;
-  onOpenTask: (task: HudTask) => void;
-  onTheme: () => void;
-  onOpenClassic: () => void;
-}
-
-function Sidebar({ text, locale, tasks, health, active, activeTaskId, theme, onNavigate, onOpenTask, onTheme, onOpenClassic }: SidebarProps) {
-  const summary = summarize(tasks);
-  const hud = taskHudText(locale);
-  const groups = groupByRepo(activeTasks(tasks));
-  const themeLabel = text.t(theme === 'system' ? 'themeSystem' : theme === 'light' ? 'themeLight' : 'themeDark');
-  return (
-    <nav aria-label={text.t('navAria')} className="flex min-h-0 w-[236px] shrink-0 flex-col gap-v2-md overflow-y-auto overflow-x-hidden px-v2-sm pb-v2-sm max-[1099px]:w-[60px]">
-      <ul className="grid gap-0.5">
-        {NAV_VIEWS.map((view, index) => {
-          const label = text.t(NAV_KEY[view]);
-          const raw = view === 'home' ? summary.needsYou : view === 'tasks' ? summary.total : undefined;
-          // Same rule as the status island: exact, "at least", or "?"; never a stale or partial number as fact.
-          // "Needs you" is a count by state; "Tasks" is the total, which only depends on the read.
-          const precision = view === 'home' ? categoryHealth(health, tasks) : health;
-          const count = raw === undefined || (raw === 0 && isExact(precision)) ? undefined : countLabel(raw, precision);
-          return (
-            <li key={view}>
-              <button
-                type="button"
-                aria-current={active === view ? 'page' : undefined}
-                title={`${label} · Ctrl ${index + 1}`}
-                onClick={() => onNavigate(view)}
-                className={cx(
-                  'flex h-8 w-full items-center gap-v2-sm rounded-v2-md px-v2-sm text-left',
-                  active === view ? 'bg-v2-surface font-semibold text-v2-ink shadow-v2-card' : 'text-v2-ink-2 hover:bg-v2-hover',
-                )}
-              >
-                <Icon name={NAV_ICON[view]} />
-                <span className="min-w-0 flex-1 truncate max-[1099px]:sr-only">{label}</span>
-                {count ? (
-                  <span className={cx('text-v2-micro max-[1099px]:hidden', view === 'home' ? 'font-semibold text-v2-you' : 'text-v2-ink-3')}>{count}</span>
-                ) : null}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-
-      <section aria-label={text.t('activeTasks')} className="grid grid-cols-[minmax(0,1fr)] gap-v2-xs max-[1099px]:hidden">
-        <h2 className="px-v2-sm text-v2-micro font-semibold text-v2-ink-3">{text.t('activeTasks')}</h2>
-        {groups.length === 0 ? (
-          <p className="px-v2-sm text-v2-micro text-v2-ink-3">
-            {text.t(
-              !isExact(health)
-                ? health === 'partial'
-                  ? 'partialNone'
-                  : 'islandUnknown'
-                : categoryHealth(health, tasks) === 'partial'
-                  ? 'categoryNone'
-                  : 'noActiveTasks',
-            )}
-          </p>
-        ) : null}
-        {groups.map((group) => (
-          <div key={group.repo}>
-            <div className="truncate px-v2-sm text-v2-micro text-v2-ink-3">{group.repo}</div>
-            <ul>
-              {group.tasks.map((task) => (
-                <li key={task.id}>
-                  <button
-                    type="button"
-                    onClick={() => onOpenTask(task)}
-                    aria-current={activeTaskId === task.id ? 'page' : undefined}
-                    className={cx(
-                      'flex h-7 w-full items-center gap-v2-sm rounded-v2-md px-v2-sm text-left text-v2-meta',
-                      activeTaskId === task.id ? 'bg-v2-surface text-v2-ink shadow-v2-card' : 'text-v2-ink-2 hover:bg-v2-hover',
-                    )}
-                  >
-                    <StatusIndicator tone={STATUS_TONE[task.status]} label={hud.status(task.status)} hideLabel />
-                    <span className="min-w-0 flex-1 truncate">{pickText(task.title, locale)}</span>
-                    {task.issue ? <span className="text-v2-micro text-v2-ink-3">#{task.issue}</span> : null}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </section>
-
-      <div className="mt-auto grid gap-0.5 border-t border-v2-line pt-v2-sm">
-        <button
-          type="button"
-          onClick={onOpenClassic}
-          title={text.t('classicUiHint')}
-          className="flex h-8 items-center gap-v2-sm rounded-v2-md px-v2-sm text-left text-v2-meta text-v2-ink-2 hover:bg-v2-hover"
-        >
-          <Icon name="external" />
-          <span className="truncate max-[1099px]:sr-only">{text.t('classicUi')}</span>
-        </button>
-        <IconButton size="sm" variant="ghost" label={themeLabel} icon={<Icon name={theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'monitor'} />} onClick={onTheme} />
-      </div>
-    </nav>
-  );
-}
-
+/** Which repositories the task tab reads, when, and what could not be read. */
 function SourceBar({ text, data, locale }: { text: WorkbenchText; data: WorkbenchData; locale: Locale }) {
   const [draft, setDraft] = useState('');
   const [repoError, setRepoError] = useState<string | undefined>();
@@ -521,70 +313,64 @@ function SourceBar({ text, data, locale }: { text: WorkbenchText; data: Workbenc
   const current = github.reposKey === prefs.repos.join('\n') ? github.results : [];
   const notices = prefs.source === 'github' && !github.loading ? repoNotices(current) : [];
   const observed = observedAt(current);
+  if (prefs.source === 'demo') {
+    return (
+      <div className="border-b border-v2-line bg-v2-panel px-v2-page py-v2-sm">
+        <Notice tone="unknown">
+          <span>{text.t('demoNotice')} </span>
+          <Button size="sm" onClick={() => data.setSource('github')}>{text.t('sourceGithub')}</Button>
+        </Notice>
+      </div>
+    );
+  }
   return (
-    <div className="sticky top-0 z-10 grid gap-v2-xs border-b border-v2-line bg-v2-panel px-v2-page py-v2-sm">
+    <div className="grid gap-v2-xs border-b border-v2-line bg-v2-panel px-v2-page py-v2-sm">
       <div className="flex flex-wrap items-center gap-v2-sm text-v2-meta">
-        <SegmentedControl
-          idBase="workbench-source"
-          label={text.t('sourceLabel')}
-          value={prefs.source}
-          onChange={(value) => data.setSource(value === 'github' ? 'github' : 'demo')}
-          options={[
-            { value: 'demo', label: text.t('sourceDemo') },
-            { value: 'github', label: text.t('sourceGithub') },
-          ]}
-        />
-        {prefs.source === 'demo' ? <span className="text-v2-ink-3">{text.t('demoNotice')}</span> : null}
-        {prefs.source === 'github' ? (
-          <>
-            <span className="text-v2-ink-3">
-              {github.loading ? text.t('githubLoading') : observed ? text.t('githubObserved', { time: new Date(observed).toLocaleTimeString(locale) }) : ''}
-            </span>
-            <Button size="sm" variant="ghost" loading={github.loading} onClick={data.refresh} icon={<Icon name="refresh" size={14} />}>
-              {text.t('refresh')}
-            </Button>
-            <span className="text-v2-ink-3">{text.t('repos')}:</span>
-            {prefs.repos.map((repo) => (
-              <Badge key={repo}>
-                {repo}
-                {prefs.repos.length > 1 ? (
-                  <button type="button" aria-label={text.t('repoRemove', { repo })} onClick={() => data.removeRepo(repo)} className="ml-1 text-v2-ink-3 hover:text-v2-ink">
-                    <Icon name="close" size={12} />
-                  </button>
-                ) : null}
-              </Badge>
-            ))}
-            <form
-              className="flex items-center gap-1"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const result = data.addRepo(draft);
-                setRepoError(result === 'invalid' ? text.t('repoInvalid') : result === 'full' ? text.t('repoFull', { max: MAX_REPOS }) : undefined);
-                if (result === 'added' || result === 'present') setDraft('');
-              }}
-            >
-              <input
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                placeholder={text.t('repoPlaceholder')}
-                aria-label={text.t('repoPlaceholder')}
-                aria-invalid={repoError ? true : undefined}
-                className="h-7 w-40 rounded-v2-md border border-v2-line bg-v2-surface px-v2-sm text-v2-meta text-v2-ink placeholder:text-v2-ink-3"
-              />
-              <Button size="sm" type="submit">
-                {text.t('repoAdd')}
-              </Button>
-            </form>
-          </>
-        ) : null}
+        {prefs.repos.map((repo) => (
+          <Badge key={repo}>
+            {repo}
+            {prefs.repos.length > 1 ? (
+              <button type="button" aria-label={text.t('repoRemove', { repo })} onClick={() => data.removeRepo(repo)} className="ml-1 text-v2-ink-3 hover:text-v2-ink">
+                <Icon name="close" size={12} />
+              </button>
+            ) : null}
+          </Badge>
+        ))}
+        <form
+          className="flex items-center gap-1"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const result = data.addRepo(draft);
+            setRepoError(result === 'invalid' ? text.t('repoInvalid') : result === 'full' ? text.t('repoFull', { max: MAX_REPOS }) : undefined);
+            if (result === 'added' || result === 'present') setDraft('');
+          }}
+        >
+          <input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder={text.t('repoPlaceholder')}
+            aria-label={text.t('repoPlaceholder')}
+            aria-invalid={repoError ? true : undefined}
+            className="h-7 w-36 rounded-v2-md border border-v2-line bg-v2-surface px-v2-sm text-v2-meta text-v2-ink placeholder:text-v2-ink-3"
+          />
+          <Button size="sm" type="submit">
+            {text.t('repoAdd')}
+          </Button>
+        </form>
+        <span className="ml-auto text-v2-ink-3">
+          {github.loading ? text.t('githubLoading') : observed ? text.t('githubObserved', { time: new Date(observed).toLocaleTimeString(locale) }) : ''}
+        </span>
+        <Button size="sm" variant="ghost" loading={github.loading} onClick={data.refresh} icon={<Icon name="refresh" size={14} />}>
+          {text.t('refresh')}
+        </Button>
       </div>
       {repoError ? <p role="alert" className="text-v2-micro text-v2-block">{repoError}</p> : null}
       {notices.map((notice) => (
-        <Notice key={`${notice.kind}-${notice.repo}`} tone={notice.kind === 'error' ? 'block' : 'unknown'}>
+        <p key={`${notice.kind}-${notice.repo}`} className={cx('text-v2-micro', notice.kind === 'error' ? 'text-v2-block' : 'text-v2-ink-3')}>
           {notice.kind === 'error'
             ? text.t('githubError', { repo: notice.repo, message: notice.message })
             : text.t(notice.kind === 'partial' ? 'githubPartial' : 'githubMore', { repo: notice.repo })}
-        </Notice>
+        </p>
       ))}
     </div>
   );
@@ -603,20 +389,4 @@ function useSystemDark(): boolean {
     () => typeof window !== 'undefined' && Boolean(window.matchMedia?.('(prefers-color-scheme: dark)').matches),
     () => false,
   );
-}
-
-/**
- * Provider webviews are native children of the window and paint over the DOM. The workbench does
- * not use them yet, so any left over from the classic UI (same window, before a reload) are hidden.
- */
-function useHideProviderWebviews(): void {
-  useEffect(() => {
-    for (const provider of ALL_AI_PROVIDERS) {
-      try {
-        void host.provider.hide(provider).catch(() => undefined);
-      } catch {
-        // Not running inside Tauri (browser preview, tests): there is nothing to hide.
-      }
-    }
-  }, []);
 }
