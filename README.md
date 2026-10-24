@@ -21,9 +21,24 @@ ai-one 是一个 Windows 桌面应用，复用你已经登录的 AI 网页订阅
 | `docs/` | 上游的规格、架构、兼容性与发布文档（`SPEC.md`、`PLAN.md` 为保留的遗留基线）；`docs/design/` 下有 v2 设计稿（当前设计参考）与旧 V1 设计（历史参考）；分类见 [`docs/README.md`](docs/README.md) |
 | `AGENTS.md`、`TECHNICAL-RESEARCH-V1.md`、`research-evidence/` | ai-one 的协作规则与调研资料 |
 
-## Quick Start（Windows 10/11）
+## 快速开始（Windows 10/11）
 
-这是源码开发版。首次启动前，请先安装本机开发环境；克隆仓库不会自动安装系统工具。
+```powershell
+git clone https://github.com/xiaolebao516/ai-one.git
+```
+
+然后双击仓库里的 **`ai-one.cmd`**。
+
+- 第一次会检查工具、安装依赖、编译应用和额度 HUD，大约 5–15 分钟；完成后自动打开，并在桌面放一个 **ai-one** 快捷方式。
+- 以后双击快捷方式直接打开；`git pull` 拉到新代码后，下次打开会自动重新编译一次。
+- 缺工具时窗口里会用人话说缺什么、怎么装（Node.js 24、`corepack enable`、Rust、Visual Studio C++ 生成工具），脚本自己不会去装系统工具。
+- 编译产物都在已被 git 忽略的 `target/`、`node_modules/` 里，`git status` 保持干净；网页登录、设置等数据在 `%APPDATA%\com.tedh.multiaichat`，不在仓库里。
+- 额度 HUD 里的 Claude 小人用的是上游原版图片：它不能随公开仓库发布，所以编译时从上游固定提交下载，只用于你自己本机；下载不了就用替代图。
+- 额度：Claude Code、Codex、Antigravity 要先在这台电脑上装好、登录好。**Claude 额度只在配了代理时才查**（`~/.claude/settings.json` 的 `env` 或环境变量里有 `HTTPS_PROXY`），避免从本机直连 Anthropic。
+
+### 第一次需要装的工具
+
+`ai-one.cmd` 会检查这些，缺了会提示：
 
 1. 安装 [Node.js](https://nodejs.org/en/download)（版本要求见下表）、[Rust](https://rustup.rs/) stable 工具链，以及 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)。在安装器中选择 **Desktop development with C++**，并确认包含 MSVC x64/x86 build tools 和 Windows 10/11 SDK。
 2. 确认 WebView2 Runtime 可用。Windows 10 1803 及更新版本、Windows 11 通常已包含；如果系统缺失，请从 [Microsoft 官方页面](https://developer.microsoft.com/microsoft-edge/webview2/)安装 Evergreen Runtime。
@@ -40,16 +55,15 @@ ai-one 是一个 Windows 桌面应用，复用你已经登录的 AI 网页订阅
    ```
 
    然后把 `$env:USERPROFILE\.local\bin` 加入用户 PATH，并重新打开 PowerShell。环境诊断会在启动前检查这项要求。
-4. 克隆并检查环境，再启动应用：
 
-   ```powershell
-   git clone https://github.com/xiaolebao516/ai-one.git
-   cd ai-one
-   node scripts/agent/doctor.mjs
-   node scripts/agent/launch.mjs --wait --timeout-ms 600000
-   ```
+### 不想双击时（命令行 / agent）
 
-如果 doctor 报告 `MISSING`，先按对应提示处理，再重新运行 doctor。首次 Rust 编译可能需要几分钟。启动脚本只安装项目锁文件指定的依赖，不会自动安装系统工具或修改 PATH。
+```powershell
+node scripts/agent/doctor.mjs
+node scripts/agent/launch.mjs --wait --timeout-ms 600000
+```
+
+下面是开发者需要的细节。
 
 ## 环境要求（Windows 10/11 x64）
 
