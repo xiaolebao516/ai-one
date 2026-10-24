@@ -7,7 +7,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   REQUIRED_FRAME_COUNTS,
-  recordHudBuildProvenance,
+  runHudBuild,
   validateClawdSprites,
 } from '../fetch-clawd-sprites.mjs';
 
@@ -179,42 +179,13 @@ test('fetch-clawd-sprites CLI rejects standalone --record-clean and --record-ori
   assert.match(resOrig.stderr, /Standalone "--record-clean" and "--record-original" CLI switches are prohibited/);
 });
 
-test('recordHudBuildProvenance programmatically writes valid 64-char sha256 and fails if artwork present', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fetch-sprites-record-test-'));
-  const target = path.join(tmpDir, 'clawd-sprites.json');
-  const distDir = path.join(tmpDir, 'dist');
-  const releaseDir = path.join(tmpDir, 'release');
-  fs.mkdirSync(distDir, { recursive: true });
-  fs.mkdirSync(releaseDir, { recursive: true });
-  const exePath = path.join(releaseDir, 'ai-one-hud.exe');
-  fs.writeFileSync(exePath, 'compiled binary bytes');
-
+test('runHudBuild refuses original build if target artwork file does not exist', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fetch-sprites-build-test-'));
+  const target = path.join(tmpDir, 'non-existent.json');
   try {
-    // 1. Successful record-clean
-    const sha = recordHudBuildProvenance(exePath, {
-      isClean: true,
-      target,
-      distDir,
-      releaseDir,
-    });
-    assert.match(sha, /^[0-9a-f]{64}$/);
-    const receiptPath = path.join(releaseDir, '.hud-art-clean');
-    assert.ok(fs.existsSync(receiptPath));
-    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-    assert.equal(receipt.clean, true);
-    assert.equal(receipt.sha256, sha);
-    assert.equal(receipt.exe, 'ai-one-hud.exe');
-
-    // 2. Fails if proprietary artwork target is present
-    fs.writeFileSync(target, 'proprietary art payload');
     assert.throws(
-      () => recordHudBuildProvenance(exePath, {
-        isClean: true,
-        target,
-        distDir,
-        releaseDir,
-      }),
-      /Cannot record clean build provenance: proprietary artwork/,
+      () => runHudBuild({ isClean: false, target }),
+      /Cannot start original build: target .* does not exist/,
     );
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -10,6 +10,14 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const script = path.join(root, 'scripts', 'pack-portable.mjs');
 
+// Pre-test repository snapshot to verify zero pollution and avoid false positives
+const initialLicenseContent = fs.readFileSync(path.join(root, 'agent-hud', 'LICENSE'), 'utf8');
+const initialArtExists = fs.existsSync(path.join(root, 'agent-hud', 'src', 'packages', 'hud', 'src', 'assets', 'clawd-sprites.json'));
+const initialOriginalMarkerExists = fs.existsSync(path.join(root, 'agent-hud', 'target', 'release', '.hud-art-original'));
+const initialOriginalMarkerContent = initialOriginalMarkerExists
+  ? fs.readFileSync(path.join(root, 'agent-hud', 'target', 'release', '.hud-art-original'), 'utf8')
+  : null;
+
 function zipNames(zipPath) {
   const data = fs.readFileSync(zipPath);
   const count = data.readUInt16LE(data.length - 22 + 10);
@@ -364,14 +372,57 @@ test('stale or substituted original EXE with fabricated clean receipt is rejecte
   }
 });
 
+test('fails closed when binary contains full single-encoded Base64 Clawd sprite table', () => {
+  const { dir, out, result } = pack((tmp) => {
+    const hud = path.join(tmp, 'ai-one-hud.exe');
+    const fullEncoded = Buffer.from(JSON.stringify({
+      sprites: {
+        Walking: {
+          palette: ['#fff'],
+          deltas: ['00'],
+        },
+      },
+    })).toString('base64');
+    fs.writeFileSync(hud, `binary payload with full single-encoded Base64 ${fullEncoded}`);
+    makeCleanHudReceipt(hud);
+    return ['--hud', hud];
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /embedded Clawd sprite table inside HUD binary/);
+    assert.ok(!fs.existsSync(out));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('default packaging fails closed when arbitrary extension (.dat, .pak, .txt) in main app contains sprite table with --no-hud', () => {
+  const { dir, out, result } = pack((tmp, input) => {
+    fs.writeFileSync(path.join(input, 'cache.dat'), 'data payload with {"sprites":{},"palette":["#000"],"deltas":["00"]} table');
+    return ['--no-hud'];
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /proprietary Clawd sprite table was detected/);
+    assert.ok(!fs.existsSync(out));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('complete pack test suite isolation: repository git tree is never touched', () => {
   const realArt = path.join(root, 'agent-hud', 'src', 'packages', 'hud', 'src', 'assets', 'clawd-sprites.json');
   const realDist = path.join(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist');
   const realLicense = path.join(root, 'agent-hud', 'LICENSE');
-  // Confirm that running tests did not create or delete files in the real repository
+  const realOrigMarker = path.join(root, 'agent-hud', 'target', 'release', '.hud-art-original');
+
   assert.ok(!fs.existsSync(`${realArt}.bak`), 'no backup file left in real repository assets');
   assert.ok(!fs.existsSync(path.join(realDist, 'clawd-sprites-test.json')));
-  assert.ok(fs.existsSync(realLicense), 'real agent-hud/LICENSE is present and untouched');
+  assert.equal(fs.readFileSync(realLicense, 'utf8'), initialLicenseContent, 'real agent-hud/LICENSE content is unchanged');
   assert.ok(!fs.existsSync(`${realLicense}.bak`), 'no license backup file left');
-  assert.ok(!fs.existsSync(path.join(root, 'agent-hud', 'target', 'release', '.hud-art-original')));
+  assert.equal(fs.existsSync(realArt), initialArtExists, 'real artwork existence is unchanged');
+  assert.equal(fs.existsSync(realOrigMarker), initialOriginalMarkerExists, 'original marker existence is unchanged');
+  if (initialOriginalMarkerExists) {
+    assert.equal(fs.readFileSync(realOrigMarker, 'utf8'), initialOriginalMarkerContent, 'original marker content is unchanged');
+  }
 });

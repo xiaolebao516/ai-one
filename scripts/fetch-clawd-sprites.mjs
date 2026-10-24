@@ -122,7 +122,7 @@ export function validateClawdSprites(rawContent) {
   return parsed;
 }
 
-export function recordHudBuildProvenance(hudExePath, {
+function recordHudBuildProvenance(hudExePath, {
   isClean = true,
   releaseDir,
   target = DEFAULT_TARGET,

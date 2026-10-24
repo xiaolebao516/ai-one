@@ -218,31 +218,62 @@ export function hasProprietarySpriteSignatures(content) {
   if (!content) return false;
   if (!Buffer.isBuffer(content)) content = Buffer.from(content);
 
-  // Literal filenames
-  if (content.includes(Buffer.from('clawd-sprites.json')) || content.includes(Buffer.from('clawd-sprites-'))) {
+  // 1. Literal filenames (UTF-8 and UTF-16LE)
+  if (
+    content.includes(Buffer.from('clawd-sprites.json')) ||
+    content.includes(Buffer.from('clawd-sprites-')) ||
+    content.includes(Buffer.from('clawd-sprites.json', 'utf16le')) ||
+    content.includes(Buffer.from('clawd-sprites-', 'utf16le'))
+  ) {
     return true;
   }
 
-  // UTF-8 JSON keys
-  const hasUtf8Keys =
+  // 2. Direct UTF-8 JSON keys
+  if (
     content.includes(Buffer.from('"sprites"')) &&
     content.includes(Buffer.from('"palette"')) &&
-    content.includes(Buffer.from('"deltas"'));
-  if (hasUtf8Keys) return true;
+    content.includes(Buffer.from('"deltas"'))
+  ) {
+    return true;
+  }
 
-  // UTF-16LE JSON keys
-  const hasUtf16Keys =
+  // 3. Direct UTF-16LE JSON keys
+  if (
     content.includes(Buffer.from('"sprites"', 'utf16le')) &&
     content.includes(Buffer.from('"palette"', 'utf16le')) &&
-    content.includes(Buffer.from('"deltas"', 'utf16le'));
-  if (hasUtf16Keys) return true;
+    content.includes(Buffer.from('"deltas"', 'utf16le'))
+  ) {
+    return true;
+  }
 
-  // Base64 encoded sprite keys
-  const base64Sprites = content.includes(Buffer.from('InNwcml0ZXMi')) || content.includes(Buffer.from('c3ByaXRlc'));
+  // 4. Base64 encoded payload scanning:
+  // Direct key fragment matches
+  const base64Sprites = content.includes(Buffer.from('InNwcml0ZXMi')) || content.includes(Buffer.from('c3ByaXRlc')) || content.includes(Buffer.from('eyJzcHJpdGVzI'));
   const base64Palette = content.includes(Buffer.from('InBhbGV0dGUi')) || content.includes(Buffer.from('cGFsZXR0Z'));
   const base64Deltas = content.includes(Buffer.from('ImRlbHRhcyI')) || content.includes(Buffer.from('kZWx0YXMi'));
-  if (base64Sprites && base64Palette && base64Deltas) {
+  if (base64Sprites && (base64Palette || base64Deltas)) {
     return true;
+  }
+
+  // General Base64 string decoding
+  const str = content.toString('latin1');
+  const base64Regex = /[A-Za-z0-9+/]{8,}={0,2}/g;
+  let match;
+  while ((match = base64Regex.exec(str)) !== null) {
+    const rawChunk = match[0];
+    try {
+      const decoded = Buffer.from(rawChunk, 'base64');
+      if (
+        (decoded.includes(Buffer.from('"sprites"')) && (decoded.includes(Buffer.from('"palette"')) || decoded.includes(Buffer.from('"deltas"')))) ||
+        (decoded.includes(Buffer.from('"sprites"', 'utf16le')) && (decoded.includes(Buffer.from('"palette"', 'utf16le')) || decoded.includes(Buffer.from('"deltas"', 'utf16le')))) ||
+        decoded.includes(Buffer.from('clawd-sprites.json')) ||
+        decoded.includes(Buffer.from('clawd-sprites.json', 'utf16le'))
+      ) {
+        return true;
+      }
+    } catch {
+      // Ignore decode errors on non-base64 noise
+    }
   }
 
   return false;
@@ -464,35 +495,44 @@ function createZip(entries, zipPath) {
   fs.writeFileSync(zipPath, Buffer.concat([...localParts, centralDir, end]));
 }
 
+export const OFFICIAL_NOTICE_FILENAMES = new Set([
+  'readme-portable.txt',
+  'portable',
+  'license-ai-one-hud.txt',
+  'notice.md',
+  'agent-hud-third-party.md',
+  'third_party_notices.txt',
+  'lobeicons-license.txt',
+  'react-bits-license.md',
+]);
+
 export function assertCleanZipEntries(entries, cleanArt = true) {
   if (!cleanArt) return;
   for (const entry of entries) {
     const archivePath = entry.archivePath || '';
-    const base = path.basename(archivePath);
+    const base = path.basename(archivePath).toLowerCase();
 
     // 1. Check archive entry path against proprietary asset names
     if (/clawd-sprites/i.test(base)) {
       throw new Error(`Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd assets were detected in package contents ("${archivePath}"). Remove it or use "--allow-proprietary-art" for private local packaging.`);
     }
 
-    // Skip notice/license documentation from content scanning as they discuss licensing policies
-    const lower = archivePath.toLowerCase();
-    if (lower.endsWith('.txt') || lower.endsWith('.md') || lower.endsWith('license') || lower.endsWith('notice')) {
+    // Skip official notice/license documentation entries as they discuss licensing policies in English prose
+    if (OFFICIAL_NOTICE_FILENAMES.has(base)) {
       continue;
     }
 
-    // 2. Check disk file or buffer contents
+    // 2. For all other entries (regardless of extension: .dat, .pak, .txt, .bin, .json, .js, .exe, etc.):
+    // Read the actual file bytes into entry.data (freezing the buffer for zip writing) and scan
     let content = null;
-    if (entry.data && Buffer.isBuffer(entry.data) && entry.data.length > 0) {
+    if (entry.data && Buffer.isBuffer(entry.data)) {
       content = entry.data;
     } else if (entry.source && fs.existsSync(entry.source)) {
-      // Scan JSON, JS, HTML, BIN, or EXE files included in the zip
-      if (lower.endsWith('.json') || lower.endsWith('.js') || lower.endsWith('.html') || lower.endsWith('.bin') || lower.endsWith('.exe')) {
-        try {
-          content = fs.readFileSync(entry.source);
-        } catch {
-          // If unreadable, ignore
-        }
+      try {
+        content = fs.readFileSync(entry.source);
+        entry.data = content; // Freeze buffer to guarantee identical content is written to zip
+      } catch (err) {
+        throw new Error(`Could not read entry "${entry.source}" for verification: ${err.message}`, { cause: err });
       }
     }
 
