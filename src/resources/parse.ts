@@ -30,6 +30,16 @@ function dateValue(value: unknown): string | null {
   return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
 }
 
+/**
+ * A missing reset time is null ("none known"); a reset time that is present but unusable is kept as
+ * an unparseable marker so the registry can refuse to show that window as current.
+ */
+const INVALID_TIME = 'invalid';
+function resetValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : INVALID_TIME;
+}
+
 function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
@@ -75,7 +85,7 @@ function parseQuota(value: unknown): HudQuota | null {
     name: stringValue(raw.name),
     shortLabel: stringValue(raw.shortLabel),
     usedPercent: percentage(raw.usedPercent),
-    resetAt: dateValue(raw.resetAt),
+    resetAt: resetValue(raw.resetAt),
     status: enumValue(raw.status, QUOTA_STATES),
     account: stringValue(raw.account),
     observedAt: dateValue(raw.observedAt),

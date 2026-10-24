@@ -208,6 +208,12 @@ describe('deriveResources', () => {
       expect(codex.quota.windows[0]?.level).toBe('unknown');
       expect(quotaTitleView(deriveResources(parsed('running', snapshot({ quotas: [bad] })), NOW)).level).toBe('unknown');
     }
+    // A reset time that is present but unusable is not "no reset time".
+    for (const unusable of ['not-a-date', 123, {}, '']) {
+      const codex = resource(parsed('running', snapshot({ quotas: [{ ...quota('codex', 55), resetAt: unusable }] })), 'codex');
+      expect(codex.quota.source).toBe('unknown');
+      expect(codex.quota.windows[0]?.level).toBe('unknown');
+    }
     const noReset = { ...quota('codex', 55), resetAt: null };
     expect(resource(parsed('running', snapshot({ quotas: [noReset] })), 'codex').quota.source).toBe('known');
   });
@@ -221,6 +227,18 @@ describe('deriveResources', () => {
       expect(codex.login).toBe('unknown');
       expect(codex.activity).toBe('unknown');
     }
+  });
+
+  it('does not read login or activity from a snapshot the running HUD has not refreshed for long', () => {
+    const providers = [{ id: 'codex', detected: true, accountStatus: { status: 'ready', notice: null, checkedAt: freshAt } }];
+    const sessions = [{ id: 's', title: 't', source: 'codex', state: 'running', updatedAt: freshAt, tokens: 1 }];
+    const at = (msAgo: number) => ({ ...snapshot({ providers, sessions }), generatedAt: new Date(NOW - msAgo).toISOString() });
+    const fresh = resource(parsed('running', at(60_000)), 'codex');
+    expect([fresh.login, fresh.activity]).toEqual(['ok', 'busy']);
+    const hoursOld = resource(parsed('running', at(2 * 60 * 60 * 1000)), 'codex');
+    expect([hoursOld.login, hoursOld.activity]).toEqual(['ok', 'unknown']);
+    const daysOld = resource(parsed('running', at(3 * 24 * 60 * 60 * 1000)), 'codex');
+    expect([daysOld.login, daysOld.activity]).toEqual(['unknown', 'unknown']);
   });
 
   it('shows login as unknown once the HUD has stopped, even if the old snapshot said ready', () => {
@@ -396,6 +414,24 @@ describe('ResourcesView quota display', () => {
     const unknownCard = unknownPercent.querySelector('[data-testid="resource-codex"]');
     expect(unknownCard?.textContent).toContain('未知');
     expect(unknownCard?.querySelector('[data-testid="quota-window-bar"]')?.className).toContain('border-dashed');
+  });
+
+  it('does not give the whole quota a green badge while one window is unknown', () => {
+    const partial = document.createElement('div');
+    // resourcesMarkup reads the real clock, so these windows are fresh relative to it.
+    const live = (percent: number | null, name: string) => ({ ...quota('codex', percent, new Date().toISOString()), name, resetAt: new Date(Date.now() + 3_600_000).toISOString() });
+    const liveSnapshot = (quotas: unknown[]) => ({ ...snapshot({ quotas }), generatedAt: new Date().toISOString() });
+    partial.innerHTML = resourcesMarkup(parsed('running', liveSnapshot([live(55, '5h limit'), live(null, 'Weekly limit')])));
+    const card = partial.querySelector('[data-testid="resource-codex"]');
+    expect(card?.textContent).toContain('部分已知');
+    expect(card?.textContent).not.toContain('已知部分已知');
+    const full = document.createElement('div');
+    full.innerHTML = resourcesMarkup(parsed('running', liveSnapshot([live(55, '5h limit')])));
+    const fullBadge = [...(full.querySelector('[data-testid="resource-codex"]')?.querySelectorAll('span') ?? [])].find((el) => el.textContent === '已知');
+    const partialBadge = [...(card?.querySelectorAll('span') ?? [])].find((el) => el.textContent === '部分已知');
+    expect(fullBadge?.className).toContain('done');
+    expect(partialBadge).toBeTruthy();
+    expect(partialBadge?.className).not.toContain('done');
   });
 });
 

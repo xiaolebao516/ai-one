@@ -253,7 +253,7 @@ function AgentResourceCard({ resource, locale, text }: { resource: ResourceStatu
   const quotaLabel = resource.quota.stale && resource.quota.windows.length > 0
     ? 'quotaExpiredShort'
     : resource.quota.source === 'known'
-      ? 'quotaKnown'
+      ? resource.quota.partial ? 'quotaPartial' : 'quotaKnown'
       : 'quotaUnknown';
   return (
     <Card data-testid={'resource-' + resource.id} className="grid items-start gap-v2-md min-[1100px]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -272,7 +272,7 @@ function AgentResourceCard({ resource, locale, text }: { resource: ResourceStatu
       <div className="grid min-w-0 gap-v2-sm">
         <div className="flex flex-wrap items-center justify-between gap-v2-sm">
           <span className="text-v2-meta text-v2-ink-2">{text.t('quotaLabel')}</span>
-          <Badge tone={resource.quota.source === 'known' && !resource.quota.stale ? 'done' : 'unknown'}>
+          <Badge tone={resource.quota.source === 'known' && !resource.quota.stale && !resource.quota.partial ? 'done' : 'unknown'}>
             {text.t(quotaLabel)}
           </Badge>
         </div>
@@ -325,7 +325,7 @@ function QuotaWindowRow({
           <span className={cx('absolute inset-y-0 left-0 rounded-full', QUOTA_BAR_CLASS[level])} style={{ width: Math.min(100, Math.max(0, usedPercent)) + '%' }} />
         ) : null}
       </span>
-      {window.resetAt ? <span className="text-v2-micro text-v2-ink-3">{text.t('quotaResetAt', { time: formatResetTime(window.resetAt, locale) })}</span> : null}
+      {window.resetAt && Number.isFinite(Date.parse(window.resetAt)) ? <span className="text-v2-micro text-v2-ink-3">{text.t('quotaResetAt', { time: formatResetTime(window.resetAt, locale) })}</span> : null}
     </div>
   );
 }

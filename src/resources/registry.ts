@@ -39,6 +39,8 @@ const AGENTS = [
 ] as const;
 
 const FRESH_MS = 30 * 60 * 1000;
+/** Logins change rarely, but a snapshot older than this says nothing about them now. */
+const LOGIN_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 /** A time this far ahead of now is a clock fault, not an observation. */
 const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
 
@@ -59,6 +61,11 @@ function snapshotTrusted(reading: QuotaHudReading, now: number): boolean {
   if (snapshot.schemaVersion !== 1 || snapshot.mode !== 'live') return false;
   const generatedAt = parseTime(snapshot.generatedAt);
   return generatedAt !== null && generatedAt <= now + FUTURE_TOLERANCE_MS;
+}
+
+function snapshotAgeMs(reading: QuotaHudReading, now: number): number | null {
+  const generatedAt = parseTime(reading.snapshot?.generatedAt);
+  return generatedAt === null ? null : Math.max(0, now - generatedAt);
 }
 
 function quotaLevel(usedPercent: number | null): QuotaWindowLevel {
@@ -134,15 +141,20 @@ function quotaState(reading: QuotaHudReading, providerId: string, trusted: boole
 /** Derive only the two local agents represented by the HUD; web chats remain unknown elsewhere. */
 export function deriveResources(reading: QuotaHudReading, now: number): ResourceStatus[] {
   const trusted = snapshotTrusted(reading, now);
+  const age = snapshotAgeMs(reading, now);
+  // The heartbeat is independent of the snapshot, so a running HUD can still hold an old snapshot:
+  // logins and activity must not be read from one that has not been refreshed for long.
+  const loginTrusted = trusted && age !== null && age <= LOGIN_MAX_AGE_MS;
+  const activityTrusted = trusted && age !== null && age <= FRESH_MS;
   return AGENTS.map((agent) => {
-    const login = loginState(reading, agent.providerId, trusted);
+    const login = loginState(reading, agent.providerId, loginTrusted);
     return {
       id: agent.id,
       name: agent.name,
       providerId: agent.providerId,
       login: login.login,
       ...(login.notice ? { loginNotice: login.notice } : {}),
-      activity: activityState(reading, agent.providerId, trusted),
+      activity: activityState(reading, agent.providerId, activityTrusted),
       quota: quotaState(reading, agent.providerId, trusted, now),
     };
   });
