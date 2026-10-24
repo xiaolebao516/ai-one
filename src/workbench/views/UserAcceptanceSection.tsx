@@ -3,6 +3,8 @@ import type { Locale } from '../../i18n/resolve';
 import { Button, Card, Notice } from '../../ui/v2';
 import { workbenchText } from '../workbenchText';
 import type { AcceptanceState } from '../useUserAcceptance';
+import { host } from '../../host';
+import { hasChoice } from '../acceptanceActions';
 import { needsNewDecision, type FixProgress } from '../acceptanceFix';
 
 const FIX_TEXT: Record<FixProgress, 'acceptanceFixCreating' | 'acceptanceFixUnknown' | 'acceptanceFixFailed' | 'acceptanceFixQueued' | 'acceptanceFixWorking' | 'acceptanceFixDone' | 'acceptanceFixDropped'> = {
@@ -10,10 +12,17 @@ const FIX_TEXT: Record<FixProgress, 'acceptanceFixCreating' | 'acceptanceFixUnkn
   queued: 'acceptanceFixQueued', working: 'acceptanceFixWorking', done: 'acceptanceFixDone', dropped: 'acceptanceFixDropped',
 };
 
-export function UserAcceptanceSection({ locale, state, demo }: {
+const copyToClipboard = async (value: string): Promise<void> => {
+  if (!navigator.clipboard) throw new Error('Clipboard unavailable');
+  await navigator.clipboard.writeText(value);
+};
+export function UserAcceptanceSection({ locale, state, demo, onCopy = copyToClipboard, onOpen = host.app.openExternal }: {
   locale: Locale; state: AcceptanceState; demo: boolean;
+  onCopy?: (value: string) => Promise<void>; onOpen?: (url: string) => Promise<void>;
 }) {
   const text = workbenchText(locale);
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const note = (key: string, value: string) => setNotes((current) => ({ ...current, [key]: value }));
   const [editing, setEditing] = useState<string | null>(null);
   const [feedback, setFeedback] = useState('');
   const visible = state.items.filter((item) => !state.records[item.key] || state.records[item.key].kind === 'feedback');
@@ -70,12 +79,51 @@ export function UserAcceptanceSection({ locale, state, demo }: {
                   </>
                 ) : (
                   <>
+                    {item.actions?.map((action, index) => {
+                      const id = `${item.key}:${index}`;
+                      if (action.kind === 'command') return (
+                        <div key={id} className="grid gap-v2-xs">
+                          <code className="block overflow-x-auto whitespace-pre rounded-v2-md border border-v2-line bg-v2-bg p-v2-sm text-v2-meta text-v2-ink">{action.value}</code>
+                          <div className="flex flex-wrap items-center gap-v2-sm">
+                            <Button size="sm" onClick={() => { void onCopy(action.value).then(() => note(id, text.t('acceptanceCopied')), () => note(id, text.t('acceptanceCopyFailed'))); }}>
+                              {text.t('acceptanceCopy')}
+                            </Button>
+                            {notes[id] ? <span role="status" className="text-v2-meta text-v2-ink-2">{notes[id]}</span> : null}
+                          </div>
+                        </div>
+                      );
+                      if (action.kind === 'open') return action.url ? (
+                        <div key={id} className="flex flex-wrap items-center gap-v2-sm">
+                          <Button size="sm" onClick={() => { void onOpen(action.url!).then(() => note(id, ''), () => note(id, text.t('acceptanceOpenFailed', { value: action.url! }))); }}>
+                            {text.t('acceptanceOpen')}
+                          </Button>
+                          <span className="break-all text-v2-micro text-v2-ink-3">{action.value}</span>
+                          {notes[id] ? <span role="status" className="text-v2-meta text-v2-ink-2">{notes[id]}</span> : null}
+                        </div>
+                      ) : <p key={id} className="text-v2-body text-v2-ink-2">{text.t('acceptanceLocation', { value: action.value })}</p>;
+                      if (action.kind === 'manual') return (
+                        <Notice key={id} tone="you" title={text.t('acceptanceManual', { value: action.value })}>
+                          <p>{text.t('acceptanceManualHint')}</p>
+                        </Notice>
+                      );
+                      return (
+                        <div key={id} className="flex flex-wrap gap-v2-sm">
+                          {action.options.map((option) => (
+                            <Button key={option} size="sm" variant="attention" disabled={state.storageError}
+                              onClick={() => { void state.submit(item, 'choice', option); }}>{option}</Button>
+                          ))}
+                        </div>
+                      );
+                    })}
                     <div className="flex flex-wrap gap-v2-sm">
-                      <Button size="sm" variant="attention" disabled={state.storageError} onClick={() => { void state.submit(item, 'approved'); }}>
-                        {text.t('acceptanceApprove')}
-                      </Button>
+                      {hasChoice(item.actions) ? null : (
+                        <Button size="sm" variant="attention" disabled={state.storageError}
+                          onClick={() => { void state.submit(item, item.actions?.length ? 'done' : 'approved'); }}>
+                          {text.t(item.actions?.length ? 'acceptanceDone' : 'acceptanceApprove')}
+                        </Button>
+                      )}
                       <Button size="sm" disabled={state.storageError} onClick={() => { setEditing(item.key); setFeedback(''); }}>
-                        {text.t('acceptanceReport')}
+                        {text.t(item.actions?.length ? 'acceptanceCannot' : 'acceptanceReport')}
                       </Button>
                     </div>
                     {editing === item.key ? (
@@ -85,7 +133,7 @@ export function UserAcceptanceSection({ locale, state, demo }: {
                           rows={2} maxLength={3000} className="w-full rounded-v2-md border border-v2-line bg-v2-bg p-v2-sm text-v2-body text-v2-ink" />
                         <div className="flex gap-v2-sm">
                           <Button size="sm" disabled={!feedback.trim() || state.storageError} onClick={() => {
-                            void state.submit(item, 'feedback', feedback); setEditing(null);
+                            void state.submit(item, 'feedback', (item.actions?.length ? `${text.t('acceptanceCannot')}：` : '') + feedback); setEditing(null);
                           }}>{text.t('acceptanceSend')}</Button>
                           <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>{text.t('acceptanceCancel')}</Button>
                         </div>

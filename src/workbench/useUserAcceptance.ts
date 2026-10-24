@@ -3,7 +3,7 @@ import { host } from '../host';
 import type { WorkbenchSource } from './workbenchModel';
 import {
   loadAcceptanceIssues, readAcceptanceRecords, saveAcceptanceRecords, sendAcceptanceComment,
-  type AcceptanceItem, type AcceptanceRead, type AcceptanceReader, type AcceptanceRecord,
+  type AcceptanceItem, type AcceptanceKind, type AcceptanceRead, type AcceptanceReader, type AcceptanceRecord,
   type AcceptanceRecords, type AcceptanceStorage, type AcceptanceWriter,
 } from './userAcceptance';
 import { createFixTask, fixProgress, needsNewDecision, type FixProgress, type IssueStates } from './acceptanceFix';
@@ -20,7 +20,8 @@ export interface AcceptanceState {
   issueStates: IssueStates;
   /** Per card key: where the Task created from the user's feedback stands. */
   progress: Record<string, FixProgress>;
-  submit: (item: AcceptanceItem, kind: 'approved' | 'feedback', feedback?: string) => Promise<void>;
+  /** `text` is the user's words for feedback, or the chosen option for a choice. */
+  submit: (item: AcceptanceItem, kind: AcceptanceKind, text?: string) => Promise<void>;
   /** Re-create the fix Task only after a definite failure (never after an unknown result). */
   retryFix: (item: AcceptanceItem) => Promise<void>;
 }
@@ -109,11 +110,14 @@ export function useUserAcceptance(
   };
   const submit: AcceptanceState['submit'] = async (item, kind, feedback = '') => {
     const canonical = currentItem.current(item);
+    const needsText = kind === 'feedback' || kind === 'choice';
     if (!canonical || inflight.current.has(item.key)
-      || (recordsRef.current[item.key] && !resolved(item.key)) || (kind === 'feedback' && !feedback.trim())) return;
+      || (recordsRef.current[item.key] && !resolved(item.key)) || (needsText && !feedback.trim())) return;
+    // A choice must be one of the options the Issue itself offers.
+    if (kind === 'choice' && !canonical.actions?.some((a) => a.kind === 'choice' && a.options.includes(feedback.trim()))) return;
     const generation = requestRef.current;
     const record: AcceptanceRecord = { key: canonical.key, repo: canonical.repo, issue: canonical.issue,
-      title: canonical.title, kind, sync: 'pending', ...(kind === 'feedback' ? { feedback: feedback.trim() } : {}) };
+      title: canonical.title, kind, sync: 'pending', ...(needsText ? { feedback: feedback.trim() } : {}) };
     if (!persist({ ...recordsRef.current, [item.key]: record }, 'before-write')) return;
     inflight.current.add(item.key);
     try {

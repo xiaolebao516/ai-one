@@ -10,15 +10,17 @@ import { UserAcceptanceSection } from '../workbench/views/UserAcceptanceSection'
 import { ACCEPTANCE_STORAGE_KEY, type AcceptanceWriter } from '../workbench/userAcceptance';
 import type { IssueStates } from '../workbench/acceptanceFix';
 
-const item = { key: 'o/r:7:test', repo: 'o/r', issue: 7, title: '确认页面显示正常。', steps: '打开首页', expected: '出现卡片' };
+let item: Record<string, unknown> & { key: string; repo: string; issue: number; title: string } = { key: 'o/r:7:test', repo: 'o/r', issue: 7, title: '确认页面显示正常。', steps: '打开首页', expected: '出现卡片' };
 let states: IssueStates = {};
-const loader: AcceptanceLoader = async () => ({ items: [item], partial: false, errors: [], issueStates: states });
+const loader: AcceptanceLoader = async () => ({ items: [item] as never, partial: false, errors: [], issueStates: states });
 let root: Root | undefined;
 let container: HTMLDivElement;
 const flush = async () => { await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); }); };
+let onCopy = vi.fn(async (_value: string) => {});
+let onOpen = vi.fn(async (_url: string) => {});
 function App({ writer, version }: { writer: AcceptanceWriter; version: number }) {
   const state = useUserAcceptance('github', ['o/r'], version, loader, writer);
-  return <UserAcceptanceSection locale="zh-CN" state={state} demo={false} />;
+  return <UserAcceptanceSection locale="zh-CN" state={state} demo={false} onCopy={onCopy} onOpen={onOpen} />;
 }
 async function render(writer: AcceptanceWriter, version = 0) {
   root ??= createRoot(container);
@@ -54,6 +56,9 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
   states = {};
+  onCopy = vi.fn(async () => {});
+  onOpen = vi.fn(async () => {});
+  item = { key: 'o/r:7:test', repo: 'o/r', issue: 7, title: '确认页面显示正常。', steps: '打开首页', expected: '出现卡片' };
   container = document.createElement('div');
   document.body.append(container);
 });
@@ -114,5 +119,62 @@ describe('feedback becomes a fix task and comes back for re-acceptance', () => {
     await render(api);
     await sendFeedback('坏了');
     expect(api.createIssue).not.toHaveBeenCalled();
+  });
+});
+
+describe('cards that ask the user to act', () => {
+  const actionItem = (actions: unknown[]) => ({ key: 'o/r:7:act', repo: 'o/r', issue: 7, title: '启动应用并登录。', raw: '启动应用并登录。', actions });
+  it('copies the command and opens an https page from the card', async () => {
+    item = actionItem([{ kind: 'command', value: 'pnpm tauri dev' }, { kind: 'open', value: 'https://example.com/a', url: 'https://example.com/a' }]);
+    const api = writer();
+    await render(api);
+    expect(container.textContent).toContain('pnpm tauri dev');
+    await click('复制命令');
+    expect(onCopy).toHaveBeenCalledWith('pnpm tauri dev');
+    expect(container.textContent).toContain('已复制');
+    await click('打开页面');
+    expect(onOpen).toHaveBeenCalledWith('https://example.com/a');
+    expect(api.comment).not.toHaveBeenCalled();
+    expect(labels()).not.toContain('没问题');
+  });
+  it('"I did it" and "cannot do it" use the same guarded write channel', async () => {
+    item = actionItem([{ kind: 'command', value: 'pnpm dev' }]);
+    const api = writer();
+    await render(api);
+    await click('我做完了');
+    expect(api.comment).toHaveBeenCalledTimes(1);
+    expect((api.comment.mock.calls[0] as unknown[])[0]).toMatchObject({ text: expect.stringContaining('用户已完成') });
+    expect(api.createIssue).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain('启动应用并登录');
+  });
+  it('"cannot do it" with a reason becomes a fix task', async () => {
+    item = actionItem([{ kind: 'command', value: 'pnpm dev' }]);
+    const api = writer();
+    await render(api);
+    await click('做不了');
+    const input = container.querySelector('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '命令报错');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await click('发送反馈');
+    expect(api.createIssue).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(api.createIssue.mock.calls[0])).toContain('做不了：命令报错');
+  });
+  it('a decision sends only an option the Issue offers', async () => {
+    item = actionItem([{ kind: 'choice', options: ['方案 A', '方案 B'] }]);
+    const api = writer();
+    await render(api);
+    expect(labels()).not.toContain('没问题');
+    expect(labels()).not.toContain('我做完了');
+    await click('方案 B');
+    expect(api.comment).toHaveBeenCalledTimes(1);
+    expect((api.comment.mock.calls[0] as unknown[])[0]).toMatchObject({ text: expect.stringContaining('用户决定：方案 B') });
+  });
+  it('shows account steps as user-only and never fills credentials', async () => {
+    item = actionItem([{ kind: 'manual', value: '登录 ChatGPT' }]);
+    await render(writer());
+    expect(container.textContent).toContain('需要你本人操作：登录 ChatGPT');
+    expect(container.textContent).toContain('不会代填');
   });
 });
