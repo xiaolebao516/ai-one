@@ -93,6 +93,15 @@ describe('one-click dispatch panel', () => {
     }
     expect(onCopy).toHaveBeenCalledTimes(2);
   });
+  it('does not show the result of one agent under another agent', async () => {
+    await render(api());
+    await click('派给 Claude Code');
+    expect(container.textContent).toContain('已打开桌面客户端');
+    const radios = [...container.querySelectorAll('input[type="radio"]')] as HTMLInputElement[];
+    await act(async () => radios.find((r) => r.parentElement?.textContent === 'WorkBuddy')!.click());
+    expect(container.textContent).not.toContain('已打开桌面客户端');
+    expect(container.textContent).not.toContain('口令也已复制');
+  });
   it('does not claim success for a failed or unknown result and never double-sends', async () => {
     let finish!: (value: { ok: false; code: 'unavailable' }) => void;
     const fake = api({ launch: vi.fn(() => new Promise((resolve) => { finish = resolve as never; })) as never });

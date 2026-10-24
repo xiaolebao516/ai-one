@@ -51,7 +51,11 @@ export function DispatchPanel({ locale, repo, issue, api = dispatchLaunch, onCop
   const [result, setResult] = useState<DispatchLaunchResult & { copied?: boolean }>();
   const [runs, setRuns] = useState<DispatchRun[]>([]);
   const sending = useRef(false);
-  const update = (patch: Partial<LaunchPrefs>) => setPrefs((current) => { const next = { ...current, ...patch }; savePrefs(next); return next; });
+  const update = (patch: Partial<LaunchPrefs>) => {
+    // A result belongs to the agent it was sent to: never show it under another one.
+    if (patch.agent) setResult(undefined);
+    setPrefs((current) => { const next = { ...current, ...patch }; savePrefs(next); return next; });
+  };
 
   const refresh = useCallback(async () => {
     const value = await api.runs();
@@ -152,7 +156,7 @@ export function DispatchPanel({ locale, repo, issue, api = dispatchLaunch, onCop
               {runs.map((run) => (
                 <details key={run.runId} className="text-v2-meta text-v2-ink-2">
                   <summary>
-                    {run.agent === 'claude' ? 'Claude Code' : 'Codex'} · {new Date(run.startedAt).toLocaleString(locale)} · {' '}
+                    {AGENT_INFO[run.agent].label} · {new Date(run.startedAt).toLocaleString(locale)} · {' '}
                     {run.state === 'running' ? text.t('launchRunRunning')
                       : run.state === 'exited' ? text.t('launchRunExited', { code: run.exitCode ?? '?' }) : text.t('launchRunLost')}
                   </summary>

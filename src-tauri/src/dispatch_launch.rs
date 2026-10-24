@@ -248,8 +248,12 @@ fn pct_encode_path(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "/")
         .split('/')
-        .map(|segment| {
-            if segment.len() == 2 && segment.ends_with(':') { segment.to_string() } else { pct_encode(segment) }
+        .enumerate()
+        .map(|(index, segment)| {
+            // Only a leading Windows drive letter keeps its colon; a folder that happens to be named
+            // "?:" or "#:" deeper in the path must be encoded like any other segment.
+            let drive = index == 0 && segment.len() == 2 && segment.as_bytes()[0].is_ascii_alphabetic() && segment.ends_with(':');
+            if drive { segment.to_string() } else { pct_encode(segment) }
         })
         .collect::<Vec<_>>()
         .join("/")
@@ -827,6 +831,11 @@ mod tests {
         let antigravity = client_url(Agent::Antigravity, "p", Path::new("D:\\Repo sitory\\ai-one"));
         assert_eq!(antigravity, "antigravity://file/D:/Repo%20sitory/ai-one");
         assert_eq!(client_url(Agent::WorkBuddy, "p", Path::new("D:\\x")), "workbuddy://home");
+        // Folders named like a drive, a query or a fragment must not cut the path short.
+        assert_eq!(pct_encode_path(Path::new("/home/u/?:/ai-one")), "/home/u/%3F%3A/ai-one");
+        assert_eq!(pct_encode_path(Path::new("/home/u/#:/ai-one")), "/home/u/%23%3A/ai-one");
+        assert_eq!(pct_encode_path(Path::new("/home/u/%:/x y/中")), "/home/u/%25%3A/x%20y/%E4%B8%AD");
+        assert_eq!(pct_encode_path(Path::new("D:\\a#b\\c")), "D:/a%23b/c");
     }
 
     #[test]
