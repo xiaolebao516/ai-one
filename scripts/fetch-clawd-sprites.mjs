@@ -45,6 +45,12 @@ export function validateClawdSprites(rawContent) {
   if (!parsed.sprites || typeof parsed.sprites !== 'object') {
     throw new Error('Missing or invalid "sprites" property');
   }
+  // Reject unknown extra sprite keys so validation strictly matches runtime decoder
+  for (const key of Object.keys(parsed.sprites)) {
+    if (!REQUIRED_FRAME_COUNTS[key]) {
+      throw new Error(`Unexpected unknown sprite key: "${key}"`);
+    }
+  }
   for (const [name, expectedCount] of Object.entries(REQUIRED_FRAME_COUNTS)) {
     const sprite = parsed.sprites[name];
     if (!sprite || typeof sprite !== 'object') {
@@ -114,37 +120,51 @@ export function validateClawdSprites(rawContent) {
   return parsed;
 }
 
+export function cleanClawdArt({
+  target = DEFAULT_TARGET,
+  distDir = path.resolve(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist'),
+  releaseDir = path.resolve(root, 'agent-hud', 'target', 'release'),
+} = {}) {
+  let cleaned = 0;
+  if (fs.existsSync(target)) {
+    fs.unlinkSync(target);
+    cleaned += 1;
+  }
+  // Also remove bundled sprite JSON in desktop dist/
+  if (fs.existsSync(distDir)) {
+    fs.rmSync(distDir, { recursive: true, force: true });
+    cleaned += 1;
+  }
+  // Also remove built HUD release binary so stale builds cannot be packaged
+  const hudExe = path.join(releaseDir, 'ai-one-hud.exe');
+  if (fs.existsSync(hudExe)) {
+    fs.unlinkSync(hudExe);
+    cleaned += 1;
+  }
+  // Touch clean provenance marker and remove original marker
+  fs.mkdirSync(releaseDir, { recursive: true });
+  fs.writeFileSync(path.join(releaseDir, '.hud-art-clean'), `${Date.now()}`, 'utf8');
+  const origMarker = path.join(releaseDir, '.hud-art-original');
+  if (fs.existsSync(origMarker)) fs.unlinkSync(origMarker);
+
+  return cleaned;
+}
+
 // CLI entry point
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
   const isClean = process.argv.includes('--clean');
   const strict = process.argv.includes('--strict') || process.env.CLAWD_SPRITES_STRICT === '1';
-  const target = process.env.CLAWD_SPRITES_DEST ? path.resolve(process.env.CLAWD_SPRITES_DEST) : DEFAULT_TARGET;
-  const releaseDir = path.resolve(root, 'agent-hud', 'target', 'release');
+
+  const getOpt = (flag) => {
+    const idx = process.argv.indexOf(flag);
+    return idx !== -1 && process.argv[idx + 1] ? path.resolve(process.argv[idx + 1]) : null;
+  };
+  const target = getOpt('--target') || (process.env.CLAWD_SPRITES_DEST ? path.resolve(process.env.CLAWD_SPRITES_DEST) : DEFAULT_TARGET);
+  const distDir = getOpt('--dist-dir') || (process.env.CLAWD_DIST_DIR ? path.resolve(process.env.CLAWD_DIST_DIR) : path.resolve(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist'));
+  const releaseDir = getOpt('--release-dir') || (process.env.CLAWD_RELEASE_DIR ? path.resolve(process.env.CLAWD_RELEASE_DIR) : path.resolve(root, 'agent-hud', 'target', 'release'));
 
   if (isClean) {
-    let cleaned = 0;
-    if (fs.existsSync(target)) {
-      fs.unlinkSync(target);
-      cleaned += 1;
-    }
-    // Also remove bundled sprite JSON in desktop dist/
-    const distDir = path.resolve(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist');
-    if (fs.existsSync(distDir)) {
-      fs.rmSync(distDir, { recursive: true, force: true });
-      cleaned += 1;
-    }
-    // Also remove built HUD release binary so stale builds cannot be packaged
-    const hudExe = path.join(releaseDir, 'ai-one-hud.exe');
-    if (fs.existsSync(hudExe)) {
-      fs.unlinkSync(hudExe);
-      cleaned += 1;
-    }
-    // Touch clean provenance marker and remove original marker
-    fs.mkdirSync(releaseDir, { recursive: true });
-    fs.writeFileSync(path.join(releaseDir, '.hud-art-clean'), `${Date.now()}`, 'utf8');
-    const origMarker = path.join(releaseDir, '.hud-art-original');
-    if (fs.existsSync(origMarker)) fs.unlinkSync(origMarker);
-
+    const cleaned = cleanClawdArt({ target, distDir, releaseDir });
     console.log(`[fetch-clawd-sprites] Cleaned ${cleaned} proprietary asset(s) and build artifact(s).`);
     process.exit(0);
   }

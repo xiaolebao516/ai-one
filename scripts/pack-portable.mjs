@@ -50,7 +50,7 @@ function parseArgs(argv) {
     exe: process.env.MAC_PORTABLE_EXE ?? process.env.PORTABLE_EXE,
     prefix: process.env.MAC_PORTABLE_PREFIX ?? process.env.PORTABLE_PREFIX,
     hud: process.env.MAC_PORTABLE_HUD ?? process.env.PORTABLE_HUD ?? DEFAULT_HUD_EXE,
-    cleanArt: process.env.MAC_PORTABLE_CLEAN_ART === '1' || process.env.PORTABLE_CLEAN_ART === '1' || false,
+    cleanArt: true, // Default: fail-closed clean art mode for public releases
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -71,6 +71,7 @@ function parseArgs(argv) {
     else if (arg === '--hud') options.hud = nextValue();
     else if (arg === '--no-hud') options.hud = '';
     else if (arg === '--clean-art') options.cleanArt = true;
+    else if (arg === '--allow-proprietary-art' || arg === '--proprietary-art') options.cleanArt = false;
     else if (arg === '--') continue; // pnpm forwards the run separator; ignore it
     else if (arg === '--help' || arg === '-h') {
       printHelp();
@@ -96,8 +97,9 @@ Options:
   --hud <file>     Quota HUD executable to ship next to the app. Default: ${DEFAULT_HUD_EXE}
                    (build it with: pnpm hud:build; a plain cargo build leaves a dev-mode exe whose windows are blank).
                    Skipped, with a note, when the file does not exist.
-  --no-hud         Do not ship the quota HUD.
-  --clean-art      Ensure no proprietary third-party art assets (clawd-sprites.json) are present before packaging.
+  --no-hud                 Do not ship the quota HUD.
+  --clean-art              Ensure no proprietary third-party art assets (clawd-sprites.json) are present before packaging (default: true).
+  --allow-proprietary-art  Explicitly permit packaging local builds with on-demand Clawd sprites for private use (requires Anthropic permission for public distribution).
 
 Equivalent env vars are MAC_PORTABLE_INPUT, MAC_PORTABLE_OUT, MAC_PORTABLE_NAME,
 MAC_PORTABLE_EXE, and MAC_PORTABLE_PREFIX.`);
@@ -207,7 +209,7 @@ function collectFiles(inputDir, exeName) {
   return files.sort((a, b) => a.archivePath.localeCompare(b.archivePath));
 }
 
-function detectProprietaryClawdArt(hudExePath) {
+export function detectProprietaryClawdArt(hudExePath) {
   const proprietaryArt = path.join(HUD_ASSETS, 'clawd-sprites.json');
   if (fs.existsSync(proprietaryArt)) return 'clawd-sprites.json present in HUD assets';
 
@@ -227,7 +229,8 @@ function detectProprietaryClawdArt(hudExePath) {
           return `bundled asset "${entry.name}" in HUD dist`;
         } else if (/\.(js|json|html)$/i.test(entry.name)) {
           const content = fs.readFileSync(full);
-          if (content.includes(Buffer.from('DancingHappy')) || content.includes(Buffer.from('clawd-sprites'))) {
+          // Look for proprietary sprite table JSON payload signature (sprites table with palette and deltas)
+          if (content.includes(Buffer.from('"sprites"')) && content.includes(Buffer.from('"palette"')) && content.includes(Buffer.from('"deltas"'))) {
             return `embedded Clawd sprite table in HUD dist file "${entry.name}"`;
           }
         }
@@ -238,7 +241,9 @@ function detectProprietaryClawdArt(hudExePath) {
   if (hudExePath && fs.existsSync(hudExePath)) {
     try {
       const content = fs.readFileSync(hudExePath);
-      if (content.includes(Buffer.from('DancingHappy')) || content.includes(Buffer.from('clawd-sprites'))) {
+      // Notice: Do NOT match 'DancingHappy' which is a code identifier in clawd-clips.ts!
+      // Look for asset filename 'clawd-sprites.json' or 'clawd-sprites-' or the proprietary sprite table JSON signature:
+      if (content.includes(Buffer.from('clawd-sprites.json')) || content.includes(Buffer.from('clawd-sprites-')) || (content.includes(Buffer.from('"sprites"')) && content.includes(Buffer.from('"palette"')) && content.includes(Buffer.from('"deltas"')))) {
         return 'embedded Clawd sprite table inside HUD binary';
       }
     } catch (err) {
@@ -252,7 +257,7 @@ function detectProprietaryClawdArt(hudExePath) {
  * The HUD executable plus the notices Apache-2.0 asks us to pass on with it. Empty when no HUD is
  * to be shipped (--no-hud, or the file is not built), so builds without the HUD keep working.
  */
-function hudEntriesFor(hudPath, cleanArt = false) {
+function hudEntriesFor(hudPath, cleanArt = true) {
   if (!hudPath) return [];
   const exe = path.resolve(hudPath);
   if (!fs.existsSync(exe) || !fs.statSync(exe).isFile()) {
@@ -261,10 +266,10 @@ function hudEntriesFor(hudPath, cleanArt = false) {
   }
   const taintedReason = detectProprietaryClawdArt(exe);
   if (cleanArt && taintedReason) {
-    throw new Error(`Packaging aborted: --clean-art was requested for public release, but proprietary Clawd assets were detected (${taintedReason}). Run "pnpm hud:clean-art" and rebuild HUD before packaging public releases.`);
+    throw new Error(`Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd assets were detected (${taintedReason}). Rebuild with clean assets ("pnpm hud:build:clean") or use "--allow-proprietary-art" for private local packaging.`);
   }
   if (taintedReason) {
-    console.log(`Note: Built HUD contains local on-demand Clawd sprite table (#168; ${taintedReason}). Distributing this binary publicly requires Anthropic permission; use --clean-art for public releases.`);
+    console.log(`Note: Built HUD contains local on-demand Clawd sprite table (#168; ${taintedReason}) under explicit "--allow-proprietary-art" permission. Distributing this binary publicly requires Anthropic permission.`);
   }
   const entries = [{ source: exe, archivePath: HUD_ARCHIVE_NAME, mtime: fs.statSync(exe).mtime }];
   const missing = [];

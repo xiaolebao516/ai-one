@@ -45,7 +45,7 @@ test('a built HUD ships next to the app with its notices', () => {
   const { dir, out, result } = pack((tmp) => {
     const hud = path.join(tmp, 'ai-one-hud.exe');
     fs.writeFileSync(hud, 'hud');
-    return ['--hud', hud];
+    return ['--hud', hud, '--allow-proprietary-art'];
   });
   try {
     assert.equal(result.status, 0, result.stderr);
@@ -89,7 +89,7 @@ test('--no-hud or a missing HUD never takes a stale HUD from the input folder al
     fs.writeFileSync(path.join(input, 'ai-one-hud.exe'), 'old');
     const hud = path.join(tmp, 'new-hud.exe');
     fs.writeFileSync(hud, 'new');
-    return ['--hud', hud];
+    return ['--hud', hud, '--allow-proprietary-art'];
   });
   try {
     assert.equal(skipped.result.status, 0, skipped.result.stderr);
@@ -134,12 +134,36 @@ test('--clean-art fails when proprietary clawd-sprites.json is present in HUD as
   const { dir, out, result } = pack((tmp) => {
     const hud = path.join(tmp, 'ai-one-hud.exe');
     fs.writeFileSync(hud, 'hud');
-    return ['--hud', hud, '--clean-art'];
+    return ['--hud', hud];
   });
   try {
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /Packaging aborted: --clean-art was requested for public release/);
+    assert.match(result.stderr, /Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd assets were detected/);
     assert.ok(!fs.existsSync(out));
+  } finally {
+    if (!wasPresent && fs.existsSync(proprietaryArt)) {
+      fs.unlinkSync(proprietaryArt);
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('default packaging fails closed on proprietary art, but --allow-proprietary-art permits it for personal use', () => {
+  const proprietaryArt = path.join(root, 'agent-hud', 'src', 'packages', 'hud', 'src', 'assets', 'clawd-sprites.json');
+  const wasPresent = fs.existsSync(proprietaryArt);
+  if (!wasPresent) {
+    fs.mkdirSync(path.dirname(proprietaryArt), { recursive: true });
+    fs.writeFileSync(proprietaryArt, '{"test":true}');
+  }
+  const { dir, out, result } = pack((tmp) => {
+    const hud = path.join(tmp, 'ai-one-hud.exe');
+    fs.writeFileSync(hud, 'hud');
+    return ['--hud', hud, '--allow-proprietary-art'];
+  });
+  try {
+    assert.equal(result.status, 0);
+    assert.ok(fs.existsSync(out));
+    assert.match(result.stdout, /under explicit "--allow-proprietary-art" permission/);
   } finally {
     if (!wasPresent && fs.existsSync(proprietaryArt)) {
       fs.unlinkSync(proprietaryArt);
@@ -157,13 +181,36 @@ test('--clean-art fails when stale binary contains embedded Clawd sprites even i
   }
   const { dir, out, result } = pack((tmp) => {
     const hud = path.join(tmp, 'ai-one-hud.exe');
-    fs.writeFileSync(hud, 'binary content with DancingHappy sprite table embedded');
-    return ['--hud', hud, '--clean-art'];
+    fs.writeFileSync(hud, 'binary content with embedded clawd-sprites.json and {"sprites":{"Walking":{"palette":["#fff"],"deltas":["00"]}}} table');
+    return ['--hud', hud];
   });
   try {
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /embedded Clawd sprite table inside HUD binary/);
     assert.ok(!fs.existsSync(out));
+  } finally {
+    if (wasPresent && fs.existsSync(backup)) {
+      fs.renameSync(backup, proprietaryArt);
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('clean code containing DancingHappy action identifier is not falsely detected as proprietary art', () => {
+  const proprietaryArt = path.join(root, 'agent-hud', 'src', 'packages', 'hud', 'src', 'assets', 'clawd-sprites.json');
+  const backup = path.join(root, 'agent-hud', 'src', 'packages', 'hud', 'src', 'assets', 'clawd-sprites.json.bak');
+  const wasPresent = fs.existsSync(proprietaryArt);
+  if (wasPresent) {
+    fs.renameSync(proprietaryArt, backup);
+  }
+  const { dir, out, result } = pack((tmp) => {
+    const hud = path.join(tmp, 'ai-one-hud.exe');
+    fs.writeFileSync(hud, 'binary with DancingHappy action name in clean bot code');
+    return ['--hud', hud];
+  });
+  try {
+    assert.equal(result.status, 0);
+    assert.ok(fs.existsSync(out));
   } finally {
     if (wasPresent && fs.existsSync(backup)) {
       fs.renameSync(backup, proprietaryArt);

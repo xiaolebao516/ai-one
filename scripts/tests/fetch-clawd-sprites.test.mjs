@@ -119,17 +119,47 @@ test('validateClawdSprites throws when dimensions exceed 65536', () => {
   );
 });
 
-test('fetch-clawd-sprites CLI --clean removes existing target file', () => {
+test('validateClawdSprites throws on unexpected unknown extra sprite key', () => {
+  const payload = makeSyntheticValidSprites();
+  payload.sprites.UnexpectedBonusAction = {
+    w: 2,
+    h: 2,
+    palette: ['#112233'],
+    base: '0000',
+    deltas: [],
+  };
+  assert.throws(
+    () => validateClawdSprites(JSON.stringify(payload)),
+    /Unexpected unknown sprite key: "UnexpectedBonusAction"/,
+  );
+});
+
+test('fetch-clawd-sprites CLI --clean removes target file and respects isolated dist/release directories', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fetch-sprites-test-'));
   const target = path.join(tmpDir, 'clawd-sprites.json');
+  const distDir = path.join(tmpDir, 'dist');
+  const releaseDir = path.join(tmpDir, 'release');
+  fs.mkdirSync(distDir, { recursive: true });
+  fs.mkdirSync(releaseDir, { recursive: true });
   fs.writeFileSync(target, 'dummy');
+  fs.writeFileSync(path.join(distDir, 'dummy.txt'), 'dist content');
+  fs.writeFileSync(path.join(releaseDir, 'ai-one-hud.exe'), 'exe content');
+
   try {
-    const res = spawnSync(process.execPath, [script, '--clean'], {
-      env: { ...process.env, CLAWD_SPRITES_DEST: target },
+    const res = spawnSync(process.execPath, [
+      script,
+      '--clean',
+      '--target', target,
+      '--dist-dir', distDir,
+      '--release-dir', releaseDir,
+    ], {
       encoding: 'utf8',
     });
     assert.equal(res.status, 0);
-    assert.ok(!fs.existsSync(target), 'file should be unlinked');
+    assert.ok(!fs.existsSync(target), 'target file should be unlinked');
+    assert.ok(!fs.existsSync(distDir), 'isolated dist dir should be unlinked');
+    assert.ok(!fs.existsSync(path.join(releaseDir, 'ai-one-hud.exe')), 'isolated exe should be unlinked');
+    assert.ok(fs.existsSync(path.join(releaseDir, '.hud-art-clean')), 'clean marker should be created in isolated release dir');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
