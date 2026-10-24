@@ -190,7 +190,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
   } else if (current.view === 'tasks') {
     view = <TasksView locale={locale} tasks={data.tasks} health={data.health} onOpenTask={openTask} />;
   } else if (current.view === 'task' && task) {
-    view = <TaskView key={task.id} locale={locale} task={task} onBack={() => go({ view: 'tasks' })} />;
+    view = <TaskView key={task.id} locale={locale} task={task} onBack={() => go({ view: 'tasks' })} canDispatch={data.health !== 'demo'} />;
   } else if (current.view === 'chat') {
     view = (
       <PlannedView

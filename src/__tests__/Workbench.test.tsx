@@ -103,7 +103,7 @@ describe('Task page needs-you', () => {
     expect(waiting).toBeDefined();
     const html = renderToStaticMarkup(<TaskView locale="en" task={waiting!} onBack={noop} />);
     expect(html).toContain('id="task-needs-you"');
-    expect(visibleText(html)).toContain('ai-one cannot act on this yet');
+    expect(visibleText(html)).toContain('ai-one has no decision button yet');
     const running = TASK_HUD_MOCK_TASKS.find((item) => item.status === 'running');
     expect(renderToStaticMarkup(<TaskView locale="en" task={running!} onBack={noop} />)).not.toContain('id="task-needs-you"');
   });

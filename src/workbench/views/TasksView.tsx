@@ -64,7 +64,7 @@ export function TasksView({ locale, tasks, health, onOpenTask }: TasksViewProps)
             <Card padding="none" className="mt-v2-sm">
               <ul className="divide-y divide-v2-line p-v2-xs">
                 {group.tasks.map((task) => (
-                  <TaskRow key={task.id} task={task} locale={locale} onOpen={onOpenTask} />
+                  <TaskRow key={task.id} task={task} locale={locale} onOpen={onOpenTask} canDispatch={health !== 'demo'} />
                 ))}
               </ul>
             </Card>

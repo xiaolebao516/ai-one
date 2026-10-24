@@ -41,11 +41,16 @@ const FAILURE_TEXT: Record<Exclude<DispatchCode, 'launched' | 'opened'>, 'launch
   issue_unverified: 'launchIssueUnverified', unavailable: 'launchUnknown',
 };
 
-export function DispatchPanel({ locale, repo, issue, api = dispatchLaunch, onCopy = copyToClipboard }: {
+export function DispatchPanel({ locale, repo, issue, api = dispatchLaunch, onCopy = copyToClipboard, open: controlledOpen, onOpenChange }: {
   locale: Locale; repo: string; issue: number; api?: DispatchLaunchApi; onCopy?: (value: string) => Promise<void>;
+  /** Set both to let the caller own the trigger (a task list row); the panel then shows no button of its own. */
+  open?: boolean; onOpenChange?: (open: boolean) => void;
 }) {
   const text = workbenchText(locale);
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const controlled = controlledOpen !== undefined;
+  const open = controlled ? controlledOpen : ownOpen;
+  const setOpen = (next: boolean) => { if (controlled) onOpenChange?.(next); else setOwnOpen(next); };
   const [prefs, setPrefs] = useState<LaunchPrefs>(readPrefs);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<DispatchLaunchResult & { copied?: boolean }>();
@@ -92,11 +97,13 @@ export function DispatchPanel({ locale, repo, issue, api = dispatchLaunch, onCop
   const mode: DispatchMode = info.cli ? prefs.mode : 'desktop';
   return (
     <div className="grid gap-v2-sm">
-      <div>
-        <Button size="sm" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-          {text.t('launchButton')}
-        </Button>
-      </div>
+      {controlled ? null : (
+        <div>
+          <Button size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>
+            {text.t('launchButton')}
+          </Button>
+        </div>
+      )}
       {open ? (
         <div className="grid gap-v2-sm rounded-v2-md border border-v2-line bg-v2-bg p-v2-sm" role="group" aria-label={text.t('launchTitle')}>
           <fieldset className="flex flex-wrap items-center gap-v2-md">
