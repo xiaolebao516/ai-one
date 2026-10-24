@@ -6,6 +6,10 @@ import process from 'node:process';
 
 const DEFAULT_INPUT = path.join('src-tauri', 'target', 'release');
 const DEFAULT_OUT_DIR = path.join('dist', 'portable');
+// The quota HUD (Spec #82) is a separate process built from agent-hud/. quota_hud_start looks for it
+// beside the app executable, so a portable zip carries it there when it has been built.
+const DEFAULT_HUD_EXE = path.join('agent-hud', 'target', 'release', 'ai-one-hud.exe');
+const HUD_ARCHIVE_NAME = 'ai-one-hud.exe';
 const README_PORTABLE = `Multi-AI Chat Desktop portable build
 
 Unzip this folder and run the .exe directly.
@@ -14,6 +18,10 @@ Requirements:
 - Windows 10/11.
 - Microsoft Edge WebView2 Evergreen Runtime must be installed. Download it from:
   https://developer.microsoft.com/microsoft-edge/webview2/
+
+Quota HUD:
+- ai-one-hud.exe (when present) is the quota HUD. Start it from the Resources page; it must stay next to the app .exe.
+- LICENSE-ai-one-hud.txt, NOTICE.md and agent-hud-third-party.md are the notices that come with it.
 
 Portable notes:
 - Keep the PORTABLE marker file next to the .exe.
@@ -28,6 +36,7 @@ function parseArgs(argv) {
     name: process.env.MAC_PORTABLE_NAME ?? process.env.PORTABLE_NAME,
     exe: process.env.MAC_PORTABLE_EXE ?? process.env.PORTABLE_EXE,
     prefix: process.env.MAC_PORTABLE_PREFIX ?? process.env.PORTABLE_PREFIX,
+    hud: process.env.MAC_PORTABLE_HUD ?? process.env.PORTABLE_HUD ?? DEFAULT_HUD_EXE,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -45,6 +54,8 @@ function parseArgs(argv) {
     else if (arg === '--exe') options.exe = nextValue();
     else if (arg === '--prefix') options.prefix = nextValue();
     else if (arg === '--no-prefix') options.prefix = '';
+    else if (arg === '--hud') options.hud = nextValue();
+    else if (arg === '--no-hud') options.hud = '';
     else if (arg === '--') continue; // pnpm forwards the run separator; ignore it
     else if (arg === '--help' || arg === '-h') {
       printHelp();
@@ -67,6 +78,10 @@ Options:
   --exe <file>     App executable filename when multiple .exe files are present.
   --prefix <dir>   Top-level folder inside the zip. Default: inferred product/version.
   --no-prefix      Put files at the zip root.
+  --hud <file>     Quota HUD executable to ship next to the app. Default: ${DEFAULT_HUD_EXE}
+                   (build it with: cd agent-hud && pnpm run build && cargo build --release -p ai-one-hud).
+                   Skipped, with a note, when the file does not exist.
+  --no-hud         Do not ship the quota HUD.
 
 Equivalent env vars are MAC_PORTABLE_INPUT, MAC_PORTABLE_OUT, MAC_PORTABLE_NAME,
 MAC_PORTABLE_EXE, and MAC_PORTABLE_PREFIX.`);
@@ -117,7 +132,8 @@ function findExe(inputDir, requestedExe) {
     .readdirSync(inputDir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.exe'))
     .map((entry) => entry.name)
-    .filter((name) => !name.toLowerCase().includes('setup'));
+    .filter((name) => !name.toLowerCase().includes('setup'))
+    .filter((name) => name.toLowerCase() !== HUD_ARCHIVE_NAME);
 
   if (exeFiles.length === 0) throw new Error(`No app .exe found in ${inputDir}`);
   if (exeFiles.length > 1) {
@@ -173,6 +189,28 @@ function collectFiles(inputDir, exeName) {
   }
 
   return files.sort((a, b) => a.archivePath.localeCompare(b.archivePath));
+}
+
+/**
+ * The HUD executable plus the notices Apache-2.0 asks us to pass on with it. Empty when no HUD is
+ * to be shipped (--no-hud, or the file is not built), so builds without the HUD keep working.
+ */
+function hudEntriesFor(hudPath) {
+  if (!hudPath) return [];
+  const exe = path.resolve(hudPath);
+  if (!fs.existsSync(exe) || !fs.statSync(exe).isFile()) {
+    console.log('Quota HUD not included: ' + exe + ' does not exist (see --hud).');
+    return [];
+  }
+  const entries = [{ source: exe, archivePath: HUD_ARCHIVE_NAME, mtime: fs.statSync(exe).mtime }];
+  for (const [source, archivePath] of [
+    [path.join('agent-hud', 'LICENSE'), 'LICENSE-ai-one-hud.txt'],
+    ['NOTICE.md', 'NOTICE.md'],
+    [path.join('agent-hud', 'docs', 'third-party.md'), 'agent-hud-third-party.md'],
+  ]) {
+    if (fs.existsSync(source)) entries.push({ source: path.resolve(source), archivePath, mtime: fs.statSync(source).mtime });
+  }
+  return entries;
 }
 
 function toZipPath(value) {
@@ -302,13 +340,19 @@ function main() {
       : options.prefix;
   const zipPath = resolveZipPath(options.out, options.name, metadata);
   const now = new Date();
-  const files = collectFiles(inputDir, exeName).map((file) => ({
+  const hudEntries = hudEntriesFor(options.hud);
+  const shipsHud = hudEntries.length > 0;
+  const files = collectFiles(inputDir, exeName)
+    // A HUD exe sitting in the input folder is replaced by the one chosen above, never added twice.
+    .filter((file) => !(shipsHud && file.archivePath.toLowerCase() === HUD_ARCHIVE_NAME))
+    .map((file) => ({
     ...file,
     archivePath: withPrefix(prefix, file.archivePath),
   }));
 
   const entries = [
     ...files,
+    ...hudEntries.map((entry) => ({ ...entry, archivePath: withPrefix(prefix, entry.archivePath) })),
     { archivePath: withPrefix(prefix, 'PORTABLE'), data: Buffer.alloc(0), mtime: now },
     { archivePath: withPrefix(prefix, 'README-portable.txt'), data: Buffer.from(README_PORTABLE, 'utf8'), mtime: now },
   ];
