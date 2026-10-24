@@ -74,6 +74,8 @@ The Skill reports a missing prerequisite and stops. If the user separately asks 
 
 All commands use exit code `0` for success, `1` for a prerequisite/runtime/operation failure, `2` for invalid usage or contract data, and `3` for a readiness timeout. `--json` produces one versioned JSON object on stdout; command/build progress is kept off JSON stdout.
 
+On Windows, Tauri's `beforeDevCommand` invokes `pnpm` directly. Having `corepack pnpm --version` work is not enough unless the `pnpm` shim is also available on `PATH`; run `corepack enable`, reopen the terminal, and verify `pnpm --version`. The doctor reports this case before launch. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and [Corepack documentation](https://github.com/nodejs/corepack).
+
 ```sh
 node scripts/agent/audit.mjs --phase before --write --json
 node scripts/agent/doctor.mjs --json

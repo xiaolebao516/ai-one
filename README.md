@@ -27,6 +27,36 @@ ai-one 的目标是做一个服务自己实际开发的、任务驱动的多 AI 
 | `docs/` | 上游的规格、架构、兼容性与发布文档（`SPEC.md`、`PLAN.md` 为保留的遗留基线）；`docs/design/` 下有 v2 设计稿（当前设计参考）与旧 V1 设计（历史参考）；分类见 [`docs/README.md`](docs/README.md) |
 | `AGENTS.md`、`TECHNICAL-RESEARCH-V1.md`、`research-evidence/` | ai-one 的协作规则与调研资料 |
 
+## Quick Start（Windows 10/11）
+
+这是源码开发版。首次启动前，请先安装本机开发环境；克隆仓库不会自动安装系统工具。
+
+1. 安装 [Node.js](https://nodejs.org/en/download)（版本要求见下表）、[Rust](https://rustup.rs/) stable 工具链，以及 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)。在安装器中选择 **Desktop development with C++**，并确认包含 MSVC x64/x86 build tools 和 Windows 10/11 SDK。
+2. 确认 WebView2 Runtime 可用。Windows 10 1803 及更新版本、Windows 11 通常已包含；如果系统缺失，请从 [Microsoft 官方页面](https://developer.microsoft.com/microsoft-edge/webview2/)安装 Evergreen Runtime。
+3. 让 `pnpm` 命令能在 PATH 上运行。Tauri 的 `beforeDevCommand` 会直接调用 `pnpm`，仅执行 `corepack pnpm --version` 成功还不够。在 PowerShell 执行：
+
+   ```powershell
+   corepack enable
+   ```
+
+   关闭并重新打开 PowerShell，再运行 `pnpm --version`。如果 `corepack enable` 因安装目录权限失败，可把 shim 安装到用户目录：
+
+   ```powershell
+   corepack enable --install-directory "$env:USERPROFILE\.local\bin" pnpm
+   ```
+
+   然后把 `$env:USERPROFILE\.local\bin` 加入用户 PATH，并重新打开 PowerShell。环境诊断会在启动前检查这项要求。
+4. 克隆并检查环境，再启动应用：
+
+   ```powershell
+   git clone https://github.com/xiaolebao516/ai-one.git
+   cd ai-one
+   node scripts/agent/doctor.mjs
+   node scripts/agent/launch.mjs --wait --timeout-ms 600000
+   ```
+
+如果 doctor 报告 `MISSING`，先按对应提示处理，再重新运行 doctor。首次 Rust 编译可能需要几分钟。启动脚本只安装项目锁文件指定的依赖，不会自动安装系统工具或修改 PATH。
+
 ## 环境要求（Windows 10/11 x64）
 
 | 工具 | 要求 | 已验证版本 |
@@ -35,7 +65,7 @@ ai-one 的目标是做一个服务自己实际开发的、任务驱动的多 AI 
 | pnpm | `11.0.0`，由 `package.json` 的 `packageManager` 锁定，通过 Corepack 使用 | 11.0.0 |
 | Rust | stable，目标 `x86_64-pc-windows-msvc`（通过 [rustup](https://rustup.rs/) 安装） | 1.99.1 |
 | C++ 生成工具 | Visual Studio 的“使用 C++ 的桌面开发”与 Windows SDK | VS 2019 Community |
-| WebView2 Runtime | Windows 11 自带；Windows 10 需安装 | — |
+| WebView2 Runtime | Windows 10 1803+ 和 Windows 11 通常已包含；若缺失则安装 [官方 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) | — |
 
 Node 版本要求与 `package.json` 的 `engines` 一致：`Node.js ^22.13.0 || >=24.0.0`。其余 Tauri 前置条件见 [Tauri 官方文档](https://v2.tauri.app/start/prerequisites/)。
 
@@ -47,11 +77,13 @@ Node 版本要求与 `package.json` 的 `engines` 一致：`Node.js ^22.13.0 || 
    corepack enable
    ```
 
-   没有管理员权限时，可以装到自己的目录，再把该目录加入 PATH：
+   如果默认安装目录不可写，可以把 shim 安装到用户目录，再把该目录加入用户 PATH（PowerShell）：
 
-   ```bash
-   corepack enable --install-directory "%USERPROFILE%\.local\bin" pnpm
+   ```powershell
+   corepack enable --install-directory "$env:USERPROFILE\.local\bin" pnpm
    ```
+
+   把该目录加入用户 PATH 后，重新打开 PowerShell。
 
 2. 安装依赖（必须使用锁文件）：
 

@@ -45,7 +45,7 @@
     }
   },
   "requirements": {
-    "common": ["Node.js ^22.13.0 || >=24.0.0", "pnpm or Corepack", "stable Rust toolchain", "local graphical session"],
+    "common": ["Node.js ^22.13.0 || >=24.0.0", "pnpm command on PATH (direct installation or enabled Corepack shim)", "stable Rust toolchain", "local graphical session"],
     "windows": ["Visual Studio C++ Build Tools", "Microsoft Edge WebView2 Runtime"],
     "macos": ["Xcode Command Line Tools"],
     "linux": ["WebKitGTK 4.1 development libraries", "pkg-config", "X11 or Wayland desktop session"]

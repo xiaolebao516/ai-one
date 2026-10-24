@@ -78,6 +78,10 @@ test('all localized READMEs expose the same Agent contract boundary', () => {
     assert.match(source, /launch\.mjs --wait --timeout-ms 600000 --json/);
     assert.match(source, /Docker/i);
     assert.equal(source.includes(`Node.js ${supportedNodeRange}`), true);
+    assert.ok(source.includes("Quick Start（Windows 10/11）"));
+    assert.ok(source.includes("Desktop development with C++"));
+    assert.ok(source.includes("Windows 10/11 SDK"));
+    assert.ok(source.includes("pnpm") && source.includes("PATH"));
   }
 });
 
