@@ -22,7 +22,7 @@ export interface AcceptanceState {
   progress: Record<string, FixProgress>;
   /** `text` is the user's words for feedback, or the chosen option for a choice. */
   submit: (item: AcceptanceItem, kind: AcceptanceKind, text?: string) => Promise<void>;
-  /** Re-create the fix Task only after a definite failure (never after an unknown result). */
+  /** Create the fix Task when it was never sent (ready) or definitely failed; never after an unknown result. */
   retryFix: (item: AcceptanceItem) => Promise<void>;
 }
 function browserStorage(): AcceptanceStorage | undefined {
@@ -38,7 +38,12 @@ export function useUserAcceptance(
     try {
       const storage = browserStorage();
       if (!storage) throw new Error('storage unavailable');
-      return { records: readAcceptanceRecords(storage), storageError: false };
+      // A create_issue left 'pending' by a previous run may have been sent: never resend it.
+      const records = readAcceptanceRecords(storage);
+      for (const [key, record] of Object.entries(records)) {
+        if (record.fix?.sync === 'pending') records[key] = { ...record, fix: { ...record.fix, sync: 'unconfirmed' } };
+      }
+      return { records, storageError: false };
     } catch { return { records: {} as AcceptanceRecords, storageError: true }; }
   });
   const [records, setRecords] = useState<AcceptanceRecords>(initial.records);
@@ -123,7 +128,9 @@ export function useUserAcceptance(
     try {
       const result = await sendAcceptanceComment(writer, canonical, kind, feedback,
         () => generation === requestRef.current && Boolean(currentItem.current(canonical)));
-      const done = { ...record, sync: result };
+      // Comment result and "create_issue not yet sent" land in one write, so no unrecoverable gap exists.
+      const done: AcceptanceRecord = { ...record, sync: result,
+        ...(kind === 'feedback' && result === 'confirmed' ? { fix: { sync: 'ready' as const } } : {}) };
       if (!persist({ ...recordsRef.current, [item.key]: done }, 'after-write')) return;
       if (kind === 'feedback' && result === 'confirmed') await makeFix(canonical, done, generation);
     } finally { inflight.current.delete(item.key); }
@@ -131,7 +138,7 @@ export function useUserAcceptance(
   const retryFix: AcceptanceState['retryFix'] = async (item) => {
     const canonical = currentItem.current(item);
     const record = recordsRef.current[item.key];
-    if (!canonical || !record || inflight.current.has(item.key) || record.kind !== 'feedback' || record.fix?.sync !== 'failed') return;
+    if (!canonical || !record || inflight.current.has(item.key) || record.kind !== 'feedback' || (record.fix?.sync !== 'failed' && record.fix?.sync !== 'ready')) return;
     inflight.current.add(item.key);
     try { await makeFix(canonical, record, requestRef.current); } finally { inflight.current.delete(item.key); }
   };

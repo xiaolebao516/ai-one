@@ -1,11 +1,12 @@
 import type { GithubWriteCreateIssueArgs, GithubWriteResult } from '../host/githubWrite';
 import type { AcceptanceItem, AcceptanceRecord } from './userAcceptance';
 
-export type FixSync = 'pending' | 'confirmed' | 'failed' | 'unconfirmed';
+/** ready: comment confirmed, create_issue not yet sent (safe to send). pending: create_issue may have been sent. */
+export type FixSync = 'ready' | 'pending' | 'confirmed' | 'failed' | 'unconfirmed';
 export interface AcceptanceFix { sync: FixSync; issue?: number; url?: string }
 export interface IssueState { state: 'open' | 'closed'; reason?: string }
 export type IssueStates = Record<string, IssueState>;
-export type FixProgress = 'creating' | 'unknown' | 'failed' | 'queued' | 'working' | 'done' | 'dropped';
+export type FixProgress = 'notStarted' | 'creating' | 'unknown' | 'failed' | 'queued' | 'working' | 'done' | 'dropped';
 export interface FixWriter { createIssue(args: GithubWriteCreateIssueArgs): Promise<GithubWriteResult> }
 
 export const issueStateKey = (repo: string, issue: number): string => `${repo.toLowerCase()}#${issue}`;
@@ -58,8 +59,9 @@ export async function createFixTask(
     if (!canSend()) return { sync: 'failed' };
     const result = await writer.createIssue({ repo: item.repo, title: task.title, body: task.body, parentSpec: item.issue });
     const created = result.steps.some((step) => step.step === 'create_issue' && step.state === 'confirmed');
-    // sub_issue_failed: the Task exists and is claimable; only the parent link is missing.
-    if (created && Number.isSafeInteger(result.issueNumber) && (result.status === 'confirmed' || result.code === 'sub_issue_failed')) {
+    // The Task exists and is claimable whenever create_issue is confirmed with a number; an unconfirmed or
+    // failed parent link is not a reason to forget it or to create it again.
+    if (created && Number.isSafeInteger(result.issueNumber) && result.status !== 'failed') {
       return { sync: 'confirmed', issue: result.issueNumber, ...(result.url ? { url: result.url } : {}) };
     }
     return { sync: result.status === 'failed' ? 'failed' : 'unconfirmed' };
@@ -69,6 +71,7 @@ export async function createFixTask(
 export function fixProgress(record: AcceptanceRecord | undefined, states: IssueStates | undefined): FixProgress | undefined {
   const fix = record?.fix;
   if (!record || record.kind !== 'feedback' || !fix) return undefined;
+  if (fix.sync === 'ready') return 'notStarted';
   if (fix.sync === 'pending') return 'creating';
   if (fix.sync !== 'confirmed' || fix.issue === undefined) return fix.sync === 'failed' ? 'failed' : 'unknown';
   const current = states?.[issueStateKey(record.repo, fix.issue)];

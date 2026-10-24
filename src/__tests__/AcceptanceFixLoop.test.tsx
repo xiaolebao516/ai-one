@@ -122,6 +122,41 @@ describe('feedback becomes a fix task and comes back for re-acceptance', () => {
   });
 });
 
+describe('recovery after an interruption', () => {
+  const saved = (fix: unknown) => localStorage.setItem(ACCEPTANCE_STORAGE_KEY, JSON.stringify({
+    [item.key]: { key: item.key, repo: 'o/r', issue: 7, title: item.title, kind: 'feedback', sync: 'confirmed', feedback: '坏了', fix },
+  }));
+  it('lets the user create the fix task when the app stopped after the comment but before create_issue', async () => {
+    saved({ sync: 'ready' });
+    const api = writer();
+    await render(api);
+    expect(container.textContent).toContain('修复任务还没有创建');
+    await click('现在创建修复任务');
+    expect(api.createIssue).toHaveBeenCalledTimes(1);
+    expect(api.comment).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('#99');
+  });
+  it('treats a create_issue left pending by a previous run as unknown and never resends it', async () => {
+    saved({ sync: 'pending' });
+    const api = writer();
+    await render(api);
+    expect(container.textContent).toContain('不确定修复任务是否建成');
+    expect(labels()).not.toContain('现在创建修复任务');
+    expect(labels()).not.toContain('重试创建修复任务');
+    expect(api.createIssue).not.toHaveBeenCalled();
+  });
+  it('checkpoints pending before sending and failed after a definite failure', async () => {
+    const api = writer();
+    api.createIssue.mockImplementationOnce(async () => {
+      expect(JSON.parse(localStorage.getItem(ACCEPTANCE_STORAGE_KEY)!)[item.key].fix.sync).toBe('pending');
+      return { status: 'failed', code: 'github_failed', message: 'x', steps: [] } as never;
+    });
+    await render(api);
+    await sendFeedback('坏了');
+    expect(JSON.parse(localStorage.getItem(ACCEPTANCE_STORAGE_KEY)!)[item.key].fix.sync).toBe('failed');
+  });
+});
+
 describe('cards that ask the user to act', () => {
   const actionItem = (actions: unknown[]) => ({ key: 'o/r:7:act', repo: 'o/r', issue: 7, title: '启动应用并登录。', raw: '启动应用并登录。', actions });
   it('copies the command and opens an https page from the card', async () => {

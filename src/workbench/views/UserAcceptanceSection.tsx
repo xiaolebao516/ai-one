@@ -7,8 +7,8 @@ import { host } from '../../host';
 import { hasChoice } from '../acceptanceActions';
 import { needsNewDecision, type FixProgress } from '../acceptanceFix';
 
-const FIX_TEXT: Record<FixProgress, 'acceptanceFixCreating' | 'acceptanceFixUnknown' | 'acceptanceFixFailed' | 'acceptanceFixQueued' | 'acceptanceFixWorking' | 'acceptanceFixDone' | 'acceptanceFixDropped'> = {
-  creating: 'acceptanceFixCreating', unknown: 'acceptanceFixUnknown', failed: 'acceptanceFixFailed',
+const FIX_TEXT: Record<FixProgress, 'acceptanceFixNotStarted' | 'acceptanceFixCreating' | 'acceptanceFixUnknown' | 'acceptanceFixFailed' | 'acceptanceFixQueued' | 'acceptanceFixWorking' | 'acceptanceFixDone' | 'acceptanceFixDropped'> = {
+  notStarted: 'acceptanceFixNotStarted', creating: 'acceptanceFixCreating', unknown: 'acceptanceFixUnknown', failed: 'acceptanceFixFailed',
   queued: 'acceptanceFixQueued', working: 'acceptanceFixWorking', done: 'acceptanceFixDone', dropped: 'acceptanceFixDropped',
 };
 
@@ -73,8 +73,8 @@ export function UserAcceptanceSection({ locale, state, demo, onCopy = copyToClip
                       {progress ? text.t(FIX_TEXT[progress], { n: fixNumber ?? '?' })
                         : record.sync === 'confirmed' ? text.t('acceptanceFeedbackSent') : text.t('acceptanceNotSynced')}
                     </p>
-                    {progress === 'failed' ? (
-                      <div><Button size="sm" disabled={state.storageError} onClick={() => { void state.retryFix(item); }}>{text.t('acceptanceFixRetry')}</Button></div>
+                    {progress === 'failed' || progress === 'notStarted' ? (
+                      <div><Button size="sm" disabled={state.storageError} onClick={() => { void state.retryFix(item); }}>{text.t(progress === 'notStarted' ? 'acceptanceFixContinue' : 'acceptanceFixRetry')}</Button></div>
                     ) : null}
                   </>
                 ) : (

@@ -144,7 +144,7 @@ export interface AcceptanceStorage { getItem(key: string): string | null; setIte
 function validFix(value: unknown): value is AcceptanceFix {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const fix = value as AcceptanceFix;
-  return ['pending', 'confirmed', 'failed', 'unconfirmed'].includes(fix.sync)
+  return ['ready', 'pending', 'confirmed', 'failed', 'unconfirmed'].includes(fix.sync)
     && (fix.issue === undefined || Number.isSafeInteger(fix.issue))
     && (fix.url === undefined || typeof fix.url === 'string');
 }

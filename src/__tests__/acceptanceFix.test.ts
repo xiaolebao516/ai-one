@@ -29,6 +29,11 @@ describe('fix task from acceptance feedback', () => {
       steps: [{ step: 'create_issue', state: 'confirmed' }, { step: 'sub_issue', state: 'failed' }] });
     expect((await createFixTask({ createIssue: async () => result }, item, '坏了')).sync).toBe('confirmed');
   });
+  it('keeps the Task number when create_issue is confirmed but the parent link is unconfirmed', async () => {
+    const result = created({ status: 'unconfirmed', code: 'unconfirmed', message: 'x',
+      steps: [{ step: 'create_issue', state: 'confirmed' }, { step: 'sub_issue', state: 'unconfirmed' }] });
+    expect(await createFixTask({ createIssue: async () => result }, item, '坏了')).toMatchObject({ sync: 'confirmed', issue: 99 });
+  });
   it('separates definite failure (retryable) from unknown results (never retried)', async () => {
     const failed = { status: 'failed' as const, code: 'github_failed' as const, message: 'x', steps: [] };
     expect((await createFixTask({ createIssue: async () => failed }, item, '坏了')).sync).toBe('failed');
@@ -47,6 +52,7 @@ describe('fix task from acceptance feedback', () => {
     expect(fixProgress(record(fix), { [key]: { state: 'open' } })).toBe('working');
     expect(fixProgress(record(fix), { [key]: { state: 'closed', reason: 'completed' } })).toBe('done');
     expect(fixProgress(record(fix), { [key]: { state: 'closed', reason: 'not_planned' } })).toBe('dropped');
+    expect(fixProgress(record({ sync: 'ready' }), {})).toBe('notStarted');
     expect(fixProgress(record({ sync: 'pending' }), {})).toBe('creating');
     expect(fixProgress(record({ sync: 'failed' }), {})).toBe('failed');
     expect(fixProgress(record({ sync: 'unconfirmed' }), {})).toBe('unknown');
