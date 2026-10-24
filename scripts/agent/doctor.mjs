@@ -32,7 +32,7 @@ if (jsonOutput) {
 } else {
   for (const check of checks) process.stdout.write(`${check.ok ? 'OK' : 'MISSING'}  ${check.name}: ${check.detail}\n`);
   if (!ok) {
-    process.stdout.write('Install the missing development prerequisite separately, then run this check again. The Agent Skill never changes host toolchains or security settings.\n');
+    process.stdout.write('Resolve the MISSING checks above using their instructions. After changing PATH, close and reopen PowerShell, then rerun `node scripts/agent/doctor.mjs`. The launcher never installs host toolchains or modifies PATH automatically.\n');
   }
 }
 
