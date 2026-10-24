@@ -1,4 +1,5 @@
-import { deflateRawSync } from 'node:zlib';
+import crypto from 'node:crypto';
+import zlib, { deflateRawSync } from 'node:zlib';
 import { Buffer } from 'node:buffer';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,19 +9,23 @@ const DEFAULT_INPUT = path.join('src-tauri', 'target', 'release');
 const DEFAULT_OUT_DIR = path.join('dist', 'portable');
 // The quota HUD (Spec #82) is a separate process built from agent-hud/. quota_hud_start looks for it
 // beside the app executable, so a portable zip carries it there when it has been built.
-const DEFAULT_HUD_EXE = path.join('agent-hud', 'target', 'release', 'ai-one-hud.exe');
+const HUD_RELEASE_DIR = process.env.CLAWD_HUD_RELEASE_DIR ? path.resolve(process.env.CLAWD_HUD_RELEASE_DIR) : path.join('agent-hud', 'target', 'release');
+const DEFAULT_HUD_EXE = path.join(HUD_RELEASE_DIR, 'ai-one-hud.exe');
 const HUD_ARCHIVE_NAME = 'ai-one-hud.exe';
+const HUD_ROOT = process.env.CLAWD_HUD_ROOT ? path.resolve(process.env.CLAWD_HUD_ROOT) : 'agent-hud';
+const HUD_REPO_ROOT = process.env.CLAWD_REPO_ROOT ? path.resolve(process.env.CLAWD_REPO_ROOT) : '.';
 // Everything the HUD's licences require us to pass on: Apache-2.0 (LICENSE, NOTICE), the upstream's
 // own third-party notes, and the licence texts of the bundled third-party parts (LobeHub icons,
 // React Bits). All are required whenever the HUD is shipped.
-const HUD_ASSETS = path.join('agent-hud', 'src', 'packages', 'hud', 'src', 'assets');
+const HUD_ASSETS = process.env.CLAWD_HUD_ASSETS ? path.resolve(process.env.CLAWD_HUD_ASSETS) : path.join(HUD_ROOT, 'src', 'packages', 'hud', 'src', 'assets');
+const HUD_DIST = process.env.CLAWD_HUD_DIST ? path.resolve(process.env.CLAWD_HUD_DIST) : path.join(HUD_ROOT, 'src', 'apps', 'desktop', 'dist');
 const HUD_NOTICES = [
-  [path.join('agent-hud', 'LICENSE'), 'LICENSE-ai-one-hud.txt'],
-  ['NOTICE.md', 'NOTICE.md'],
-  [path.join('agent-hud', 'docs', 'third-party.md'), 'agent-hud-third-party.md'],
+  [path.join(HUD_ROOT, 'LICENSE'), 'LICENSE-ai-one-hud.txt'],
+  [path.join(HUD_REPO_ROOT, 'NOTICE.md'), 'NOTICE.md'],
+  [path.join(HUD_ROOT, 'docs', 'third-party.md'), 'agent-hud-third-party.md'],
   [path.join(HUD_ASSETS, 'THIRD_PARTY_NOTICES.txt'), path.join('third-party', 'THIRD_PARTY_NOTICES.txt')],
   [path.join(HUD_ASSETS, 'LobeIcons-LICENSE.txt'), path.join('third-party', 'LobeIcons-LICENSE.txt')],
-  [path.join('agent-hud', 'src', 'packages', 'ui', 'src', 'react-bits', 'LICENSE.md'), path.join('third-party', 'react-bits-LICENSE.md')],
+  [path.join(HUD_ROOT, 'src', 'packages', 'ui', 'src', 'react-bits', 'LICENSE.md'), path.join('third-party', 'react-bits-LICENSE.md')],
 ].map(([source, archive]) => [source, archive.split(path.sep).join('/')]);
 const README_PORTABLE = `Multi-AI Chat Desktop portable build
 
@@ -34,6 +39,7 @@ Requirements:
 Quota HUD:
 - ai-one-hud.exe (when present) is the quota HUD. Start it from the Resources page; it must stay next to the app .exe.
 - LICENSE-ai-one-hud.txt, NOTICE.md, agent-hud-third-party.md and the third-party folder hold the licences and notices that come with it.
+- When built locally with pnpm hud:fetch-art, original Clawd sprite artwork is fetched on demand for personal use (Issue #168). Public binary releases redistributing Anthropic proprietary assets require Anthropic permission; builds without clawd-sprites.json use procedural bot artwork.
 
 Portable notes:
 - Keep the PORTABLE marker file next to the .exe.
@@ -49,6 +55,7 @@ function parseArgs(argv) {
     exe: process.env.MAC_PORTABLE_EXE ?? process.env.PORTABLE_EXE,
     prefix: process.env.MAC_PORTABLE_PREFIX ?? process.env.PORTABLE_PREFIX,
     hud: process.env.MAC_PORTABLE_HUD ?? process.env.PORTABLE_HUD ?? DEFAULT_HUD_EXE,
+    cleanArt: true, // Default: fail-closed clean art mode for public releases
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -68,6 +75,8 @@ function parseArgs(argv) {
     else if (arg === '--no-prefix') options.prefix = '';
     else if (arg === '--hud') options.hud = nextValue();
     else if (arg === '--no-hud') options.hud = '';
+    else if (arg === '--clean-art') options.cleanArt = true;
+    else if (arg === '--allow-proprietary-art' || arg === '--proprietary-art') options.cleanArt = false;
     else if (arg === '--') continue; // pnpm forwards the run separator; ignore it
     else if (arg === '--help' || arg === '-h') {
       printHelp();
@@ -93,7 +102,9 @@ Options:
   --hud <file>     Quota HUD executable to ship next to the app. Default: ${DEFAULT_HUD_EXE}
                    (build it with: pnpm hud:build; a plain cargo build leaves a dev-mode exe whose windows are blank).
                    Skipped, with a note, when the file does not exist.
-  --no-hud         Do not ship the quota HUD.
+  --no-hud                 Do not ship the quota HUD.
+  --clean-art              Ensure no proprietary third-party art assets (clawd-sprites.json) are present before packaging (default: true).
+  --allow-proprietary-art  Explicitly permit packaging local builds with on-demand Clawd sprites for private use (requires Anthropic permission for public distribution).
 
 Equivalent env vars are MAC_PORTABLE_INPUT, MAC_PORTABLE_OUT, MAC_PORTABLE_NAME,
 MAC_PORTABLE_EXE, and MAC_PORTABLE_PREFIX.`);
@@ -203,22 +214,210 @@ function collectFiles(inputDir, exeName) {
   return files.sort((a, b) => a.archivePath.localeCompare(b.archivePath));
 }
 
+export function hasProprietarySpriteSignatures(content) {
+  if (!content) return false;
+  if (!Buffer.isBuffer(content)) content = Buffer.from(content);
+
+  // 1. Literal filenames (UTF-8 and UTF-16LE)
+  if (
+    content.includes(Buffer.from('clawd-sprites.json')) ||
+    content.includes(Buffer.from('clawd-sprites-')) ||
+    content.includes(Buffer.from('clawd-sprites.json', 'utf16le')) ||
+    content.includes(Buffer.from('clawd-sprites-', 'utf16le'))
+  ) {
+    return true;
+  }
+
+  // 2. Direct UTF-8 JSON keys
+  if (
+    content.includes(Buffer.from('"sprites"')) &&
+    content.includes(Buffer.from('"palette"')) &&
+    content.includes(Buffer.from('"deltas"'))
+  ) {
+    return true;
+  }
+
+  // 3. Direct UTF-16LE JSON keys
+  if (
+    content.includes(Buffer.from('"sprites"', 'utf16le')) &&
+    content.includes(Buffer.from('"palette"', 'utf16le')) &&
+    content.includes(Buffer.from('"deltas"', 'utf16le'))
+  ) {
+    return true;
+  }
+
+  // 4. Base64 encoded payload scanning (including multiline wrapped with newlines/whitespace)
+  // Direct key fragment matches
+  const base64Sprites = content.includes(Buffer.from('InNwcml0ZXMi')) || content.includes(Buffer.from('c3ByaXRlc')) || content.includes(Buffer.from('eyJzcHJpdGVzI'));
+  const base64Palette = content.includes(Buffer.from('InBhbGV0dGUi')) || content.includes(Buffer.from('cGFsZXR0Z'));
+  const base64Deltas = content.includes(Buffer.from('ImRlbHRhcyI')) || content.includes(Buffer.from('kZWx0YXMi'));
+  if (base64Sprites && (base64Palette || base64Deltas)) {
+    return true;
+  }
+
+  // General Base64 string decoding (handles single line, multiline, arbitrary MIME chunking)
+  const str = content.toString('latin1');
+  const multilineBase64Regex = /(?:[A-Za-z0-9+/][ \t\r\n]*){8,}={0,2}/g;
+  let match;
+  while ((match = multilineBase64Regex.exec(str)) !== null) {
+    const rawChunk = match[0].replace(/\s+/g, '');
+    if (rawChunk.length < 8) continue;
+    try {
+      const decoded = Buffer.from(rawChunk, 'base64');
+      if (
+        (decoded.includes(Buffer.from('"sprites"')) && (decoded.includes(Buffer.from('"palette"')) || decoded.includes(Buffer.from('"deltas"')))) ||
+        (decoded.includes(Buffer.from('"sprites"', 'utf16le')) && (decoded.includes(Buffer.from('"palette"', 'utf16le')) || decoded.includes(Buffer.from('"deltas"', 'utf16le')))) ||
+        decoded.includes(Buffer.from('clawd-sprites.json')) ||
+        decoded.includes(Buffer.from('clawd-sprites.json', 'utf16le'))
+      ) {
+        return true;
+      }
+    } catch {
+      // Ignore decode errors on non-base64 noise
+    }
+  }
+
+  // 5. Decompression scan for compressed payloads (gzip, zlib, deflate)
+  if (content.length >= 2) {
+    // gzip magic: 0x1f, 0x8b
+    if (content[0] === 0x1f && content[1] === 0x8b) {
+      try {
+        const uncompressed = zlib.gunzipSync(content);
+        if (hasProprietarySpriteSignatures(uncompressed)) return true;
+      } catch {
+        // Ignore decompression errors on corrupted or non-gzip payloads
+      }
+    }
+    // zlib magic: 0x78 (0x01, 0x9c, 0xda)
+    if (content[0] === 0x78 && (content[1] === 0x01 || content[1] === 0x9c || content[1] === 0xda)) {
+      try {
+        const uncompressed = zlib.inflateSync(content);
+        if (hasProprietarySpriteSignatures(uncompressed)) return true;
+      } catch {
+        // Ignore decompression errors on non-zlib payloads
+      }
+    }
+    // raw deflate (if moderately sized)
+    if (content.length > 10 && content.length < 10 * 1024 * 1024) {
+      try {
+        const uncompressed = zlib.inflateRawSync(content);
+        if (hasProprietarySpriteSignatures(uncompressed)) return true;
+      } catch {
+        // Ignore decompression errors on non-deflate payloads
+      }
+    }
+  }
+
+  return false;
+}
+
+export function detectProprietaryClawdArt(hudExePath, cleanArt = true) {
+  // 1. Source asset check
+  const proprietaryArt = path.join(HUD_ASSETS, 'clawd-sprites.json');
+  if (fs.existsSync(proprietaryArt)) return 'clawd-sprites.json present in HUD assets';
+
+  // 2. Original art provenance marker check
+  const releaseDir = hudExePath ? path.dirname(hudExePath) : HUD_RELEASE_DIR;
+  const origMarker = path.join(releaseDir, '.hud-art-original');
+  if (fs.existsSync(origMarker)) return 'build provenance marker indicates original art was bundled (.hud-art-original present)';
+
+  // 3. Bundled dist asset check
+  if (fs.existsSync(HUD_DIST)) {
+    const stack = [HUD_DIST];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        const full = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(full);
+        } else if (/clawd-sprites/i.test(entry.name)) {
+          return `bundled asset "${entry.name}" in HUD dist`;
+        } else if (/\.(js|json|html|bin)$/i.test(entry.name)) {
+          const content = fs.readFileSync(full);
+          if (hasProprietarySpriteSignatures(content)) {
+            return `embedded Clawd sprite table in HUD dist file "${entry.name}"`;
+          }
+        }
+      }
+    }
+  }
+
+  // 4. Binary inspection and clean build provenance verification
+  if (hudExePath && fs.existsSync(hudExePath)) {
+    let content;
+    let exeSha256;
+    try {
+      content = fs.readFileSync(hudExePath);
+      exeSha256 = crypto.createHash('sha256').update(content).digest('hex');
+    } catch (err) {
+      return `could not verify HUD binary integrity (${err.message})`;
+    }
+
+    // Direct binary content scan (UTF-8, UTF-16LE, Base64)
+    if (hasProprietarySpriteSignatures(content)) {
+      return 'embedded Clawd sprite table inside HUD binary';
+    }
+
+    // If packaging for clean release: verify cryptographic clean-build provenance receipt
+    if (cleanArt) {
+      const cleanMarker = path.join(releaseDir, '.hud-art-clean');
+      if (!fs.existsSync(cleanMarker)) {
+        return 'no verified clean-build provenance record (.hud-art-clean missing; rebuild HUD with "pnpm hud:build:clean")';
+      }
+      try {
+        const record = JSON.parse(fs.readFileSync(cleanMarker, 'utf8'));
+        if (record.clean !== true) {
+          return 'clean-build provenance record is invalid or marked unclean';
+        }
+        if (!record.sha256 || typeof record.sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(record.sha256)) {
+          return 'clean-build provenance record is missing a valid 64-character SHA-256 hash';
+        }
+        if (record.sha256.toLowerCase() !== exeSha256.toLowerCase()) {
+          return `HUD executable SHA-256 (${exeSha256.slice(0, 12)}...) does not match clean-build provenance record (${record.sha256.slice(0, 12)}...; rebuild with "pnpm hud:build:clean")`;
+        }
+        if (record.exe && record.exe !== path.basename(hudExePath)) {
+          return `clean-build provenance record was issued for "${record.exe}", but attempting to package "${path.basename(hudExePath)}"`;
+        }
+      } catch (err) {
+        return `invalid clean-build provenance record (${err.message})`;
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * The HUD executable plus the notices Apache-2.0 asks us to pass on with it. Empty when no HUD is
  * to be shipped (--no-hud, or the file is not built), so builds without the HUD keep working.
  */
-function hudEntriesFor(hudPath) {
+function hudEntriesFor(hudPath, cleanArt = true) {
   if (!hudPath) return [];
   const exe = path.resolve(hudPath);
   if (!fs.existsSync(exe) || !fs.statSync(exe).isFile()) {
     console.log('Quota HUD not included: ' + exe + ' does not exist (see --hud).');
     return [];
   }
-  const entries = [{ source: exe, archivePath: HUD_ARCHIVE_NAME, mtime: fs.statSync(exe).mtime }];
+  const taintedReason = detectProprietaryClawdArt(exe, cleanArt);
+  if (cleanArt && taintedReason) {
+    throw new Error(`Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd assets were detected (${taintedReason}). Rebuild with clean assets ("pnpm hud:build:clean") or use "--allow-proprietary-art" for private local packaging.`);
+  }
+  if (taintedReason) {
+    console.log(`Note: Built HUD contains local on-demand Clawd sprite table (#168; ${taintedReason}) under explicit "--allow-proprietary-art" permission. Distributing this binary publicly requires Anthropic permission.`);
+  }
+  const exeBuffer = fs.readFileSync(exe);
+  const entries = [{ source: exe, archivePath: HUD_ARCHIVE_NAME, mtime: fs.statSync(exe).mtime, data: exeBuffer, isOfficialNotice: false }];
   const missing = [];
   for (const [source, archivePath] of HUD_NOTICES) {
-    if (fs.existsSync(source)) entries.push({ source: path.resolve(source), archivePath, mtime: fs.statSync(source).mtime });
-    else missing.push(source);
+    if (fs.existsSync(source)) {
+      const fullSource = path.resolve(source);
+      entries.push({
+        source: fullSource,
+        archivePath,
+        mtime: fs.statSync(fullSource).mtime,
+        data: fs.readFileSync(fullSource),
+        isOfficialNotice: true,
+      });
+    } else missing.push(source);
   }
   // Shipping the HUD without the licences that come with it is not allowed.
   if (missing.length > 0) throw new Error('Cannot ship the quota HUD, required notice files are missing: ' + missing.join(', '));
@@ -337,6 +536,51 @@ function createZip(entries, zipPath) {
   fs.writeFileSync(zipPath, Buffer.concat([...localParts, centralDir, end]));
 }
 
+export const OFFICIAL_NOTICE_FILENAMES = new Set([
+  'readme-portable.txt',
+  'portable',
+  'license-ai-one-hud.txt',
+  'notice.md',
+  'agent-hud-third-party.md',
+  'third_party_notices.txt',
+  'lobeicons-license.txt',
+  'react-bits-license.md',
+]);
+
+export function assertCleanZipEntries(entries, cleanArt = true) {
+  for (const entry of entries) {
+    // 1. Ensure buffer is read and frozen in memory to prevent TOCTOU modifications
+    if (!entry.data && entry.source && fs.existsSync(entry.source)) {
+      try {
+        entry.data = fs.readFileSync(entry.source);
+      } catch (err) {
+        throw new Error(`Could not read entry "${entry.source}" for verification: ${err.message}`, { cause: err });
+      }
+    }
+
+    if (!cleanArt) continue;
+
+    const archivePath = entry.archivePath || '';
+    const base = path.basename(archivePath).toLowerCase();
+
+    // 2. Check archive entry path against proprietary asset names
+    if (/clawd-sprites/i.test(base)) {
+      throw new Error(`Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd assets were detected in package contents ("${archivePath}"). Remove it or use "--allow-proprietary-art" for private local packaging.`);
+    }
+
+    // 3. Skip official notice/license documentation entries ONLY if explicitly tagged by packaging as official notice
+    if (entry.isOfficialNotice === true && OFFICIAL_NOTICE_FILENAMES.has(base)) {
+      continue;
+    }
+
+    // 4. Content scan across all files, binaries, and formats (using frozen in-memory buffer)
+    const content = entry.data;
+    if (content && hasProprietarySpriteSignatures(content)) {
+      throw new Error(`Packaging aborted: Public redistribution requires Anthropic permission, but proprietary Clawd sprite table was detected in "${archivePath}".`);
+    }
+  }
+}
+
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const inputDir = path.resolve(options.input);
@@ -352,22 +596,25 @@ function main() {
       : options.prefix;
   const zipPath = resolveZipPath(options.out, options.name, metadata);
   const now = new Date();
-  const hudEntries = hudEntriesFor(options.hud);
+  const hudEntries = hudEntriesFor(options.hud, options.cleanArt);
   const files = collectFiles(inputDir, exeName)
     // Whether a HUD ships is decided only by --hud / --no-hud above; one lying in the input folder is
     // never taken along on its own (it would have no notices) and never added twice.
     .filter((file) => file.archivePath.toLowerCase() !== HUD_ARCHIVE_NAME)
     .map((file) => ({
-    ...file,
-    archivePath: withPrefix(prefix, file.archivePath),
-  }));
+      ...file,
+      archivePath: withPrefix(prefix, file.archivePath),
+      isOfficialNotice: false,
+    }));
 
   const entries = [
     ...files,
     ...hudEntries.map((entry) => ({ ...entry, archivePath: withPrefix(prefix, entry.archivePath) })),
-    { archivePath: withPrefix(prefix, 'PORTABLE'), data: Buffer.alloc(0), mtime: now },
-    { archivePath: withPrefix(prefix, 'README-portable.txt'), data: Buffer.from(README_PORTABLE, 'utf8'), mtime: now },
+    { archivePath: withPrefix(prefix, 'PORTABLE'), data: Buffer.alloc(0), mtime: now, isOfficialNotice: true },
+    { archivePath: withPrefix(prefix, 'README-portable.txt'), data: Buffer.from(README_PORTABLE, 'utf8'), mtime: now, isOfficialNotice: true },
   ];
+
+  assertCleanZipEntries(entries, options.cleanArt);
 
   createZip(entries, zipPath);
   console.log(`Created ${zipPath}`);

@@ -1,9 +1,8 @@
 # Original Agent HUD artwork
 
-> **ai-one change:** `clawd-sprites.json` (Anthropic's Clawd artwork, copyrighted and not
-> licensed for redistribution) is **not included** in this repository. Claude's mark uses the
-> procedural bot instead (the renderer falls back when the sprite table cannot be loaded).
-> Everything below describes the upstream tree.
+> **ai-one note (Issue #168):** Per user acceptance decision ("以原版图像为准"), the HUD uses
+> the original Clawd artwork. To avoid redistributing proprietary third-party assets in this git repository,
+> `clawd-sprites.json` is not committed and is fetched on demand via `pnpm hud:fetch-art` for local builds.
 
 These files are unchanged copies from
 `agent-hud-native-open/Sources/AgentHUDDesktop/Resources/`.
@@ -15,12 +14,13 @@ ChatGPT's mark is tinted `#10a37f`; Grok, Cursor, Kimi, Pi, GitHub Copilot, Herm
 and ZCode are template images tinted to their foreground. The source bitmaps
 are preserved here without applying those rendering transformations.
 
-The bundled `clawd-sprites.json` is consumed by the original Clawd bot renderer.
+The on-demand `clawd-sprites.json` (when fetched via `pnpm hud:fetch-art`) is consumed by the original Clawd bot renderer; it is not committed to the repository.
 It contains Anthropic's artwork copied unchanged from Claude for macOS
 2.37337.1's Clawd Quest sprite table. Copyright Anthropic PBC, all rights
-reserved; this artwork is **not covered by this repository's license**. See
-the Clawd entry in the copied `THIRD_PARTY_NOTICES.txt` for its original source
-and extraction details. The other original bots are drawn procedurally by
+reserved; this artwork is **not covered by this repository's license**. Public binary distribution
+of builds containing this artwork requires Anthropic permission; when absent, the renderer
+falls back to the procedural bot. See the Clawd entry in the copied `THIRD_PARTY_NOTICES.txt`
+for its original source and extraction details. The other original bots are drawn procedurally by
 `Bots/BotRenderer.swift` and related source files and have no raster sprite
 assets to copy.
 
