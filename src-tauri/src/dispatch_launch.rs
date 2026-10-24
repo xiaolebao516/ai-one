@@ -13,7 +13,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -394,6 +394,37 @@ fn acquire_issue_lock(dir: &Path, repo: &str, issue: u64) -> Result<Option<Issue
     }
 }
 
+/// Hands the running child and its Issue lock to a waiter that records the exit and only then lets
+/// the Issue go. `start` runs the waiter; if it cannot be started (a thread cannot be created) the
+/// child is killed and reaped here, so the lock is never released while the agent is still running.
+fn supervise<F>(child: Child, lock: IssueLock, exit_path: PathBuf, start: F) -> Result<(), String>
+where
+    F: FnOnce(Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<()>,
+{
+    let slot = Arc::new(Mutex::new(Some((child, lock))));
+    let worker = Arc::clone(&slot);
+    let exit_for_worker = exit_path.clone();
+    let job: Box<dyn FnOnce() + Send + 'static> = Box::new(move || {
+        let held = worker.lock().ok().and_then(|mut guard| guard.take());
+        if let Some((mut child, lock)) = held {
+            let code = child.wait().ok().and_then(|status| status.code()).unwrap_or(-1);
+            let _ = fs::write(exit_for_worker, code.to_string());
+            // Held until the agent is done, so the Issue stays busy for exactly that long.
+            drop(lock);
+        }
+    });
+    if let Err(error) = start(job) {
+        if let Some((mut child, lock)) = slot.lock().ok().and_then(|mut guard| guard.take()) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = fs::write(&exit_path, "-1");
+            drop(lock);
+        }
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
 /// Everything after `spawn` goes through here: if the prompt cannot be delivered or the run cannot be
 /// recorded, the already-running child is killed and reaped before the caller gives the Issue lock
 /// back, so a launch is either fully tracked or not running at all.
@@ -519,12 +550,12 @@ fn launch_cli(
         return Ok(reply(false, "spawn_failed", "命令行程序没能收到任务或运行记录写入失败，已停止它", json!({})));
     }
     let exit_path = dir.join(format!("{run_id}.exit"));
-    std::thread::spawn(move || {
-        let code = child.wait().ok().and_then(|status| status.code()).unwrap_or(-1);
-        let _ = fs::write(exit_path, code.to_string());
-        // Held until the agent is done, so the Issue stays busy for exactly that long.
-        drop(lock);
+    let started = supervise(child, lock, exit_path, |job| {
+        std::thread::Builder::new().name("dispatch-wait".into()).spawn(job).map(|_| ())
     });
+    if started.is_err() {
+        return Ok(reply(false, "spawn_failed", "无法监护命令行程序，已停止它", json!({})));
+    }
     prune_old_runs(&dir);
     let watching = start_claim_watch(workdir, args.issue, &agent_id(agent, session), pid);
     Ok(reply(
@@ -852,6 +883,40 @@ mod tests {
         let result = finish_launch(&mut child, "prompt", || Ok(()));
         assert!(result.is_err());
         assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[test]
+    fn a_waiter_that_cannot_start_kills_the_child_and_frees_the_lock_only_afterwards() {
+        let dir = unique("waiter");
+        let lock = acquire_issue_lock(&dir, "o/r", 9).unwrap().unwrap();
+        let child = sleeper();
+        let child_pid = child.id();
+        let exit_path = dir.join("run.exit");
+        let result = supervise(child, lock, exit_path.clone(), |_job| Err(std::io::Error::other("cannot create thread")));
+        assert!(result.is_err());
+        assert!(!pid_alive(child_pid), "the agent must not be left running");
+        assert_eq!(fs::read_to_string(&exit_path).unwrap(), "-1");
+        assert!(acquire_issue_lock(&dir, "o/r", 9).unwrap().is_some(), "the lock is released after the child is gone");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_started_waiter_records_the_exit_then_releases_the_lock() {
+        let dir = unique("waiter-ok");
+        let lock = acquire_issue_lock(&dir, "o/r", 9).unwrap().unwrap();
+        let mut child = sleeper();
+        let _ = child.kill();
+        let exit_path = dir.join("run.exit");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let result = supervise(child, lock, exit_path.clone(), move |job| {
+            std::thread::spawn(move || { job(); let _ = tx.send(()); });
+            Ok(())
+        });
+        assert!(result.is_ok());
+        rx.recv_timeout(std::time::Duration::from_secs(20)).expect("waiter finished");
+        assert!(exit_path.exists());
+        assert!(acquire_issue_lock(&dir, "o/r", 9).unwrap().is_some());
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
