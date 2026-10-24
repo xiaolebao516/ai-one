@@ -189,6 +189,35 @@ describe('workflow execution snapshots', () => {
     expect(snapshot?.steps[0].inputRef.byteLength).toBe(new TextEncoder().encode(PROMPTS.debate.pro('debate question')).byteLength);
   });
 
+  it('stops before forwarding another reply when required local progress cannot be saved', async () => {
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+    const onSnapshotProgress = vi.fn(async () => { throw new Error('5 MB storage limit'); });
+    await runWorkflow({ text: 'question', mode: 'debate', roles: DEFAULT_DEBATE_ROLES, onSnapshotProgress });
+    expect(host.provider.send).toHaveBeenCalledTimes(1);
+    expect(getLastSnapshot()?.steps).toHaveLength(1);
+  });
+
+  it('awaits durable progress before the next send and gives observers stable snapshot copies', async () => {
+    let release!: () => void;
+    const saved = new Promise<void>((resolve) => { release = resolve; });
+    const observed: ExecutionSnapshot[] = [];
+    vi.mocked(host.provider.send).mockImplementation(async (provider) => {
+      publishBridgeMessage(done(provider, `${provider}-answer`));
+    });
+    const run = runWorkflow({
+      text: 'question', mode: 'debate', roles: DEFAULT_DEBATE_ROLES,
+      onSnapshotProgress: async (snapshot) => { observed.push(snapshot); await saved; },
+    });
+    await vi.waitFor(() => expect(observed).toHaveLength(1));
+    expect(host.provider.send).toHaveBeenCalledTimes(1);
+    release();
+    await run;
+    expect(host.provider.send).toHaveBeenCalledTimes(4);
+    expect(observed[0].steps).toHaveLength(1);
+  });
+
   it('records adapter versions only for updated providers used by the run', async () => {
     publishBridgeMessage(adapterUpdate('chatgpt', 11));
     publishBridgeMessage(adapterUpdate('claude', 22));

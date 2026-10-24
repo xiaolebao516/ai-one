@@ -32,7 +32,7 @@ export interface RunWorkflowParams {
   snapshotRedactionTier?: SnapshotRedactionTier;
   responseLanguagePolicy?: ResponseLanguagePolicy;
   onSnapshotComplete?: (snapshot: ExecutionSnapshot) => Promise<void> | void;
-  onSnapshotProgress?: (snapshot: ExecutionSnapshot) => void;
+  onSnapshotProgress?: (snapshot: ExecutionSnapshot) => void | Promise<void>;
 }
 
 export type RunWorkflowResult = { ok: true } | { ok: false; preflight: PreflightResult };

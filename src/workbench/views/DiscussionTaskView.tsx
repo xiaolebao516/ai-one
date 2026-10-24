@@ -47,6 +47,7 @@ export function DiscussionTaskView({ task, store, locale, source, defaultRepo, o
     if (!ok) setError(t.storageError);
   };
   const remove = async () => {
+    if (task.status === 'running' || store.busy) return;
     if (!window.confirm(t.deleteConfirm)) return;
     if (await store.remove(task.id)) onBack();
     else setError(t.storageError);
@@ -144,7 +145,7 @@ export function DiscussionTaskView({ task, store, locale, source, defaultRepo, o
         <div className="flex flex-wrap gap-v2-sm">
           <Button disabled disabledReason={t.noFollowUp}>{t.followUp}</Button>
           <Button disabled disabledReason={t.noResume}>{t.restart}</Button>
-          <Button variant="ghost" onClick={() => { void remove(); }}>{t.delete}</Button>
+          <Button variant="ghost" disabled={task.status === 'running' || store.busy} disabledReason={t.statusRunning} onClick={() => { void remove(); }}>{t.delete}</Button>
         </div>
       </Card>
     </div>

@@ -3,7 +3,7 @@ import { ALL_AI_PROVIDERS } from '../../shared/constants';
 import type { AIProvider, ModeRoles } from '../../shared/types';
 import { preflightGraph } from '../workflow/graph/preflight';
 import { deliberationGraph } from '../workflow/graph/deliberationGraph';
-import { runWorkflow } from '../workflow';
+import { runDiscussionWorkflow } from '../stages/discussionRuntime';
 import { newDiscussionTask, roundFromSnapshot } from '../stages/localTasks';
 import { discussionText } from '../stages/discussionText';
 import { DiscussionTaskView } from './views/DiscussionTaskView';
@@ -132,6 +132,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
   const startDiscussion = async (question: string, roles: { first: AIProvider; second: AIProvider; auditor: AIProvider }): Promise<string | undefined> => {
     const t = discussionText(locale);
     if (!data.local.ready) return data.local.error ?? t.storageLoading;
+    if (data.local.tasks.some((task) => task.status === 'running')) return t.statusRunning;
     if (!(isDesktop ?? host.app.isDesktop())) return t.preflight;
     if (new Set(Object.values(roles)).size !== 3) return t.preflight;
     try {
@@ -143,14 +144,15 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
     if (!(await data.local.create(draft))) return t.storageError;
     setRoute({ view: 'task', taskId: draft.id });
     let observed = false;
-    void runWorkflow({
+    void runDiscussionWorkflow({
       text: question, mode: 'consult', presetId: 'deliberation', roles: roles as unknown as ModeRoles, locale,
-      onSnapshotProgress: (snapshot) => {
+      onSnapshotProgress: async (snapshot) => {
         if (snapshot.graphId !== 'deliberation') return;
-        void data.local.update(draft.id, (task) => ({
+        const saved = await data.local.update(draft.id, (task) => ({
           ...task, rounds: task.rounds.map((round, i) => i === 0 ? roundFromSnapshot(round, snapshot) : round),
           updatedAt: new Date().toISOString(),
         }));
+        if (!saved) throw new Error(t.storageError);
       },
       onSnapshotComplete: async (snapshot) => {
         if (snapshot.graphId !== 'deliberation') return;
@@ -167,7 +169,7 @@ export function Workbench({ locale, onOpenClassic, githubLoader, acceptanceLoade
           await data.local.update(draft.id, (task) => ({ ...task, status: 'interrupted', updatedAt: new Date().toISOString() }));
         }
       },
-    }).then(async (result) => {
+    }, Object.values(roles)).then(async (result) => {
       if (!result.ok || !observed) {
         await data.local.update(draft.id, (task) => ({ ...task, status: 'interrupted', updatedAt: new Date().toISOString() }));
       }

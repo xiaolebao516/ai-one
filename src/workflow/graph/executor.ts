@@ -83,12 +83,13 @@ type RenderedPromptArg = string | number | HistoryItem[] | undefined;
 export interface ExecuteGraphOptions {
   appVersion?: string;
   onSnapshotComplete?: (snapshot: ExecutionSnapshot) => void | Promise<void>;
-  onSnapshotProgress?: (snapshot: ExecutionSnapshot) => void;
+  onSnapshotProgress?: (snapshot: ExecutionSnapshot) => void | Promise<void>;
 }
 
 export async function executeGraph(graph: WorkflowGraph, params: ExecuteGraphParams, options: ExecuteGraphOptions = {}): Promise<void> {
   assertValidGraph(graph);
   const context = createExecutionContext(graph, params);
+  let progressWrites = Promise.resolve();
   beginSessionCheckpoint({
     graphId: graph.id,
     graphVersion: graph.version ?? 1,
@@ -101,7 +102,13 @@ export async function executeGraph(graph: WorkflowGraph, params: ExecuteGraphPar
     roleMap: snapshotRoleMap(context),
     adapterVersions: snapshotAdapterVersions(context),
     appVersion: options.appVersion,
-    onProgress: options.onSnapshotProgress,
+    onProgress: options.onSnapshotProgress ? (snapshot) => {
+      // A parallel sibling may finish while persistence is pending. Never hand an observer
+      // the recorder's mutable snapshot, and do not send the next batch until writes succeed.
+      const copy = structuredClone(snapshot);
+      progressWrites = progressWrites.then(() => options.onSnapshotProgress?.(copy));
+      void progressWrites.catch(() => {}); // Observed at the batch boundary below.
+    } : undefined,
   });
   const abortAware = graph.preflight.kind !== 'free';
   let completedCleanly = false;
@@ -122,6 +129,7 @@ export async function executeGraph(graph: WorkflowGraph, params: ExecuteGraphPar
 
       const prepared = batch.map((nodeId) => prepareNode(nodeId, context));
       const results = await runPreparedBatch(prepared, abortAware);
+      await progressWrites;
       results.forEach((result) => applyNodeResult(context, result));
       updateSessionCheckpoint({ stepIndex: context.completed.size });
 
