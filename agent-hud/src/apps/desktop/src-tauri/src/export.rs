@@ -50,12 +50,20 @@ impl Status {
 
     /// Write a running heartbeat; false once stopped.
     fn beat(&self, directory: &Path) -> bool {
+        self.beat_with(directory, || {})
+    }
+
+    /// `beat`, running `before_write` once the lock is held and the stopped
+    /// check has passed, just before the file is written. Tests use it to hold
+    /// a heartbeat inside that window while `stop()` races it.
+    fn beat_with(&self, directory: &Path, before_write: impl FnOnce()) -> bool {
         let Ok(stopped) = self.stopped.lock() else {
             return false;
         };
         if *stopped {
             return false;
         }
+        before_write();
         let _ = write_atomic(directory, STATUS_FILE, &status_value(true));
         true
     }
@@ -216,26 +224,53 @@ mod tests {
     }
 
     #[test]
-    fn a_running_heartbeat_loop_cannot_overwrite_the_final_status() {
-        // The heartbeat thread writes as fast as it can while stop() races it.
-        // Whatever the interleaving, the last word is `running: false`.
-        for _ in 0..20 {
-            let directory = tempfile_dir();
-            let status = Arc::new(Status::new());
-            let beating = {
-                let (status, directory) = (Arc::clone(&status), directory.clone());
-                std::thread::spawn(move || while status.beat(&directory) {})
-            };
-            std::thread::sleep(Duration::from_millis(5));
-            status.stop(&directory);
-            beating.join().unwrap();
-            let text = std::fs::read_to_string(directory.join(STATUS_FILE)).unwrap();
-            assert_eq!(
-                serde_json::from_str::<Value>(&text).unwrap()["running"],
-                false
-            );
-            let _ = std::fs::remove_dir_all(&directory);
-        }
+    fn a_heartbeat_inside_the_write_path_cannot_overwrite_the_final_status() {
+        // Deterministic interleaving, no sleeps: the heartbeat is parked after
+        // its stopped check passed and before its write; only then does stop()
+        // start. stop() has to wait for the heartbeat's lock, so the heartbeat
+        // writes first and `running: false` is the last word. With the check
+        // outside the lock, stop() would finish first and the heartbeat would
+        // then write `running: true` over it.
+        use std::sync::mpsc::channel;
+        let directory = tempfile_dir();
+        let status = Arc::new(Status::new());
+        let (entered_tx, entered_rx) = channel::<()>();
+        let (release_tx, release_rx) = channel::<()>();
+        let beating = {
+            let (status, directory) = (Arc::clone(&status), directory.clone());
+            std::thread::spawn(move || {
+                status.beat_with(&directory, || {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                })
+            })
+        };
+        entered_rx.recv().unwrap();
+        let (stopped_tx, stopped_rx) = channel::<()>();
+        let stopping = {
+            let (status, directory) = (Arc::clone(&status), directory.clone());
+            std::thread::spawn(move || {
+                status.stop(&directory);
+                stopped_tx.send(()).unwrap();
+            })
+        };
+        // While the heartbeat is parked inside the write path, stop() must not
+        // get through. The wait is bounded and only ever times out on correct
+        // code, so this cannot make a correct build flaky.
+        assert!(
+            stopped_rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "stop() finished while a heartbeat was still inside its write path"
+        );
+        release_tx.send(()).unwrap();
+        assert!(beating.join().unwrap(), "the parked heartbeat wrote");
+        stopping.join().unwrap();
+        let text = std::fs::read_to_string(directory.join(STATUS_FILE)).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&text).unwrap()["running"],
+            false
+        );
+        assert!(!status.beat(&directory), "no heartbeat once stopped");
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]
