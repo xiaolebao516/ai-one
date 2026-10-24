@@ -2,6 +2,7 @@ mod adapters;
 mod bridge;
 mod github_readonly;
 mod github_write;
+mod quota_hud;
 mod dispatch_readonly;
 mod session_checkpoint;
 mod local_store;
@@ -69,7 +70,9 @@ pub fn run() {
             local_store::local_store_read,
             local_store::local_store_quarantine,
             local_store::local_store_write,
-            local_store::local_store_export
+            local_store::local_store_export,
+            quota_hud::quota_hud_read,
+            quota_hud::quota_hud_start
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -111,11 +111,17 @@ fn hook_formats_match_the_golden_fixture() {
         )
     });
     let mut expected: Value = serde_json::from_str(&text).unwrap();
+    // ai-one change (test only): where the "[unix]" cases do not apply, drop
+    // them from the built cases as well as from the fixture; upstream dropped
+    // only the fixture's, so every Windows run reported them as new cases.
+    let mut actual = actual;
     if !unix_file_urls() {
-        expected
-            .as_object_mut()
-            .unwrap()
-            .retain(|name, _| !name.contains("[unix]"));
+        for cases in [&mut expected, &mut actual] {
+            cases
+                .as_object_mut()
+                .unwrap()
+                .retain(|name, _| !name.contains("[unix]"));
+        }
     }
     let (expected, actual) = (expected.as_object().unwrap(), actual.as_object().unwrap());
     let names: BTreeSet<&String> = expected.keys().chain(actual.keys()).collect();

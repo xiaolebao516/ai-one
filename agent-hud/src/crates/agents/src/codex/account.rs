@@ -533,9 +533,14 @@ mod tests {
         assert_eq!(started[0].0, std::path::PathBuf::from("/bin/codex"));
         assert_eq!(started[0].1, ["app-server", "--listen", "stdio://"]);
         assert_eq!(started[0].2, "codex");
+        // ai-one change (test only): the host joins with the platform separator.
+        let codex_home = std::path::Path::new("/u").join(".codex");
         assert_eq!(
             started[0].3,
-            [("CODEX_HOME".to_owned(), "/u/.codex".to_owned())]
+            [(
+                "CODEX_HOME".to_owned(),
+                codex_home.to_string_lossy().into_owned()
+            )]
         );
         let methods: Vec<_> = host
             .engine_sent
@@ -561,15 +566,20 @@ mod tests {
         assert_eq!(reading.quotas[0]["consumerSource"], "codex");
         assert_eq!(reading.quotas[1]["usedPercent"], 40.0);
         let remembered: Value = serde_json::from_slice(&host.own.borrow()[IDENTITIES]).unwrap();
-        assert_eq!(remembered["/u/.codex/ws"], "A@example.com");
+        // The key is "<home>/<workspace>" with the home as the host spells it.
+        let key = format!("{}/ws", codex_home.to_string_lossy());
+        assert_eq!(remembered[key.as_str()], "A@example.com");
     }
 
     #[test]
     fn a_remembered_email_names_a_workspace_reported_alone() {
         let host = installed(limits(), Value::Null);
+        // ai-one change (test only): the key is a platform path.
+        let home = std::path::Path::new("/u").join(".codex");
+        let key = format!("{}/ws", home.to_string_lossy());
         host.own.borrow_mut().insert(
             IDENTITIES.into(),
-            br#"{"/u/.codex/ws": "a@example.com"}"#.to_vec(),
+            serde_json::to_vec(&json!({ key: "a@example.com" })).unwrap(),
         );
         let account = read(&host).unwrap().account.unwrap();
         assert_eq!(account["label"], "a@example.com");

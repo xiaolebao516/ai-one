@@ -159,7 +159,8 @@ mod tests {
                     .strip_prefix(home)
                     .unwrap()
                     .to_string_lossy()
-                    .into_owned();
+                    // ai-one change (test only): compare with `/` on every host.
+                    .replace('\\', "/");
                 (root.provider, path)
             })
             .collect::<Vec<_>>();
