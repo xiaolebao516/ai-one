@@ -9,12 +9,28 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DEFAULT_TARGET = path.resolve(root, 'agent-hud', 'src', 'packages', 'hud', 'src', 'assets', 'clawd-sprites.json');
 export const UPSTREAM_URL = 'https://raw.githubusercontent.com/jazzenchen/agent-hud-open/5c1f93e9457cb0f5fd3d69042144ffa63e51851b/src/packages/hud/src/assets/clawd-sprites.json';
 
-export const REQUIRED_SPRITES = [
-  'DancingHappy', 'Desktop', 'Dizzy', 'Excited', 'Facepalm',
-  'JumpingHappy', 'Laptop', 'Lightbulb', 'LookingAround', 'LookingAroundEyesOnly',
-  'Meditating', 'Pointing', 'Spark', 'Swaying', 'Thinking',
-  'Turning', 'Walking', 'Waving'
-];
+export const REQUIRED_FRAME_COUNTS = {
+  DancingHappy: 40,
+  Desktop: 88,
+  Dizzy: 41,
+  Excited: 23,
+  Facepalm: 35,
+  JumpingHappy: 21,
+  Laptop: 43,
+  Lightbulb: 50,
+  LookingAround: 31,
+  LookingAroundEyesOnly: 42,
+  Meditating: 60,
+  Pointing: 43,
+  Spark: 73,
+  Swaying: 49,
+  Thinking: 38,
+  Turning: 29,
+  Walking: 28,
+  Waving: 17,
+};
+
+export const REQUIRED_SPRITES = Object.keys(REQUIRED_FRAME_COUNTS);
 
 export function validateClawdSprites(rawContent) {
   let parsed;
@@ -29,7 +45,7 @@ export function validateClawdSprites(rawContent) {
   if (!parsed.sprites || typeof parsed.sprites !== 'object') {
     throw new Error('Missing or invalid "sprites" property');
   }
-  for (const name of REQUIRED_SPRITES) {
+  for (const [name, expectedCount] of Object.entries(REQUIRED_FRAME_COUNTS)) {
     const sprite = parsed.sprites[name];
     if (!sprite || typeof sprite !== 'object') {
       throw new Error(`Missing required action sprite: "${name}"`);
@@ -40,8 +56,47 @@ export function validateClawdSprites(rawContent) {
     if (!Array.isArray(sprite.palette) || sprite.palette.length === 0) {
       throw new Error(`Invalid palette for sprite: "${name}"`);
     }
+    for (const color of sprite.palette) {
+      if (typeof color !== 'string' || !/^#[0-9a-f]{3}([0-9a-f]{3}([0-9a-f]{2})?)?$/i.test(color)) {
+        throw new Error(`Invalid palette color "${color}" in sprite: "${name}"`);
+      }
+    }
     if (typeof sprite.base !== 'string' || sprite.base.length !== sprite.w * sprite.h) {
       throw new Error(`Invalid base frame length for sprite: "${name}"`);
+    }
+    for (let i = 0; i < sprite.base.length; i += 1) {
+      const ch = sprite.base[i];
+      if (ch !== '.') {
+        const idx = parseInt(ch, 36);
+        if (Number.isNaN(idx) || idx >= sprite.palette.length) {
+          throw new Error(`Invalid base palette index "${ch}" in sprite: "${name}"`);
+        }
+      }
+    }
+    if (!Array.isArray(sprite.deltas)) {
+      throw new Error(`Missing deltas array for sprite: "${name}"`);
+    }
+    const frameCount = 1 + sprite.deltas.length;
+    if (frameCount !== expectedCount) {
+      throw new Error(`Invalid frame count for sprite "${name}": expected ${expectedCount}, got ${frameCount}`);
+    }
+    for (const delta of sprite.deltas) {
+      if (typeof delta !== 'string') {
+        throw new Error(`Invalid delta entry in sprite: "${name}"`);
+      }
+      for (const change of delta.split(',')) {
+        if (change.length >= 2) {
+          const pixel = parseInt(change.slice(0, -1), 36);
+          const colorChar = change.slice(-1);
+          const colorIdx = colorChar === '.' ? 255 : parseInt(colorChar, 36);
+          if (!Number.isInteger(pixel) || pixel < 0 || pixel >= sprite.w * sprite.h) {
+            throw new Error(`Delta pixel offset out of range in sprite: "${name}"`);
+          }
+          if (colorIdx !== 255 && (Number.isNaN(colorIdx) || colorIdx >= sprite.palette.length)) {
+            throw new Error(`Delta palette index "${colorChar}" out of range in sprite: "${name}"`);
+          }
+        }
+      }
     }
   }
   return parsed;
@@ -54,12 +109,28 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
   const target = process.env.CLAWD_SPRITES_DEST ? path.resolve(process.env.CLAWD_SPRITES_DEST) : DEFAULT_TARGET;
 
   if (isClean) {
+    let cleaned = 0;
     if (fs.existsSync(target)) {
       fs.unlinkSync(target);
-      console.log('[fetch-clawd-sprites] Removed clawd-sprites.json for clean build.');
-    } else {
-      console.log('[fetch-clawd-sprites] Already clean (clawd-sprites.json not present).');
+      cleaned += 1;
     }
+    // Also clean bundled sprite JSON in desktop dist/assets if present
+    const distAssets = path.resolve(root, 'agent-hud', 'src', 'apps', 'desktop', 'dist', 'assets');
+    if (fs.existsSync(distAssets)) {
+      for (const file of fs.readdirSync(distAssets)) {
+        if (/^clawd-sprites.*\.json$/i.test(file)) {
+          fs.unlinkSync(path.join(distAssets, file));
+          cleaned += 1;
+        }
+      }
+    }
+    // Also clean any existing HUD release binary to prevent stale packaging
+    const hudExe = path.resolve(root, 'agent-hud', 'target', 'release', 'ai-one-hud.exe');
+    if (fs.existsSync(hudExe)) {
+      fs.unlinkSync(hudExe);
+      cleaned += 1;
+    }
+    console.log(`[fetch-clawd-sprites] Cleaned ${cleaned} proprietary asset(s) and build artifact(s).`);
     process.exit(0);
   }
 

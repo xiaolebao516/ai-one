@@ -40,6 +40,7 @@ Apache-2.0 section 4(b): these are all the modified files.
 | `package.json` | `build`/`check`/`test` scripts without MCP and parity-ledger; MCP / parity scripts removed (JSON, so no inline comment) |
 | `pnpm-lock.yaml` | the importer block of the removed `src/apps/mcp` deleted (a header comment "ai-one change" was added; pnpm may drop it when it rewrites the file, so this table stays the record); packages still used by other importers stay |
 | `src/packages/hud/src/assets/README.md` | note that `clawd-sprites.json` is not committed and is fetched on demand for local builds per user acceptance decision (#168) |
+| `docs/third-party.md` | clarifies that Clawd sprites are not committed to the repository and are fetched on demand via `pnpm hud:fetch-art` (Issue #168) |
 | `src/packages/hud/src/bots/clawd.ts` | constructor parameter property converted to explicit field; imports use explicit `.ts` extensions for Node strip-only mode (Issue #168) |
 | `src/packages/hud/src/bots/bot-hairline.ts` | import uses explicit `.ts` extension for Node strip-only mode (Issue #168) |
 | `src/packages/vite-config/src/index.ts` | dev port 1522 (ai-one keeps 1420); inline empty PostCSS config so Vite does not load ai-one's root `postcss.config.js` |

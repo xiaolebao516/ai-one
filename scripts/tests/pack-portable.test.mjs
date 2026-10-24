@@ -147,3 +147,27 @@ test('--clean-art fails when proprietary clawd-sprites.json is present in HUD as
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('--clean-art fails when stale binary contains embedded Clawd sprites even if source JSON was removed', () => {
+  const proprietaryArt = path.join(root, 'agent-hud', 'src', 'packages', 'hud', 'src', 'assets', 'clawd-sprites.json');
+  const backup = path.join(root, 'agent-hud', 'src', 'packages', 'hud', 'src', 'assets', 'clawd-sprites.json.bak');
+  const wasPresent = fs.existsSync(proprietaryArt);
+  if (wasPresent) {
+    fs.renameSync(proprietaryArt, backup);
+  }
+  const { dir, out, result } = pack((tmp) => {
+    const hud = path.join(tmp, 'ai-one-hud.exe');
+    fs.writeFileSync(hud, 'binary content with DancingHappy sprite table embedded');
+    return ['--hud', hud, '--clean-art'];
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /embedded Clawd sprite table inside HUD binary/);
+    assert.ok(!fs.existsSync(out));
+  } finally {
+    if (wasPresent && fs.existsSync(backup)) {
+      fs.renameSync(backup, proprietaryArt);
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

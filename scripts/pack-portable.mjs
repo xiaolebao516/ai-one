@@ -207,6 +207,27 @@ function collectFiles(inputDir, exeName) {
   return files.sort((a, b) => a.archivePath.localeCompare(b.archivePath));
 }
 
+function detectProprietaryClawdArt(hudExePath) {
+  const proprietaryArt = path.join(HUD_ASSETS, 'clawd-sprites.json');
+  if (fs.existsSync(proprietaryArt)) return 'clawd-sprites.json present in HUD assets';
+  const distAssets = path.join('agent-hud', 'src', 'apps', 'desktop', 'dist', 'assets');
+  if (fs.existsSync(distAssets)) {
+    const found = fs.readdirSync(distAssets).find((file) => /^clawd-sprites.*\.json$/i.test(file));
+    if (found) return `bundled ${found} in HUD dist/assets`;
+  }
+  if (hudExePath && fs.existsSync(hudExePath)) {
+    try {
+      const content = fs.readFileSync(hudExePath);
+      if (content.includes(Buffer.from('DancingHappy')) || content.includes(Buffer.from('clawd-sprites'))) {
+        return 'embedded Clawd sprite table inside HUD binary';
+      }
+    } catch {
+      // ignore read error
+    }
+  }
+  return null;
+}
+
 /**
  * The HUD executable plus the notices Apache-2.0 asks us to pass on with it. Empty when no HUD is
  * to be shipped (--no-hud, or the file is not built), so builds without the HUD keep working.
@@ -218,12 +239,12 @@ function hudEntriesFor(hudPath, cleanArt = false) {
     console.log('Quota HUD not included: ' + exe + ' does not exist (see --hud).');
     return [];
   }
-  const proprietaryArt = path.join(HUD_ASSETS, 'clawd-sprites.json');
-  if (cleanArt && fs.existsSync(proprietaryArt)) {
-    throw new Error('Packaging aborted: --clean-art was requested for public release, but proprietary clawd-sprites.json is present in the workspace. Run "pnpm hud:clean-art" and rebuild HUD before packaging public releases.');
+  const taintedReason = detectProprietaryClawdArt(exe);
+  if (cleanArt && taintedReason) {
+    throw new Error(`Packaging aborted: --clean-art was requested for public release, but proprietary Clawd assets were detected (${taintedReason}). Run "pnpm hud:clean-art" and rebuild HUD before packaging public releases.`);
   }
-  if (fs.existsSync(proprietaryArt)) {
-    console.log('Note: Built HUD contains local on-demand Clawd sprite table (#168). Distributing this binary publicly requires Anthropic permission; use --clean-art for public releases.');
+  if (taintedReason) {
+    console.log(`Note: Built HUD contains local on-demand Clawd sprite table (#168; ${taintedReason}). Distributing this binary publicly requires Anthropic permission; use --clean-art for public releases.`);
   }
   const entries = [{ source: exe, archivePath: HUD_ARCHIVE_NAME, mtime: fs.statSync(exe).mtime }];
   const missing = [];
