@@ -106,6 +106,41 @@ export const tauriLocalStoreFs: LocalStoreFs = {
     invoke<string | null>('local_store_export', { suggestedName: safeFileName(suggestedName), content }),
 };
 
+function taskCollection(text: string): { schemaVersion: 1; tasks: Array<{ id: string }> } {
+  const value: unknown = JSON.parse(text);
+  const file = value as { schemaVersion?: unknown; tasks?: unknown } | null;
+  if (!file || file.schemaVersion !== 1 || !Array.isArray(file.tasks) ||
+    !file.tasks.every((task: unknown) => task !== null && typeof task === 'object' &&
+      typeof (task as { id?: unknown }).id === 'string')) {
+    throw new Error('Invalid or unsupported local task backup; deletion refused.');
+  }
+  return file as { schemaVersion: 1; tasks: Array<{ id: string }> };
+}
+
+function scrubBrowserTaskBackups(store: Storage, json: string): void {
+  const primary = storageKey('localTasks');
+  const previous = store.getItem(primary);
+  if (!previous) return;
+  const retained = new Set(taskCollection(json).tasks.map((task) => task.id));
+  const removed = new Set(taskCollection(previous).tasks.map((task) => task.id).filter((id) => !retained.has(id)));
+  if (!removed.size) return;
+  const prefix = 'local-tasks.json.bak';
+  const backups = new Map([...memoryBackups].filter(([name]) => name === prefix || name.startsWith(prefix + '-')));
+  for (let i = 0; i < store.length; i++) {
+    const key = store.key(i);
+    if (key?.startsWith(primary + '.' + prefix)) backups.set(key.slice(primary.length + 1), store.getItem(key)!);
+  }
+  // Validate everything before writes; never discard an unreadable backup that might contain
+  // another task's only recoverable record. An error keeps the primary and the UI task intact.
+  const rewrites = [...backups].map(([name, text]) => {
+    const file = taskCollection(text);
+    file.tasks = file.tasks.filter((task) => !removed.has(task.id));
+    return [name, JSON.stringify(file)] as const;
+  });
+  for (const [name, text] of rewrites) store.setItem(primary + '.' + name, text);
+  for (const [name, text] of rewrites) memoryBackups.set(name, text);
+}
+
 export const browserLocalStoreFs: LocalStoreFs = {
   async read(name) {
     const text = readRaw(name);
@@ -129,8 +164,11 @@ export const browserLocalStoreFs: LocalStoreFs = {
     if (name === 'localTasks') {
       const store = localStorageRef();
       if (!store) throw new Error('Persistent browser storage is unavailable.');
-      try { store.setItem(storageKey(name), json); }
-      catch { throw new Error('Persistent browser storage is full or unavailable. Nothing was saved.'); }
+      try {
+        scrubBrowserTaskBackups(store, json);
+        store.setItem(storageKey(name), json);
+      }
+      catch { throw new Error('Local task write refused: check storage capacity and invalid or unsupported backups. The primary was preserved.'); }
       memory.set(name, json);
       memoryOverrides.delete(name);
       return;

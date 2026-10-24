@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::collections::BTreeSet;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -103,6 +104,17 @@ fn write_in_dir(dir: &Path, name: &str, json: &str) -> Result<(), String> {
 
     let path = dir.join(filename);
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+    if name == "localTasks" && path.exists() {
+        let previous = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        let old_ids = local_task_ids(&serde_json::from_str(&previous).map_err(|_| "invalid local tasks")?)?;
+        let new_ids = local_task_ids(&serde_json::from_str(json).map_err(|_| "invalid local tasks")?)?;
+        let deleted: BTreeSet<_> = old_ids.difference(&new_ids).cloned().collect();
+        if !deleted.is_empty() {
+            scrub_local_task_backups(dir, &deleted)?;
+            // Never back up the pre-deletion primary: that would resurrect the deleted replies.
+            return crate::settings::write_atomic(&path, json.as_bytes());
+        }
+    }
     match std::fs::metadata(&path) {
         Ok(_) => {
             let backup = dir.join(format!("{}.bak", filename));
@@ -112,6 +124,41 @@ fn write_in_dir(dir: &Path, name: &str, json: &str) -> Result<(), String> {
         Err(error) => return Err(error.to_string()),
     }
     crate::settings::write_atomic(&path, json.as_bytes())
+}
+
+fn local_task_ids(value: &Value) -> Result<BTreeSet<String>, String> {
+    if value.get("schemaVersion").and_then(Value::as_u64) != Some(1) {
+        return Err("unsupported local task backup; deletion refused, files preserved".into());
+    }
+    let tasks = value.get("tasks").and_then(Value::as_array)
+        .ok_or("invalid local task backup; deletion refused, files preserved")?;
+    tasks.iter().map(|task| task.get("id").and_then(Value::as_str).map(String::from)
+        .ok_or_else(|| "invalid local task backup; deletion refused, files preserved".into())).collect()
+}
+
+/// Validate every recoverable backup first. If any cannot be safely edited, leave the primary
+/// untouched and report failure. Backup writes precede the primary commit, so a partial failure
+/// never reports deletion success or destroys another task's last primary record.
+fn scrub_local_task_backups(dir: &Path, deleted: &BTreeSet<String>) -> Result<(), String> {
+    let mut rewrites = Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name != "local-tasks.json.bak" && !name.starts_with("local-tasks.json.bak-") { continue; }
+        if !entry.file_type().map_err(|error| error.to_string())?.is_file() {
+            return Err("unsafe local task backup; deletion refused, files preserved".into());
+        }
+        let bytes = std::fs::read(entry.path()).map_err(|error| error.to_string())?;
+        let mut value: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| "invalid local task backup; deletion refused, files preserved")?;
+        local_task_ids(&value)?;
+        value["tasks"].as_array_mut().expect("validated tasks")
+            .retain(|task| !deleted.contains(task["id"].as_str().expect("validated id")));
+        rewrites.push((entry.path(), serde_json::to_vec(&value).map_err(|error| error.to_string())?));
+    }
+    for (path, bytes) in rewrites { crate::settings::write_atomic(&path, &bytes)?; }
+    Ok(())
 }
 
 fn quarantine_in_dir(dir: &Path, name: &str) -> Result<Option<String>, String> {
@@ -313,6 +360,36 @@ mod tests {
         assert_eq!(result.status, LocalStoreStatus::Corrupt);
         let backup = result.backup.expect("backup filename");
         assert_eq!(std::fs::read(dir.join(backup)).expect("read backup"), body);
+        clean_dir(&dir);
+    }
+
+    #[test]
+    fn deleting_a_local_task_scrubs_all_version_backups_and_preserves_other_tasks() {
+        let dir = unique_dir("delete-task");
+        let original = r#"{"schemaVersion":1,"tasks":[{"id":"local:delete","text":"PRIVATE_SENTINEL"},{"id":"local:keep","text":"keep me"}]}"#;
+        let remaining = r#"{"schemaVersion":1,"tasks":[{"id":"local:keep","text":"keep me"}]}"#;
+        write_in_dir(&dir, "localTasks", original).unwrap();
+        write_in_dir(&dir, "localTasks", original).unwrap();
+        std::fs::write(dir.join("local-tasks.json.bak-20261024"), original).unwrap();
+        write_in_dir(&dir, "localTasks", remaining).unwrap();
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+            assert!(!text.contains("PRIVATE_SENTINEL"));
+            assert!(text.contains("keep me"));
+        }
+        clean_dir(&dir);
+    }
+
+    #[test]
+    fn unsafe_backup_blocks_deletion_without_overwriting_the_primary_or_backup() {
+        let dir = unique_dir("delete-corrupt-backup");
+        let original = r#"{"schemaVersion":1,"tasks":[{"id":"local:delete","text":"PRIVATE_SENTINEL"}]}"#;
+        write_in_dir(&dir, "localTasks", original).unwrap();
+        let backup = dir.join("local-tasks.json.bak-20261024");
+        std::fs::write(&backup, "corrupt backup to preserve").unwrap();
+        assert!(write_in_dir(&dir, "localTasks", r#"{"schemaVersion":1,"tasks":[]}"#).is_err());
+        assert_eq!(std::fs::read_to_string(dir.join("local-tasks.json")).unwrap(), original);
+        assert_eq!(std::fs::read_to_string(backup).unwrap(), "corrupt backup to preserve");
         clean_dir(&dir);
     }
 

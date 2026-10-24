@@ -111,7 +111,7 @@ export function DiscussionTaskView({ task, store, locale, source, defaultRepo, o
       <DiscussionMatrix model={summary.matrix} locale={locale} />
       {task.rounds.some((round) => round.steps.length > 0) ? <SummaryCard
         model={summary.summary} locale={locale}
-        onPlan={() => { document.getElementById('discussion-plan-repo')?.focus(); }}
+        onPlan={planEnabled ? () => { document.getElementById('discussion-plan-repo')?.focus(); } : undefined}
         onFinishAndSave={task.status !== 'running' && task.status !== 'ended' ? () => { void finish(); } : undefined}
       /> : null}
       {task.rounds.map((round) => (
