@@ -42,6 +42,8 @@
     "allow-github-write-set-pause",
     "allow-github-write-accept",
     "allow-github-write-request-changes",
+    "allow-dispatch-launch",
+    "allow-dispatch-runs",
     "allow-dispatch-readonly-snapshot",
     "allow-local-store-read",
     "allow-local-store-quarantine",

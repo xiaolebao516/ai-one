@@ -36,6 +36,8 @@ fn main() {
             "github_write_set_pause",
             "github_write_accept",
             "github_write_request_changes",
+            "dispatch_launch",
+            "dispatch_runs",
             "dispatch_readonly_snapshot",
             "local_store_read",
             "local_store_quarantine",
