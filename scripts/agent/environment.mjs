@@ -108,14 +108,14 @@ export function commandCheck(command, args, name = command) {
   return { name, ok: result.status === 0, detail };
 }
 
-function resolvePnpmCheck() {
-  const direct = commandCheck('pnpm', ['--version']);
+export function resolvePnpmCheck(checkCommand = commandCheck, platform = process.platform) {
+  const direct = checkCommand('pnpm', ['--version']);
   if (direct.ok) return direct;
 
-  const viaCorepack = commandCheck('corepack', ['pnpm', '--version'], 'pnpm');
+  const viaCorepack = checkCommand('corepack', ['pnpm', '--version'], 'pnpm');
   if (viaCorepack.ok) {
-    if (process.platform === 'win32') {
-      const located = commandCheck('where', ['pnpm']);
+    if (platform === 'win32') {
+      const located = checkCommand('where', ['pnpm']);
       if (located.ok) {
         return {
           name: 'pnpm',
@@ -124,28 +124,33 @@ function resolvePnpmCheck() {
         };
       }
     }
-    return { name: 'pnpm', ok: false, detail: pnpmCorepackHint(viaCorepack.detail) };
+    return { name: 'pnpm', ok: false, detail: pnpmCorepackHint(viaCorepack.detail, platform) };
   }
 
   return {
     name: 'pnpm',
     ok: false,
-    detail: 'pnpm was not found. Install pnpm or enable Corepack, then ensure the "pnpm" command is available on PATH. Tauri calls it directly during startup.',
+    detail: 'pnpm was not found. Install pnpm directly, or install Corepack (it is not bundled with Node.js 25+) and run "corepack enable". Ensure the "pnpm" command is available on PATH; Tauri calls it directly during startup.',
   };
 }
 
-function rustCommandCheck(command) {
-  const check = commandCheck(command, ['--version']);
+export function rustCommandCheck(command, {
+  checkCommand = commandCheck,
+  platform = process.platform,
+  env = process.env,
+  fileExists = existsSync,
+} = {}) {
+  const check = checkCommand(command, ['--version']);
   if (check.ok) return check;
 
-  if (process.platform === 'win32') {
-    const profile = process.env.USERPROFILE || process.env.HOME;
-    const cargoHome = process.env.CARGO_HOME || (profile ? path.win32.join(profile, '.cargo') : '');
+  if (platform === 'win32') {
+    const profile = env.USERPROFILE || env.HOME;
+    const cargoHome = env.CARGO_HOME || (profile ? path.win32.join(profile, '.cargo') : '');
     const cargoBin = cargoHome ? path.win32.join(cargoHome, 'bin') : '';
     const executablePath = cargoBin ? path.win32.join(cargoBin, `${command}.exe`) : '';
-    if (executablePath && existsSync(executablePath)) {
+    if (executablePath && fileExists(executablePath)) {
       const normalizedBin = path.win32.resolve(cargoBin).toLowerCase();
-      const onPath = String(process.env.PATH || '').split(';').some((entry) => {
+      const onPath = String(env.PATH || '').split(';').some((entry) => {
         const trimmed = entry.trim().replace(/^"(.*)"$/, '$1');
         return trimmed && path.win32.resolve(trimmed).toLowerCase() === normalizedBin;
       });
@@ -157,7 +162,7 @@ function rustCommandCheck(command) {
     }
   }
 
-  return { name: command, ok: false, detail: rustToolchainHint(command, 'missing', '', process.platform) };
+  return { name: command, ok: false, detail: rustToolchainHint(command, 'missing', '', platform) };
 }
 
 function windowsMsvcCheck() {

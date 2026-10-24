@@ -81,6 +81,8 @@ test('all localized READMEs expose the same Agent contract boundary', () => {
     assert.ok(source.includes("Quick Start（Windows 10/11）"));
     assert.ok(source.includes("Desktop development with C++"));
     assert.ok(source.includes("Windows 10/11 SDK"));
+    assert.ok(source.includes("Node.js 25+"));
+    assert.ok(source.includes("Corepack 官方文档"));
     assert.ok(source.includes("pnpm") && source.includes("PATH"));
   }
 });

@@ -39,7 +39,7 @@ ai-one 的目标是做一个服务自己实际开发的、任务驱动的多 AI 
    corepack enable
    ```
 
-   关闭并重新打开 PowerShell，再运行 `pnpm --version`。如果 `corepack enable` 因安装目录权限失败，可把 shim 安装到用户目录：
+   如果提示找不到 `corepack`（Node.js 25+ 不再随 Node 分发 Corepack），请按 [Corepack 官方文档](https://github.com/nodejs/corepack)单独安装 Corepack。然后关闭并重新打开 PowerShell，再运行 `pnpm --version`。如果 `corepack enable` 因安装目录权限失败，可把 shim 安装到用户目录：
 
    ```powershell
    corepack enable --install-directory "$env:USERPROFILE\.local\bin" pnpm
