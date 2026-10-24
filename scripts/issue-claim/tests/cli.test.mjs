@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
-import { EXIT, heartbeat, main, takeover } from '../cli.mjs';
+import { EXIT, heartbeat, identityFromPs, identityFromProcStat, main, processIdentity, takeover, watchClaim } from '../cli.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli.mjs');
 let root;
@@ -122,13 +122,13 @@ test('heartbeat keeps the claim alive; only the holder can beat', () => {
 });
 
 // Plants a claim whose last sign of life is long past, as an agent that died without releasing.
-function plantStaleClaim(dir, issue, agent) {
+function plantStaleClaim(dir, issue, agent, { force = false } = {}) {
   const tree = git(dir, 'mktree');
   const old = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
   const env = { ...process.env, GIT_AUTHOR_NAME: 'x', GIT_AUTHOR_EMAIL: 'x@x.invalid', GIT_COMMITTER_NAME: 'x', GIT_COMMITTER_EMAIL: 'x@x.invalid' };
   const made = spawnSync('git', ['commit-tree', tree, '-m', `claim #${issue}\n\nagent: ${agent}\nat: ${old}\n`], { cwd: dir, encoding: 'utf8', env });
   assert.equal(made.status, 0, made.stderr);
-  git(dir, 'push', '--quiet', 'origin', `${made.stdout.trim()}:refs/heads/claim/${issue}`);
+  git(dir, 'push', '--quiet', ...(force ? ['--force'] : []), 'origin', `${made.stdout.trim()}:refs/heads/claim/${issue}`);
 }
 
 test('a live claim cannot be taken, and the window is not a takeover option', () => {
@@ -187,4 +187,85 @@ test('two rescuers racing for a stale claim: exactly one wins', async () => {
   assert.equal(codes.filter((code) => code === EXIT.ok).length, 1);
   assert.equal(codes.filter((code) => code === EXIT.held).length, 1);
   assert.match(run(a, ['show', '94']).out, /^#94 claimed by rescuer-\d/);
+});
+
+test('a claim stamped in the future is not ACTIVE: it needs a human look', () => {
+  const [a] = clones;
+  const tree = git(a, 'mktree');
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'x', GIT_AUTHOR_EMAIL: 'x@x.invalid', GIT_COMMITTER_NAME: 'x', GIT_COMMITTER_EMAIL: 'x@x.invalid' };
+  const future = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
+  const made = spawnSync('git', ['commit-tree', tree, '-m', `claim #95\n\nagent: skewed\nat: ${future}\n`], { cwd: a, encoding: 'utf8', env });
+  git(a, 'push', '--quiet', 'origin', `${made.stdout.trim()}:refs/heads/claim/95`);
+  assert.match(run(a, ['inspect', '95']).out, /^HANDOFF_BLOCKED .*clock anomaly/);
+  assert.equal(run(a, ['takeover', '95', '--agent', 'x', '--stopped-evidence', 'y']).code, EXIT.held);
+  assert.equal(run(a, ['release', '95', '--agent', 'skewed']).code, EXIT.ok);
+});
+
+test('watchClaim beats while the same process lives and stops when it exits or its pid is reused', async () => {
+  const [a] = clones;
+  assert.equal(run(a, ['claim', '96', '--agent', 'worker']).code, EXIT.ok);
+  const identities = ['start-1', 'start-1', 'start-1', 'someone-else'];
+  const reused = await watchClaim(96, 'worker', { cwd: a, pid: 1, intervalMs: 0, identityOf: () => identities.shift() });
+  assert.deepEqual({ stopped: reused.stopped, beats: reused.beats }, { stopped: 'process-exited', beats: 2 });
+  const gone = await watchClaim(96, 'worker', { cwd: a, pid: 1, intervalMs: 0, identityOf: () => undefined });
+  assert.deepEqual({ stopped: gone.stopped, beats: gone.beats }, { stopped: 'unverifiable', beats: 0 });
+  assert.equal(run(a, ['release', '96', '--agent', 'worker']).code, EXIT.ok);
+});
+
+test('watchClaim stops as fenced once the claim has moved on', async () => {
+  const [a, b] = clones;
+  // Forced here, since a fresh beat is not stale: the next beat must fail instead of writing again.
+  assert.equal(run(a, ['claim', '97', '--agent', 'old-owner']).code, EXIT.ok);
+  const result = await watchClaim(97, 'old-owner', {
+    cwd: a,
+    pid: 1,
+    intervalMs: 0,
+    identityOf: () => 'same',
+    sleep: async () => {
+      plantStaleClaim(b, 97, 'rescuer', { force: true });
+    },
+  });
+  assert.equal(result.stopped, 'fenced');
+  assert.equal(result.holder.agent, 'rescuer');
+  assert.equal(run(b, ['release', '97', '--agent', 'rescuer']).code, EXIT.ok);
+});
+
+test('watch CLI refuses a process it cannot identify and rejects bad input', async () => {
+  const [a] = clones;
+  assert.equal(run(a, ['claim', '98', '--agent', 'w']).code, EXIT.ok);
+  const dead = spawnSync(process.execPath, ['-e', '0']);
+  const errors = [];
+  assert.equal(await main(['watch', '98', '--agent', 'w', '--pid', String(dead.pid ?? 999999)], { cwd: a, out: () => {}, err: (line) => errors.push(line) }), EXIT.error);
+  assert.match(errors.join('\n'), /cannot verify the identity/);
+  assert.equal(await main(['watch', '98', '--agent', 'w', '--pid', 'abc'], { cwd: a, out: () => {}, err: () => {} }), EXIT.error);
+  assert.equal(run(a, ['release', '98', '--agent', 'w']).code, EXIT.ok);
+});
+
+test('processIdentity is stable for a live process and absent for a dead one', () => {
+  const mine = processIdentity(process.pid);
+  assert.ok(mine, 'own process identity is readable');
+  assert.equal(processIdentity(process.pid), mine);
+  const dead = spawnSync(process.execPath, ['-e', '0']);
+  assert.equal(processIdentity(dead.pid), undefined);
+});
+
+test('process identity parsers treat zombies as gone and keep a stable start-time fingerprint', () => {
+  const live = '1234 (my cmd) with ) paren) S 1 1234 1234 0 -1 4194560 100 0 0 0 1 1 0 0 20 0 1 0 98765 1000 100 18446744073709551615';
+  assert.equal(identityFromProcStat(live), 'proc:98765');
+  assert.equal(identityFromProcStat(live.replace(') S ', ') Z ')), undefined);
+  assert.equal(identityFromProcStat(live.replace(') S ', ') X ')), undefined);
+  assert.equal(identityFromProcStat('garbage'), undefined);
+  assert.equal(identityFromPs('S Sat Oct 24 02:00:00 2026'), 'Sat Oct 24 02:00:00 2026');
+  assert.equal(identityFromPs('Z+ Sat Oct 24 02:00:00 2026'), undefined);
+  assert.equal(identityFromPs(''), undefined);
+});
+
+test('a killed but unreaped child stops being "alive" (Unix only)', { skip: process.platform === 'win32' }, async () => {
+  const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+  const before = processIdentity(child.pid);
+  assert.ok(before);
+  child.kill('SIGKILL');
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  // Node reaps the child on exit, so this checks the dead-process path; the parser tests above cover Z.
+  assert.equal(processIdentity(child.pid), undefined);
 });

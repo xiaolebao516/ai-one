@@ -5,10 +5,11 @@
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { claim, list as listClaims, EXIT } from '../issue-claim/cli.mjs';
+import { assess, claim, list as listClaims, EXIT } from '../issue-claim/cli.mjs';
 
 const USAGE = `usage:
   node scripts/agent-entry/cli.mjs board
+  node scripts/agent-entry/cli.mjs handoff <N>
   node scripts/agent-entry/cli.mjs take [<N>] --agent "<tool / session>" [--dry-run]
 take without <N> picks the best free Issue: recommended for your tool first, then P0 < P1 < P2.`;
 
@@ -81,7 +82,7 @@ export function buildBoard({ issues, claims, prs }) {
         labels,
         meta,
         prs: linked.get(issue.number) ?? [],
-        holder: holder ? { agent: holder.agent, at: holder.at } : undefined,
+        holder: holder ? { agent: holder.agent, at: holder.at, health: assess(holder) } : undefined,
         // Auto-pick only touches Issues that were explicitly made claimable (a priority or a PLANNED
         // stage). Umbrella Specs need an explicit number; an Issue with an open PR but no claim is
         // someone's mid-flight work that predates the lock, so it also needs an explicit decision.
@@ -109,10 +110,13 @@ export function pickNext(board, agent) {
   return free[0];
 }
 
+// Only the states that need a human's eye are tagged; a healthy claim stays as plain as before.
+const healthTag = (health) => (!health || health.state === 'ACTIVE' ? '' : ` ⚠${health.state}(${health.reason})`);
+
 export function formatBoard(board) {
   const lines = board.map((row) => {
     const state = row.holder
-      ? `已认领: ${row.holder.agent}`
+      ? `已认领: ${row.holder.agent}${healthTag(row.holder.health)}`
       : row.labels.includes('blocked')
         ? '阻塞'
         : row.pickable
@@ -145,6 +149,78 @@ export function briefing(row, agent) {
   ]
     .filter((line) => line !== '')
     .join('\n');
+}
+
+/**
+ * Read-only Handoff rebuilt from GitHub evidence when the previous holder never wrote one (#139).
+ * It lists what is evidenced and what still has to be checked by hand; it never writes to GitHub
+ * and never claims that code only present in the old machine's worktree exists remotely.
+ */
+/**
+ * Latest audit verdict found in a PR's conversation comments or reviews, reduced to verdict, the
+ * SHA it names and whether that is the current HEAD. Free text is never copied. Anything that does
+ * not clearly name a verdict and a full SHA is "to be checked", never "none".
+ */
+export function auditSummary(pr) {
+  const entries = [...(pr.comments ?? []), ...(pr.reviews ?? [])]
+    .map((entry) => {
+      // The repo's format puts the full HEAD SHA first and the verdict next (or the reverse), so both
+      // are read from the opening lines only; verdict words deeper in prose do not count.
+      const lines = (entry.body ?? '').split(/\r?\n/).filter((line) => line.trim()).slice(0, 2);
+      // The verdict must be the first word of a line, so "verify PASS" or "fix for the round-3 REVISE" is not one.
+      const verdict = lines.map((line) => /^[\s*_#>`-]*(PASS|REVISE|BLOCKED)\b/.exec(line)?.[1]).find(Boolean);
+      const sha = /\b([0-9a-f]{40})\b/i.exec(lines.join(' '))?.[1]?.toLowerCase();
+      return { verdict, sha, at: entry.createdAt ?? entry.submittedAt ?? '' };
+    })
+    .filter((entry) => entry.verdict && entry.sha)
+    .sort((a, b) => a.at.localeCompare(b.at));
+  const latest = entries.at(-1);
+  if (!latest) return `审计待核对：没有找到带完整 HEAD 的 PASS/REVISE/BLOCKED 评论（GitHub reviewDecision: ${pr.reviewDecision || '无'}）`;
+  const current = latest.sha === String(pr.headRefOid ?? '').toLowerCase();
+  return `${latest.verdict} 针对 ${latest.sha.slice(0, 12)}，${current ? '就是当前 HEAD' : '不是当前 HEAD，旧审计已失效'}（${latest.at}）`;
+}
+
+export function buildHandoff({ issue, prs, claimEntry }) {
+  const meta = parseMeta(issue.body);
+  const lines = [`# Handoff（自动重建，只读）：#${issue.number} ${issue.title}`, ''];
+  lines.push('## 有证据');
+  lines.push(`- Priority: ${meta.priority ?? '(未写)'}；Depends on: ${meta.dependsOn ?? '(未写)'}`);
+  if (claimEntry) {
+    const health = assess(claimEntry);
+    lines.push(`- 认领锁：${claimEntry.agent ?? '(unknown)'}，第 ${claimEntry.generation ?? 1} 代，最后动静 ${claimEntry.beat ?? claimEntry.at ?? '?'}，状态 ${health.state}（${health.reason}）`);
+  } else {
+    lines.push('- 认领锁：无（任何人可按正规流程认领）');
+  }
+  if (prs.length) {
+    for (const pr of prs) {
+      const files = (pr.files ?? []).map((file) => file.path).slice(0, 15);
+      const checks = (pr.statusCheckRollup ?? []).map((check) => `${check.name ?? check.context}:${check.conclusion ?? check.state ?? 'pending'}`);
+      lines.push(`- PR #${pr.number}（${pr.state}）分支 \`${pr.headRefName}\`，完整 HEAD \`${pr.headRefOid}\``);
+      lines.push(`  - 改动文件${files.length ? `：${files.join('、')}` : '：(无)'}`);
+      lines.push(`  - 审计：${auditSummary(pr)}`);
+      lines.push(`  - CI：${checks.length ? checks.join('，') : '未运行或无数据'}`);
+    }
+  } else {
+    lines.push('- 没有关联的 PR：远端可能还没有任何成果');
+  }
+  // Comment text is free-form (it can hold conversation text, tokens or private links), so only
+  // times and links are carried over; the successor reads the comments themselves.
+  const recent = (issue.comments ?? []).slice(-3).map((comment) => `${comment.createdAt} ${comment.url ?? ''}`.trim());
+  if (recent.length) lines.push('- Issue 最近评论（只列时间和链接，正文请自行阅读）：', ...recent.map((line) => `  - ${line}`));
+  lines.push('', '## 待核对（程序无法证实）');
+  lines.push('- 旧执行者是否真的已停止写入（没有写入网关，旧进程仍可能直接 push）。');
+  lines.push('- 旧机器上的未提交 / 未跟踪成果：只存在于旧工作树时无法从 GitHub 恢复，不要假设存在。');
+  lines.push('- 最近一次评论里的进度是否与当前分支 HEAD 一致。');
+  lines.push('', '## 下一步');
+  if (claimEntry && assess(claimEntry).state === 'SUSPECT_STALE') {
+    lines.push(`1. 确认旧写入者已停；然后：\`node scripts/issue-claim/cli.mjs takeover ${issue.number} --agent "<新标识>" --stopped-evidence "<怎么确认的>"\``);
+  } else if (claimEntry) {
+    lines.push('1. 认领锁仍在有效期或需要人工判断：不要接管，换一个 Ready 任务，或请用户/协调者确认。');
+  } else {
+    lines.push(`1. \`node scripts/issue-claim/cli.mjs claim ${issue.number} --agent "<新标识>"\``);
+  }
+  lines.push('2. 沿上面列出的原分支和原 PR 从完整 HEAD 继续，重新验证，不要新开平行分支。');
+  return lines.join('\n');
 }
 
 function gh(args, cwd) {
@@ -188,7 +264,7 @@ function parseArgs(argv) {
   return options;
 }
 
-export function main(argv, { cwd = process.cwd(), out = console.log, err = console.error, state, claimIssue = claim } = {}) {
+export function main(argv, { cwd = process.cwd(), out = console.log, err = console.error, state, claimIssue = claim, handoffFetch } = {}) {
   let options;
   try {
     options = parseArgs(argv);
@@ -199,6 +275,22 @@ export function main(argv, { cwd = process.cwd(), out = console.log, err = conso
   try {
     if (options.command === 'board') {
       out(formatBoard(buildBoard(state ?? loadState({ cwd }))));
+      return EXIT.ok;
+    }
+    if (options.command === 'handoff') {
+      if (options.issue === undefined) {
+        err(USAGE);
+        return EXIT.error;
+      }
+      const fetchJson = handoffFetch ?? gh;
+      const issue = fetchJson(['issue', 'view', String(options.issue), '--json', 'number,title,body,comments'], cwd);
+      const prList = fetchJson(['pr', 'list', '--state', 'all', '--limit', '200', '--json', 'number,title,body,state,headRefName,headRefOid,closingIssuesReferences,files,reviewDecision,statusCheckRollup,comments,reviews'], cwd);
+      // A truncated list could hide the Issue's own PR: fail closed instead of printing a misleading handoff.
+      if (prList.length >= 200) throw new Error('PR list reached the 200 limit; the rebuilt handoff would be incomplete');
+      const linked = prLinks(prList).get(options.issue) ?? [];
+      const prs = prList.filter((pr) => linked.includes(pr.number));
+      const claimEntry = (state?.claims ?? listClaims({ cwd })).find((entry) => entry.issue === options.issue);
+      out(buildHandoff({ issue, prs, claimEntry }));
       return EXIT.ok;
     }
     if (options.command !== 'take' || !options.agent) {
