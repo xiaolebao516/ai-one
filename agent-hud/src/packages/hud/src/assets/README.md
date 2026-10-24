@@ -2,7 +2,7 @@
 
 > **ai-one note (Issue #168):** Per user acceptance decision ("以原版图像为准"), the HUD uses
 > the original Clawd artwork. To avoid redistributing proprietary third-party assets in this git repository,
-> `clawd-sprites.json` is not committed and is fetched on demand during `pnpm hud:build` (or `pnpm hud:fetch-art`).
+> `clawd-sprites.json` is not committed and is fetched on demand via `pnpm hud:fetch-art` for local builds.
 
 These files are unchanged copies from
 `agent-hud-native-open/Sources/AgentHUDDesktop/Resources/`.

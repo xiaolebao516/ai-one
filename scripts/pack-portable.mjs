@@ -50,6 +50,7 @@ function parseArgs(argv) {
     exe: process.env.MAC_PORTABLE_EXE ?? process.env.PORTABLE_EXE,
     prefix: process.env.MAC_PORTABLE_PREFIX ?? process.env.PORTABLE_PREFIX,
     hud: process.env.MAC_PORTABLE_HUD ?? process.env.PORTABLE_HUD ?? DEFAULT_HUD_EXE,
+    cleanArt: process.env.MAC_PORTABLE_CLEAN_ART === '1' || process.env.PORTABLE_CLEAN_ART === '1' || false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -69,6 +70,7 @@ function parseArgs(argv) {
     else if (arg === '--no-prefix') options.prefix = '';
     else if (arg === '--hud') options.hud = nextValue();
     else if (arg === '--no-hud') options.hud = '';
+    else if (arg === '--clean-art') options.cleanArt = true;
     else if (arg === '--') continue; // pnpm forwards the run separator; ignore it
     else if (arg === '--help' || arg === '-h') {
       printHelp();
@@ -95,6 +97,7 @@ Options:
                    (build it with: pnpm hud:build; a plain cargo build leaves a dev-mode exe whose windows are blank).
                    Skipped, with a note, when the file does not exist.
   --no-hud         Do not ship the quota HUD.
+  --clean-art      Ensure no proprietary third-party art assets (clawd-sprites.json) are present before packaging.
 
 Equivalent env vars are MAC_PORTABLE_INPUT, MAC_PORTABLE_OUT, MAC_PORTABLE_NAME,
 MAC_PORTABLE_EXE, and MAC_PORTABLE_PREFIX.`);
@@ -208,12 +211,19 @@ function collectFiles(inputDir, exeName) {
  * The HUD executable plus the notices Apache-2.0 asks us to pass on with it. Empty when no HUD is
  * to be shipped (--no-hud, or the file is not built), so builds without the HUD keep working.
  */
-function hudEntriesFor(hudPath) {
+function hudEntriesFor(hudPath, cleanArt = false) {
   if (!hudPath) return [];
   const exe = path.resolve(hudPath);
   if (!fs.existsSync(exe) || !fs.statSync(exe).isFile()) {
     console.log('Quota HUD not included: ' + exe + ' does not exist (see --hud).');
     return [];
+  }
+  const proprietaryArt = path.join(HUD_ASSETS, 'clawd-sprites.json');
+  if (cleanArt && fs.existsSync(proprietaryArt)) {
+    throw new Error('Packaging aborted: --clean-art was requested for public release, but proprietary clawd-sprites.json is present in the workspace. Run "pnpm hud:clean-art" and rebuild HUD before packaging public releases.');
+  }
+  if (fs.existsSync(proprietaryArt)) {
+    console.log('Note: Built HUD contains local on-demand Clawd sprite table (#168). Distributing this binary publicly requires Anthropic permission; use --clean-art for public releases.');
   }
   const entries = [{ source: exe, archivePath: HUD_ARCHIVE_NAME, mtime: fs.statSync(exe).mtime }];
   const missing = [];
@@ -353,7 +363,7 @@ function main() {
       : options.prefix;
   const zipPath = resolveZipPath(options.out, options.name, metadata);
   const now = new Date();
-  const hudEntries = hudEntriesFor(options.hud);
+  const hudEntries = hudEntriesFor(options.hud, options.cleanArt);
   const files = collectFiles(inputDir, exeName)
     // Whether a HUD ships is decided only by --hud / --no-hud above; one lying in the input folder is
     // never taken along on its own (it would have no notices) and never added twice.

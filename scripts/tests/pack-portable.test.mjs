@@ -123,3 +123,27 @@ test('the HUD is not shipped without its licences: packaging fails instead', () 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('--clean-art fails when proprietary clawd-sprites.json is present in HUD assets', () => {
+  const proprietaryArt = path.join(root, 'agent-hud', 'src', 'packages', 'hud', 'src', 'assets', 'clawd-sprites.json');
+  const wasPresent = fs.existsSync(proprietaryArt);
+  if (!wasPresent) {
+    fs.mkdirSync(path.dirname(proprietaryArt), { recursive: true });
+    fs.writeFileSync(proprietaryArt, '{"test":true}');
+  }
+  const { dir, out, result } = pack((tmp) => {
+    const hud = path.join(tmp, 'ai-one-hud.exe');
+    fs.writeFileSync(hud, 'hud');
+    return ['--hud', hud, '--clean-art'];
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Packaging aborted: --clean-art was requested for public release/);
+    assert.ok(!fs.existsSync(out));
+  } finally {
+    if (!wasPresent && fs.existsSync(proprietaryArt)) {
+      fs.unlinkSync(proprietaryArt);
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

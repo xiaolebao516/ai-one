@@ -92,12 +92,16 @@ test("clawd-sprites.json decodes into valid ClawdSheet matching clips when prese
   assert.equal(raw.claude, "2.37337.1");
   const sheet = decodeClawdTable(raw);
   assert.equal(Object.keys(sheet).length, 18);
-  assert.ok(sheet.DancingHappy, "DancingHappy sprite exists");
-  assert.ok(sheet.Desktop, "Desktop sprite exists");
-  assert.ok(sheet.Excited, "Excited sprite exists");
-  assert.ok(sheet.Facepalm, "Facepalm sprite exists");
-  assert.ok(sheet.JumpingHappy, "JumpingHappy sprite exists");
-  assert.ok(sheet.Laptop, "Laptop sprite exists");
+  const expectedActions = [
+    "DancingHappy", "Desktop", "Dizzy", "Excited", "Facepalm",
+    "JumpingHappy", "Laptop", "Lightbulb", "LookingAround", "LookingAroundEyesOnly",
+    "Meditating", "Pointing", "Spark", "Swaying", "Thinking",
+    "Turning", "Walking", "Waving"
+  ];
+  for (const action of expectedActions) {
+    assert.ok(sheet[action], `${action} sprite exists`);
+    assert.ok(sheet[action].frames.length > 0, `${action} has frames`);
+  }
 
   assert.equal(isClawdStanding(sheet, standing), true);
 });
