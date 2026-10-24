@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-dispatch-launch"
+description = "Enables the dispatch_launch command without any pre-configured scope."
+commands.allow = ["dispatch_launch"]
+
+[[permission]]
+identifier = "deny-dispatch-launch"
+description = "Denies the dispatch_launch command without any pre-configured scope."
+commands.deny = ["dispatch_launch"]

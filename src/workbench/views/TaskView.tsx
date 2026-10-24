@@ -1,3 +1,4 @@
+import { DispatchPanel } from '../DispatchPanel';
 import type { ReactNode } from 'react';
 import type { Locale } from '../../i18n/resolve';
 import { effectiveCi, formatAge, isNeedsYou, pickText, reviewIsCurrent, shortSha, type HudTask } from '../../ui/taskHudModel';
@@ -34,6 +35,8 @@ export function TaskView({ locale, task, onBack }: TaskViewProps) {
           <h1 className="min-w-0 font-v2-serif text-v2-heading text-v2-ink">{pickText(task.title, locale)}</h1>
           <TaskStatus task={task} locale={locale} />
         </header>
+
+        {task.issue ? <DispatchPanel locale={locale} repo={task.repo} issue={task.issue} /> : null}
 
         {task.stages.length ? <StageStrip stages={task.stages} locale={locale} /> : null}
 

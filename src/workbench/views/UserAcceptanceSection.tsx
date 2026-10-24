@@ -5,6 +5,8 @@ import { workbenchText } from '../workbenchText';
 import type { AcceptanceState } from '../useUserAcceptance';
 import { host } from '../../host';
 import { hasChoice, stripActionLines } from '../acceptanceActions';
+import { copyToClipboard } from '../clipboard';
+import { DispatchPanel } from '../DispatchPanel';
 import { needsNewDecision, type FixProgress } from '../acceptanceFix';
 
 const FIX_TEXT: Record<FixProgress, 'acceptanceFixNotStarted' | 'acceptanceFixCreating' | 'acceptanceFixUnknown' | 'acceptanceFixFailed' | 'acceptanceFixQueued' | 'acceptanceFixWorking' | 'acceptanceFixDone' | 'acceptanceFixDropped'> = {
@@ -12,24 +14,6 @@ const FIX_TEXT: Record<FixProgress, 'acceptanceFixNotStarted' | 'acceptanceFixCr
   queued: 'acceptanceFixQueued', working: 'acceptanceFixWorking', done: 'acceptanceFixDone', dropped: 'acceptanceFixDropped',
 };
 
-const copyToClipboard = async (value: string): Promise<void> => {
-  try {
-    if (!navigator.clipboard) throw new Error('Clipboard unavailable');
-    await navigator.clipboard.writeText(value);
-  } catch {
-    // WebViews reject the async API when the page is not focused; the legacy path still copies on a click.
-    const area = document.createElement('textarea');
-    area.value = value;
-    area.setAttribute('readonly', '');
-    area.style.position = 'fixed';
-    area.style.opacity = '0';
-    document.body.append(area);
-    try {
-      area.select();
-      if (!document.execCommand('copy')) throw new Error('Copy command rejected');
-    } finally { area.remove(); }
-  }
-};
 export function UserAcceptanceSection({ locale, state, demo, onCopy = copyToClipboard, onOpen = host.app.openExternal }: {
   locale: Locale; state: AcceptanceState; demo: boolean;
   onCopy?: (value: string) => Promise<void>; onOpen?: (url: string) => Promise<void>;
@@ -87,6 +71,9 @@ export function UserAcceptanceSection({ locale, state, demo, onCopy = copyToClip
                       {progress ? text.t(FIX_TEXT[progress], { n: fixNumber ?? '?' })
                         : record.sync === 'confirmed' ? text.t('acceptanceFeedbackSent') : text.t('acceptanceNotSynced')}
                     </p>
+                    {fixNumber !== undefined && (progress === 'queued' || progress === 'working') ? (
+                      <DispatchPanel locale={locale} repo={item.repo} issue={fixNumber} />
+                    ) : null}
                     {progress === 'failed' || progress === 'notStarted' ? (
                       <div><Button size="sm" disabled={state.storageError} onClick={() => { void state.retryFix(item); }}>{text.t(progress === 'notStarted' ? 'acceptanceFixContinue' : 'acceptanceFixRetry')}</Button></div>
                     ) : null}

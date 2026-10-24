@@ -3,6 +3,7 @@ mod bridge;
 mod github_readonly;
 mod github_write;
 mod quota_hud;
+mod dispatch_launch;
 mod dispatch_readonly;
 mod session_checkpoint;
 mod local_store;
@@ -66,6 +67,8 @@ pub fn run() {
             github_write::github_write_set_pause,
             github_write::github_write_accept,
             github_write::github_write_request_changes,
+            dispatch_launch::dispatch_launch,
+            dispatch_launch::dispatch_runs,
             dispatch_readonly::dispatch_readonly_snapshot,
             local_store::local_store_read,
             local_store::local_store_quarantine,
