@@ -6,6 +6,37 @@ import { windowsShellCommand } from './windows-command.mjs';
 
 export const supportedNodeRange = '^22.13.0 || >=24.0.0';
 
+const RUSTUP_URL = 'https://rustup.rs/';
+export const msvcInstallHint = 'Not found. Install Visual Studio Build Tools from https://visualstudio.microsoft.com/visual-cpp-build-tools/ and select "Desktop development with C++", including the MSVC x64/x86 build tools and a Windows 10/11 SDK. Then reopen PowerShell and rerun "node scripts/agent/doctor.mjs".';
+
+export function commandFailureDetail(command, status, platform = process.platform) {
+  if (platform === 'win32') {
+    return `${command} was not found or exited unsuccessfully (exit code ${status ?? 'unknown'})`;
+  }
+  return `${command} exited unsuccessfully (exit code ${status ?? 'unknown'})`;
+}
+
+export function rustToolchainHint(command, state, cargoBin = '', platform = process.platform) {
+  const label = command === 'cargo' ? 'Cargo' : 'rustc';
+  if (state === 'not-on-path') {
+    return `Found ${label} under "${cargoBin}", but its directory is not on PATH. Close and reopen PowerShell. If it is still missing, add "${cargoBin}" to your user PATH, then rerun "node scripts/agent/doctor.mjs".`;
+  }
+  if (state === 'failed') {
+    return `Found ${label} under "${cargoBin}", but it did not run successfully. Run "rustup show" and "rustup toolchain list". If the stable MSVC toolchain is missing, run "rustup toolchain install stable-x86_64-pc-windows-msvc" and "rustup default stable-x86_64-pc-windows-msvc", then rerun doctor.`;
+  }
+  if (platform === 'win32') {
+    return `${label} was not found. Install Rust using rustup from ${RUSTUP_URL} and select the stable "x86_64-pc-windows-msvc" toolchain. Close and reopen PowerShell, then rerun "node scripts/agent/doctor.mjs".`;
+  }
+  return `${label} was not found. Install Rust using rustup from ${RUSTUP_URL}, select the stable toolchain, reopen the terminal, then rerun "node scripts/agent/doctor.mjs".`;
+}
+
+export function pnpmCorepackHint(version, platform = process.platform) {
+  const writableShimHint = platform === 'win32'
+    ? 'If Corepack cannot write beside Node.js, run `corepack enable --install-directory "$env:USERPROFILE\\.local\\bin" pnpm`, add that directory to your user PATH, and reopen PowerShell.'
+    : 'If Corepack cannot write to its shim directory, run `corepack enable --install-directory <writable-directory> pnpm` and ensure that directory is on PATH.';
+  return `Corepack can run pnpm ${version}, but Tauri's beforeDevCommand calls "pnpm" directly. Run "corepack enable", reopen the terminal, and confirm "pnpm --version" works. ${writableShimHint}`;
+}
+
 export function isSupportedNodeVersion(version) {
   const match = /^(?:v)?(\d+)\.(\d+)\.(\d+)/.exec(version);
   if (!match) return false;
@@ -27,8 +58,8 @@ export function collectEnvironmentChecks() {
       detail: `${process.version} (requires ${supportedNodeRange})`,
     },
     resolvePnpmCheck(),
-    commandCheck('cargo', ['--version']),
-    commandCheck('rustc', ['--version']),
+    rustCommandCheck('cargo'),
+    rustCommandCheck('rustc'),
   ];
 
   if (process.platform === 'win32') checks.push(windowsMsvcCheck());
@@ -69,22 +100,69 @@ export function commandCheck(command, args, name = command) {
     windowsHide: true,
   });
   const output = String(result.stdout || result.stderr || result.error?.message || '').trim().split(/\r?\n/, 1)[0];
-  const detail = output || (result.status === 0 ? 'available' : 'not found');
+  const detail = result.status === 0
+    ? output || 'available'
+    : process.platform === 'win32'
+      ? commandFailureDetail(command, result.status, 'win32')
+      : output || commandFailureDetail(command, result.status);
   return { name, ok: result.status === 0, detail };
 }
 
-function resolvePnpmCheck() {
-  const direct = commandCheck('pnpm', ['--version']);
+export function resolvePnpmCheck(checkCommand = commandCheck, platform = process.platform) {
+  const direct = checkCommand('pnpm', ['--version']);
   if (direct.ok) return direct;
 
-  const viaCorepack = commandCheck('corepack', ['pnpm', '--version'], 'pnpm');
-  if (viaCorepack.ok) return { ...viaCorepack, detail: `${viaCorepack.detail} (via Corepack)` };
+  const viaCorepack = checkCommand('corepack', ['pnpm', '--version'], 'pnpm');
+  if (viaCorepack.ok) {
+    if (platform === 'win32') {
+      const located = checkCommand('where', ['pnpm']);
+      if (located.ok) {
+        return {
+          name: 'pnpm',
+          ok: false,
+          detail: `The pnpm command was found on PATH but failed when run. ${direct.detail}. Check that the shim points to a working Corepack installation, then rerun "node scripts/agent/doctor.mjs".`,
+        };
+      }
+    }
+    return { name: 'pnpm', ok: false, detail: pnpmCorepackHint(viaCorepack.detail, platform) };
+  }
 
   return {
     name: 'pnpm',
     ok: false,
-    detail: 'pnpm not found; install pnpm or enable Corepack',
+    detail: 'pnpm was not found. Install pnpm directly, or install Corepack (it is not bundled with Node.js 25+) and run "corepack enable". Ensure the "pnpm" command is available on PATH; Tauri calls it directly during startup.',
   };
+}
+
+export function rustCommandCheck(command, {
+  checkCommand = commandCheck,
+  platform = process.platform,
+  env = process.env,
+  fileExists = existsSync,
+} = {}) {
+  const check = checkCommand(command, ['--version']);
+  if (check.ok) return check;
+
+  if (platform === 'win32') {
+    const profile = env.USERPROFILE || env.HOME;
+    const cargoHome = env.CARGO_HOME || (profile ? path.win32.join(profile, '.cargo') : '');
+    const cargoBin = cargoHome ? path.win32.join(cargoHome, 'bin') : '';
+    const executablePath = cargoBin ? path.win32.join(cargoBin, `${command}.exe`) : '';
+    if (executablePath && fileExists(executablePath)) {
+      const normalizedBin = path.win32.resolve(cargoBin).toLowerCase();
+      const onPath = String(env.PATH || '').split(';').some((entry) => {
+        const trimmed = entry.trim().replace(/^"(.*)"$/, '$1');
+        return trimmed && path.win32.resolve(trimmed).toLowerCase() === normalizedBin;
+      });
+      return {
+        name: command,
+        ok: false,
+        detail: rustToolchainHint(command, onPath ? 'failed' : 'not-on-path', cargoBin, 'win32'),
+      };
+    }
+  }
+
+  return { name: command, ok: false, detail: rustToolchainHint(command, 'missing', '', platform) };
 }
 
 function windowsMsvcCheck() {
@@ -116,6 +194,6 @@ function windowsMsvcCheck() {
   return {
     name: 'msvc-cpp-build-tools',
     ok: false,
-    detail: 'Install Visual Studio Build Tools with Desktop development with C++',
+    detail: msvcInstallHint,
   };
 }
