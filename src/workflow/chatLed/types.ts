@@ -59,7 +59,9 @@ export interface ForwardRecord {
   round: number; // 1-based coordinator round that issued it
   from: AIProvider; // always the coordinator
   to: ProviderInstance;
-  message: string; // exact text sent to `to`
+  message: string; // the coordinator's message for `to`
+  /** The user's standing note for `to` (#200), sent before `message`; absent when there is none. */
+  note?: string;
   messageChars: number;
   status: ForwardStatus;
   reply?: string; // complete reply once status === 'done'
@@ -154,6 +156,8 @@ export interface ChatLedRun {
    * user's own: never registered, never cleaned up.
    */
   keepPages?: boolean;
+  /** The user's standing note per AI (#200), put before every message forwarded to it. */
+  forwardNotes?: Partial<Record<ProviderInstance, string>>;
   mode?: ChatLedMode; // absent in v1 storage means general
   autoReminderStreak?: number; // consecutive automatic retries since a successful send
   round: number; // number of coordinator replies processed so far

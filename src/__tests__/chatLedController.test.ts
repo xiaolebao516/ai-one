@@ -5,6 +5,7 @@ import { loadRuns, saveRunChecked, type ChatLedStorage } from '../workflow/chatL
 import {
   CHAT_LED_INIT_SETTLE_TIMEOUT_MS,
   CHAT_LED_FORWARD_TIMEOUT_MS,
+  CHAT_LED_KEEP_PAGES_PIN_DELAY_MS,
   ChatLedController,
   type ChatLedEnv,
 } from '../workflow/chatLed/controller';
@@ -127,7 +128,7 @@ describe('ChatLedController', () => {
     });
     const controller = await ChatLedController.create(env, {
       id: 'run-1',
-      goal: '派 gpt 和 gemini 讨论',
+      goal: '派 claude 和 gemini 讨论',
       candidates: ['claude', 'gemini', 'grok', 'chatgpt#2'],
       workers: 1,
     });
@@ -140,6 +141,7 @@ describe('ChatLedController', () => {
       { provider: 'chatgpt#2', reason: 'Not logged in or the page is not ready.' },
     ]);
     expect(calls[0].text).not.toContain('grok（');
+    expect(env.prepare).not.toHaveBeenCalledWith('grok'); // not named: not even prepared (#200)
     expect(calls[0].provider).toBe('chatgpt');
     expect(calls[0].text).toContain('gemini（Gemini，原因：gemini page did not become ready in time.）');
     expect(calls[0].text).toContain('不要改派给列表里的其他 AI 顶替');
@@ -1162,5 +1164,100 @@ describe('keep the pages the user set up (#198)', () => {
     await controller.start();
     expect(calls.some((call) => call.provider === 'gemini')).toBe(false);
     expect(controller.getRun().forwards[0]).toMatchObject({ status: 'failed', error: expect.stringContaining('Cannot confirm the page address') });
+  });
+});
+
+describe('run-through fixes (#200)', () => {
+  it('waits longer than the old three-minute cap for a forward', () => {
+    expect(CHAT_LED_FORWARD_TIMEOUT_MS).toBeGreaterThan(60 * 60_000);
+  });
+
+  it('prepares and offers only the AIs the task names, plus extra workers', async () => {
+    const { env } = makeEnv({ chatgpt: [DONE('ok')] }, ['chatgpt', 'claude', 'gemini', 'chatgpt#2']);
+    const controller = await ChatLedController.create(env, {
+      id: 'run-named',
+      goal: '派gpt和gemini argon分别解决 issue',
+      candidates: ['claude', 'gemini', 'grok', 'chatgpt#2'],
+      workers: 1,
+    });
+    await controller.start();
+    const prepared = vi.mocked(env.prepare).mock.calls.map(([provider]) => provider);
+    expect(prepared.slice(0, 3)).toEqual(['chatgpt', 'gemini', 'chatgpt#2']);
+    expect(prepared).not.toContain('claude');
+    expect(prepared).not.toContain('grok');
+    expect(controller.getRun().available).toEqual(['gemini', 'chatgpt#2']);
+  });
+
+  it('keeps every candidate when the task names none', async () => {
+    const { env } = makeEnv({ chatgpt: [DONE('ok')] });
+    const controller = await create(env); // goal: compare two designs
+    await controller.start();
+    expect(controller.getRun().available).toEqual(['claude', 'gemini']);
+  });
+
+  it('puts the user note before the forwarded message, keeps the record apart, and tells the coordinator', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [SEND(['gemini'], 'investigate'), DONE('ok')], gemini: ['done'] });
+    const controller = await ChatLedController.create(env, {
+      id: 'run-notes',
+      goal: 'compare two designs',
+      candidates: ['claude', 'gemini'],
+      forwardNotes: { gemini: '@Github MCP Server 用我配置的 MCP', claude: '   ' },
+    });
+    await controller.start();
+    const toGemini = calls.find((call) => call.provider === 'gemini');
+    expect(toGemini?.text).toBe('@Github MCP Server 用我配置的 MCP\n\ninvestigate');
+    expect(controller.getRun().forwards[0]).toMatchObject({ message: 'investigate', note: '@Github MCP Server 用我配置的 MCP' });
+    expect(controller.getRun().forwardNotes).toEqual({ gemini: '@Github MCP Server 用我配置的 MCP' });
+    expect(calls[0].text).toContain('gemini（Gemini）：「@Github MCP Server 用我配置的 MCP」');
+    expect(calls[0].text).toContain('不要写成“你自己的工具”');
+  });
+
+  async function keepRunWithSlowFirstSend(afterPin: (setUrl: (url: string) => void) => void) {
+    const { env, calls } = makeEnv({
+      chatgpt: [SEND(['gemini'], 'first'), SEND(['gemini'], 'second'), DONE('done')],
+      gemini: [],
+    });
+    let geminiUrl = 'https://gemini.google.com/app';
+    env.readConversationUrl = vi.fn(async (provider: ProviderInstance) =>
+      provider === 'gemini' ? geminiUrl : 'https://chatgpt.com/c/user-chat',
+    );
+    let failFirst!: (error: Error) => void;
+    const send = env.send;
+    env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
+      if (provider !== 'gemini') return send(provider, text);
+      calls.push({ provider, text });
+      if (calls.filter((call) => call.provider === 'gemini').length > 1) return 'second reply';
+      geminiUrl = 'https://gemini.google.com/app/new-task'; // the empty page gets its address at once
+      return new Promise<string>((_, reject) => {
+        failFirst = reject;
+      });
+    });
+    const controller = await ChatLedController.create(env, { id: 'run-keep-timeout', goal: 'use gemini', candidates: ['gemini'], keepPages: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const running = controller.start();
+      await vi.advanceTimersByTimeAsync(CHAT_LED_KEEP_PAGES_PIN_DELAY_MS + 1_000);
+      afterPin((url) => {
+        geminiUrl = url;
+      });
+      failFirst(new Error('response timed out'));
+      await vi.advanceTimersByTimeAsync(10_000);
+      await running;
+    } finally {
+      vi.useRealTimers();
+    }
+    return { controller, calls };
+  }
+
+  it('keepPages: pins the address a fresh page got shortly after its first send, even if that send then fails', async () => {
+    const { controller, calls } = await keepRunWithSlowFirstSend(() => undefined);
+    expect(calls.filter((call) => call.provider === 'gemini')).toHaveLength(2);
+    expect(controller.getRun().forwards[1]).toMatchObject({ status: 'done', reply: 'second reply' });
+  });
+
+  it('keepPages: a chat the user opened during the failed first wait never receives the next round', async () => {
+    const { controller, calls } = await keepRunWithSlowFirstSend((setUrl) => setUrl('https://gemini.google.com/app/users-old-chat'));
+    expect(calls.filter((call) => call.provider === 'gemini')).toHaveLength(1);
+    expect(controller.getRun().forwards[1]).toMatchObject({ status: 'failed', error: expect.stringContaining('switched to another conversation') });
   });
 });

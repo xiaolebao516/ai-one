@@ -30,8 +30,11 @@ const PROVIDER_ALIASES: Partial<Record<AIProvider, string[]>> = {
 export function goalNamesProvider(goal: string, provider: ProviderInstance): boolean {
   if (!(provider in PROVIDER_LABELS)) return true;
   const base = provider as AIProvider;
-  const text = goal.toLowerCase();
-  return [base, PROVIDER_LABELS[base].toLowerCase(), ...(PROVIDER_ALIASES[base] ?? [])].some((name) => text.includes(name));
+  // A file such as CLAUDE.md names a file, not the AI.
+  const text = goal.toLowerCase().replace(/[a-z0-9_-]*\.md\b/g, ' ');
+  // Latin names must stand as whole words ("grokking" is not Grok); Chinese aliases match anywhere.
+  const word = (name: string) => new RegExp('(^|[^a-z0-9])' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^a-z0-9])').test(text);
+  return [base, PROVIDER_LABELS[base].toLowerCase()].some(word) || (PROVIDER_ALIASES[base] ?? []).some((name) => text.includes(name));
 }
 
 type DirectiveFenceName = typeof SEND_FENCE | typeof DONE_FENCE;
@@ -85,6 +88,20 @@ function collectTopLevelDirectiveFences(reply: string): DirectiveFence[] {
 
     const marker = opening[1];
     const info = opening[2].trim();
+
+    // Coordinators sometimes put the JSON on the fence line itself, even the closing fence (#200):
+    // ```ai-one-send {"to":[...],"message":"..."} ```
+    const inline = info.match(/^(ai-one-send|ai-one-done)[ \t]+(\{.*)$/);
+    if (inline) {
+      const fenceName = inline[1] as DirectiveFenceName;
+      const closed = inline[2].match(/^(.*?)[ \t]*([\x60]{3,}|~{3,})[ \t]*$/);
+      if (closed && closed[2][0] === marker[0] && closed[2].length >= marker.length) {
+        directives.push({ name: fenceName, body: closed[1] });
+      } else {
+        open = { marker: marker[0], length: marker.length, name: fenceName, content: [inline[2]] };
+      }
+      continue;
+    }
     if (marker[0] === '\x60' && info.includes('\x60')) continue;
 
     const name =
@@ -196,6 +213,7 @@ export function buildIntroPrompt(input: {
   coordinator: AIProvider;
   available: readonly { provider: ProviderInstance; label: string }[];
   unavailable?: readonly { provider: ProviderInstance; label: string; reason: string }[];
+  notes?: readonly { provider: ProviderInstance; label: string; note: string }[];
   roundLimit: number;
   mode?: 'general' | 'repo' | 'discuss';
 }): string {
@@ -225,6 +243,12 @@ export function buildIntroPrompt(input: {
     const missing = input.unavailable.map((item) => item.provider + '（' + item.label + '，原因：' + item.reason + '）').join('、');
     parts.splice(2, 0,
       '本次未就绪、不能转发的 AI：' + missing + '。如果用户任务点名要用其中的 AI，不要改派给列表里的其他 AI 顶替，也不要让其他 AI 扮演它；直接输出 ai-one-done 围栏，告诉用户哪个 AI 没就绪、请登录或打开后重新开始。');
+  }
+  if (input.notes && input.notes.length > 0) {
+    const listed = input.notes.map((item) => item.provider + '（' + item.label + '）：「' + item.note + '」').join('\n');
+    parts.splice(-1, 0,
+      'ai-one 会在你转发给下列 AI 的 message 前面自动附上用户给它的固定说明，你不用重复，也不要写出与之矛盾的要求：\n' + listed +
+      '\n涉及用户为某个 AI 配置的工具（例如用户自定义的 GitHub MCP Server）时，要写明是“用户配置的”，不要写成“你自己的工具”，也不要让它改用浏览器或网页搜索代替。');
   }
   if (input.available.some(({ provider }) => provider.startsWith('chatgpt#'))) {
     parts.splice(-1, 0, 'chatgpt#2 / chatgpt#3 是另外的独立 ChatGPT 工人对话，与你（协调者）不共享上下文，message 必须自包含。');

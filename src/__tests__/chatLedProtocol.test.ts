@@ -283,3 +283,28 @@ describe('provider instance names', () => {
     expect(providerInstanceName('chatgpt#2', { chatgpt: 'ChatGPT' })).toBe('ChatGPT #2');
   });
 });
+
+describe('one-line directive fences (#200)', () => {
+  const ctx = { coordinator: 'chatgpt' as const, available: ['gemini'] as ProviderInstance[] };
+  it('accepts the whole block on one line, as ChatGPT sometimes writes it', () => {
+    const reply = fence + 'ai-one-send { "to": ["gemini"], "message": "line one\\nline two" } ' + fence;
+    expect(parseCoordinatorReply(reply, ctx)).toEqual({ kind: 'send', to: ['gemini'], message: 'line one\nline two' });
+  });
+  it('accepts JSON that starts on the fence line and closes on a later line', () => {
+    const reply = fence + 'ai-one-send {"to":["gemini"],\n"message":"x"}\n' + fence;
+    expect(parseCoordinatorReply(reply, ctx)).toEqual({ kind: 'send', to: ['gemini'], message: 'x' });
+  });
+  it('still ignores ordinary fences and a fence name that only starts a word', () => {
+    expect(parseCoordinatorReply(fence + 'json {"to":["gemini"],"message":"x"} ' + fence, ctx)).toMatchObject({ kind: 'violation', code: 'no-directive' });
+    expect(parseCoordinatorReply(fence + 'ai-one-sender {"to":["gemini"]} ' + fence, ctx)).toMatchObject({ kind: 'violation', code: 'no-directive' });
+  });
+});
+
+describe('naming an AI in the task (#200)', () => {
+  it('needs the whole word and ignores file names like CLAUDE.md', () => {
+    expect(goalNamesProvider('按 CLAUDE.md 修 issue', 'claude')).toBe(false);
+    expect(goalNamesProvider('explain grokking', 'grok')).toBe(false);
+    expect(goalNamesProvider('派gpt和gemini argon分别解决', 'gemini')).toBe(true);
+    expect(goalNamesProvider('Claude, review this', 'claude')).toBe(true);
+  });
+});
