@@ -319,6 +319,22 @@ describe('extra ChatGPT worker selection', () => {
     expect((again.querySelector('#chatled-keep-pages') as HTMLInputElement).checked).toBe(true);
   });
 
+  it('starts with a Gemini note for the user-configured GitHub MCP server, editable and remembered (#200)', async () => {
+    const container = await renderPage();
+    const gemini = container.querySelector('#chatled-note-gemini') as HTMLTextAreaElement;
+    expect(gemini.value).toContain('@Github MCP Server');
+    expect(gemini.value).toContain('不要打开浏览器');
+    expect((container.querySelector('#chatled-note-claude') as HTMLTextAreaElement).value).toBe('');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+    setter?.call(gemini, 'my own wording');
+    await act(async () => {
+      gemini.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    for (const { root } of roots.splice(0)) await act(async () => root.unmount());
+    const again = await renderPage();
+    expect((again.querySelector('#chatled-note-gemini') as HTMLTextAreaElement).value).toBe('my own wording');
+  });
+
   it('does not delete any conversation when another instance fails preparation', async () => {
     const run = makeRun();
     run.conversations[1].provider = 'chatgpt#2';

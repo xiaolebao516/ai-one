@@ -1,6 +1,7 @@
 // This export may contain conversation text. Never upload it or write it into the repository.
 import { AI_PROVIDERS } from '../../../shared/constants';
 import { providerInstanceName } from '../../../shared/providerInstances';
+import { forwardText } from './machine';
 import type { ChatLedRun, ForwardRecord } from './types';
 
 type Locale = 'zh' | 'en';
@@ -146,7 +147,7 @@ function formatForward(forward: ForwardRecord, copy: typeof COPY[Locale]): strin
     '',
     '**' + copy.message + '**',
     '',
-    fencedText(forward.message),
+    fencedText(forwardText(forward)),
     '',
     '**' + copy.reply + '**',
     '',

@@ -10,7 +10,7 @@ import {
   V2Scope,
   type V2StatusTone,
 } from "../../ui/v2";
-import { settledFeedbackItems } from "../../workflow/chatLed/machine";
+import { forwardText, settledFeedbackItems } from "../../workflow/chatLed/machine";
 import { buildFeedbackPrompt } from "../../workflow/chatLed/protocol";
 import type {
   ChatLedLogEvent,
@@ -605,7 +605,7 @@ function ForwardRow({
           {text.t("chatLedMessage")}
         </summary>
         <pre className="mt-v2-xs max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-v2-sm bg-v2-sunken p-v2-sm font-v2-mono text-v2-micro text-v2-ink-2">
-          {forward.message}
+          {forwardText(forward)}
         </pre>
       </details>
       {forward.reply !== undefined ? (

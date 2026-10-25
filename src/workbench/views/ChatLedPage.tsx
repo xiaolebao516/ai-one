@@ -16,7 +16,7 @@ import { appendCleanupResult, beginCleanup, closeRun, finishCleanup, interruptCl
 import { setRunPages } from '../../workflow/chatLed/runPages';
 import { loadRuns, saveRunChecked } from '../../workflow/chatLed/store';
 import type { ChatLedMode, ChatLedRun } from '../../workflow/chatLed/types';
-import { workbenchText } from '../workbenchText';
+import { workbenchText, type WorkbenchTextKey } from '../workbenchText';
 import { ChatLedView } from './ChatLedView';
 
 /** Providers the coordinator may address (the coordinator itself is excluded by the controller). */
@@ -56,6 +56,53 @@ function writeDraft(storage: Storage | undefined, draft: string): void {
 
 /** The "keep my pages" choice is sticky: users who need a page mode (#198) need it every run. */
 const KEEP_PAGES_KEY = 'ai-one:chat-led:keep-pages:v1';
+
+/**
+ * Standing notes put before every message forwarded to an AI (#200). Gemini wandered off to its own
+ * tools and the browser unless told to use the GitHub MCP server the user configured for it.
+ */
+const NOTES_KEY = 'ai-one:chat-led:notes:v1';
+type NoteTarget = 'gemini' | 'claude' | 'chatgpt-workers';
+const NOTE_TARGETS: readonly NoteTarget[] = ['gemini', 'claude', 'chatgpt-workers'];
+const DEFAULT_NOTES: Record<NoteTarget, string> = {
+  gemini:
+    '@Github MCP Server 请通过我（用户）自己配置的自定义 GitHub MCP Server 访问 GitHub 和仓库内容，不要用你自带的工具，不要打开浏览器，也不要上网搜索；如果这个 MCP Server 用不了，直接告诉我在哪一步失败，不要换别的方式。',
+  claude: '',
+  'chatgpt-workers': '',
+};
+
+const NOTE_LABEL_KEYS: Record<NoteTarget, WorkbenchTextKey> = {
+  gemini: 'chatLedNoteGemini',
+  claude: 'chatLedNoteClaude',
+  'chatgpt-workers': 'chatLedNoteWorkers',
+};
+
+function readNotes(storage: Storage | undefined): Record<NoteTarget, string> {
+  try {
+    const raw = storage?.getItem(NOTES_KEY);
+    if (!raw) return { ...DEFAULT_NOTES };
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return { ...DEFAULT_NOTES };
+    const stored = parsed as Record<string, unknown>;
+    return Object.fromEntries(
+      NOTE_TARGETS.map((target) => [target, typeof stored[target] === 'string' ? stored[target] : DEFAULT_NOTES[target]]),
+    ) as Record<NoteTarget, string>;
+  } catch {
+    return { ...DEFAULT_NOTES };
+  }
+}
+
+function writeNotes(storage: Storage | undefined, notes: Record<NoteTarget, string>): void {
+  try {
+    storage?.setItem(NOTES_KEY, JSON.stringify(notes));
+  } catch {
+    // Unavailable storage: the notes still hold for this session.
+  }
+}
+
+function notesByProvider(notes: Record<NoteTarget, string>): Partial<Record<ProviderInstance, string>> {
+  return { gemini: notes.gemini, claude: notes.claude, 'chatgpt#2': notes['chatgpt-workers'], 'chatgpt#3': notes['chatgpt-workers'] };
+}
 
 function readKeepPages(storage: Storage | undefined): boolean {
   try {
@@ -109,6 +156,8 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
   const [mode, setMode] = useState<ChatLedMode>('general');
   const [workers, setWorkers] = useState<0 | 1 | 2>(0);
   const [keepPages, setKeepPages] = useState(() => readKeepPages(storage));
+  const [notes, setNotes] = useState(() => readNotes(storage));
+  useEffect(() => writeNotes(storage, notes), [storage, notes]);
   useEffect(() => writeKeepPages(storage, keepPages), [storage, keepPages]);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -196,7 +245,7 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
     setError(undefined);
     try {
       const env = createRealChatLedEnv();
-      const controller = await ChatLedController.create(env, { id: newRunId(), goal: trimmed, candidates: [...CANDIDATES, ...EXTRA_WORKERS.slice(0, workers)], mode, workers, keepPages });
+      const controller = await ChatLedController.create(env, { id: newRunId(), goal: trimmed, candidates: [...CANDIDATES, ...EXTRA_WORKERS.slice(0, workers)], mode, workers, keepPages, forwardNotes: notesByProvider(notes) });
       controllers.current.set(controller.getRun().id, controller);
       persist(controller.getRun());
       if (!persistedRef.current) {
@@ -268,6 +317,30 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
               <option value={1}>{text.t('chatLedWorkersOne')}</option>
               <option value={2}>{text.t('chatLedWorkersTwo')}</option>
             </select>
+            <details className="min-w-0 text-v2-meta text-v2-ink" data-testid="chatled-notes">
+              <summary className="cursor-pointer font-medium">
+                {text.t('chatLedNotesTitle', {
+                  set: NOTE_TARGETS.filter((target) => notes[target].trim()).map((target) => text.t(NOTE_LABEL_KEYS[target])).join('、') || text.t('chatLedNotesNone'),
+                })}
+              </summary>
+              <p className="mt-v2-xs text-v2-ink-2">{text.t('chatLedNotesHint')}</p>
+              <div className="mt-v2-xs grid gap-v2-xs">
+                {NOTE_TARGETS.map((target) => (
+                  <label key={target} className="grid gap-v2-xs">
+                    <span>{text.t(NOTE_LABEL_KEYS[target])}</span>
+                    <textarea
+                      id={'chatled-note-' + target}
+                      className="min-h-16 w-full rounded-v2-md border border-v2-line bg-v2-surface p-v2-sm text-v2-body text-v2-ink"
+                      value={notes[target]}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setNotes((current) => ({ ...current, [target]: value }));
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+            </details>
             <label className="flex items-start gap-v2-sm text-v2-meta text-v2-ink">
               <input
                 id="chatled-keep-pages"

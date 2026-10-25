@@ -25,6 +25,17 @@ export interface FeedbackItem {
   error?: string;
 }
 
+function notesOrUndefined(notes: Partial<Record<ProviderInstance, string>> | undefined): Partial<Record<ProviderInstance, string>> | undefined {
+  if (!notes) return undefined;
+  const kept = Object.fromEntries(Object.entries(notes).filter(([, note]) => typeof note === 'string' && note.trim()).map(([provider, note]) => [provider, (note as string).trim()]));
+  return Object.keys(kept).length > 0 ? kept : undefined;
+}
+
+/** The exact text a forward sends: the user's standing note for that AI, then the coordinator's message. */
+export function forwardText(forward: Pick<ForwardRecord, 'message' | 'note'>): string {
+  return forward.note ? forward.note + '\n\n' + forward.message : forward.message;
+}
+
 export function createRun(input: {
   id: string;
   goal: string;
@@ -34,6 +45,7 @@ export function createRun(input: {
   mode?: ChatLedMode;
   workers?: 0 | 1 | 2;
   keepPages?: boolean;
+  forwardNotes?: Partial<Record<ProviderInstance, string>>;
   now: number;
 }): ChatLedRun {
   const coordinator = input.coordinator ?? DEFAULT_COORDINATOR;
@@ -48,6 +60,7 @@ export function createRun(input: {
     mode: input.mode ?? 'general',
     workers: input.workers ?? 0,
     ...(input.keepPages ? { keepPages: true } : {}),
+    ...(notesOrUndefined(input.forwardNotes) ? { forwardNotes: notesOrUndefined(input.forwardNotes) } : {}),
     round: 0,
     phase: 'idle',
     forwards: [],
@@ -258,6 +271,7 @@ export function applyCoordinatorReply(
       from: run.coordinator,
       to: provider,
       message: parsed.message,
+      ...(run.forwardNotes?.[provider] ? { note: run.forwardNotes[provider] } : {}),
       messageChars: parsed.message.length,
       status: 'queued' as const,
     }));

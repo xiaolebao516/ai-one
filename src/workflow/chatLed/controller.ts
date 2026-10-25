@@ -20,6 +20,7 @@ import {
   settledFeedbackItems,
   setAvailableProviders,
   appendLog,
+  forwardText,
   setInitializationPending,
   startRun,
   stopRun,
@@ -33,7 +34,14 @@ import { DEFAULT_COORDINATOR, DEFAULT_ROUND_LIMIT } from './types';
 export const CHAT_LED_URL_READ_TIMEOUT_MS = 3_000;
 export const CHAT_LED_INIT_SETTLE_TIMEOUT_MS = 5_000;
 export const CHAT_LED_STOP_WAIT_TIMEOUT_MS = 5_000;
-export const CHAT_LED_FORWARD_TIMEOUT_MS = 180_000;
+/** keepPages: how long after the first send the new conversation's address is read and pinned (#200). */
+export const CHAT_LED_KEEP_PAGES_PIN_DELAY_MS = 15_000;
+/**
+ * Last-resort cap only. The real limit is the reply wait itself: 10 minutes without page activity or
+ * 60 minutes in all, the same as the discussion mode. A web AI working through a repository with its
+ * tools easily runs past a few minutes (#200), and a timeout also stops that page.
+ */
+export const CHAT_LED_FORWARD_TIMEOUT_MS = 65 * 60_000;
 
 class ForwardTimeoutError extends Error {}
 
@@ -125,6 +133,7 @@ export interface ChatLedStartInput {
   mode?: ChatLedMode;
   workers?: 0 | 1 | 2;
   keepPages?: boolean;
+  forwardNotes?: Partial<Record<ProviderInstance, string>>;
 }
 
 /** Drives one chat-led run (#113), with pure state transitions and bounded provider I/O. */
@@ -167,9 +176,19 @@ export class ChatLedController {
       mode: input.mode ?? 'general',
       workers: input.workers ?? 0,
       keepPages: input.keepPages,
+      forwardNotes: input.forwardNotes,
       now: env.now(),
     });
     return Promise.resolve(new ChatLedController(env, run, input.candidates));
+  }
+
+  /**
+   * When the task names some AIs, only those take part, plus the extra ChatGPT workers the user
+   * switched on (#200): no waiting on pages the user never uses, and nobody to substitute.
+   */
+  private get targets(): readonly ProviderInstance[] {
+    const named = this.candidates.filter((provider) => goalNamesProvider(this.run.goal, provider));
+    return named.some((provider) => provider in PROVIDER_LABELS) ? named : this.candidates;
   }
 
   getRun(): ChatLedRun {
@@ -244,6 +263,10 @@ export class ChatLedController {
         label: providerInstanceName(provider, PROVIDER_LABELS),
         reason,
       })),
+      notes: this.run.available.flatMap((provider) => {
+        const note = this.run.forwardNotes?.[provider];
+        return note ? [{ provider, label: providerInstanceName(provider, PROVIDER_LABELS), note }] : [];
+      }),
       roundLimit: this.run.roundLimit,
       mode: this.run.mode ?? 'general',
     });
@@ -262,7 +285,7 @@ export class ChatLedController {
       this.assertPersisted();
       if (!(await this.waitWhilePaused()) || !live()) return false;
 
-      const providers = [...new Set([coordinator, ...this.candidates.filter((provider) => provider !== coordinator)])];
+      const providers = [...new Set([coordinator, ...this.targets.filter((provider) => provider !== coordinator)])];
       for (const provider of providers) {
         if (!(await this.waitWhilePaused()) || !live()) return false;
         this.preparingProviders.add(provider);
@@ -302,7 +325,7 @@ export class ChatLedController {
         return false;
       }
 
-      const available = [...new Set(this.candidates.filter(
+      const available = [...new Set(this.targets.filter(
         (provider) => provider !== coordinator && prepared.has(provider) && sendable.has(provider),
       ))];
       if (available.length === 0) {
@@ -319,7 +342,7 @@ export class ChatLedController {
       }
 
       // Never drop a candidate silently: the user and the coordinator both see who is missing and why (#189).
-      const unavailable = this.candidates
+      const unavailable = this.targets
         .filter((provider) => provider !== coordinator && !available.includes(provider) && goalNamesProvider(this.run.goal, provider))
         .map((provider) => ({ provider, reason: failures.get(provider) ?? 'Not logged in or the page is not ready.' }));
       this.set(setAvailableProviders(this.run, available, this.env.now(), unavailable));
@@ -531,7 +554,7 @@ export class ChatLedController {
       if (!forwardLive()) return;
       if (!sendable.includes(forward.to)) throw new Error('Target AI is not logged in or its page is not ready.');
       patch({ status: 'waiting' });
-      const reply = await this.sendOwned(forward.to, forward.message, forwardLive);
+      const reply = await this.sendOwned(forward.to, forwardText(forward), forwardLive);
       if (!forwardLive()) return;
       patch({ status: 'done', reply, replyChars: reply.length, finishedAt: this.env.now() });
     })();
@@ -705,12 +728,36 @@ export class ChatLedController {
     // Pin the conversation before sending, so a failed send still leaves something to compare with.
     if (!last) this.inPlaceUrls.set(provider, current);
     this.assertPersisted();
-    const response = await this.env.send(provider, text);
+    // On the first send, the empty conversation the user opened gets its own address within seconds
+    // (a mode's start page need not be the site's usual one). Read the address shortly after sending
+    // and pin that: whatever the page shows at the end of a long or failed wait may be a chat the user
+    // opened meanwhile (#200).
+    let earlyTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+    let earlyRead: Promise<string | undefined> | undefined;
+    if (!last) {
+      earlyTimer = globalThis.setTimeout(() => {
+        earlyRead = readUrlWithin(this.env, provider);
+      }, CHAT_LED_KEEP_PAGES_PIN_DELAY_MS);
+    }
+    const movedEarly = async (): Promise<string | undefined> => {
+      if (earlyTimer !== undefined) globalThis.clearTimeout(earlyTimer);
+      const early = earlyRead ? await earlyRead : undefined;
+      return early && isProviderSite(provider, early) && !sameConversation(early, current) ? early : undefined;
+    };
+    let response: string;
+    try {
+      response = await this.env.send(provider, text);
+    } catch (error) {
+      const moved = await movedEarly();
+      if (moved) this.inPlaceUrls.set(provider, moved);
+      throw error;
+    }
+    const moved = await movedEarly();
     const after = await readUrlWithin(this.env, provider);
-    // Follow the page only on its first reply, when the empty conversation the user opened gets its
-    // address (a mode's start page need not be the site's usual one). Any later move keeps the pin,
-    // so the next send is refused.
-    if (after && isProviderSite(provider, after) && (!last || sameConversation(after, current))) {
+    if (!last) {
+      const pin = moved ?? (after && isProviderSite(provider, after) ? after : undefined);
+      if (pin) this.inPlaceUrls.set(provider, pin);
+    } else if (after && isProviderSite(provider, after) && sameConversation(after, current)) {
       this.inPlaceUrls.set(provider, after);
     }
     this.assertPersisted();
