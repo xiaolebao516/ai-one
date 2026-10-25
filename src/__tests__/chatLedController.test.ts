@@ -1074,3 +1074,93 @@ describe('process log (#196)', () => {
     expect(controller.getRun().log).toBeUndefined(); // idle: nothing to pause or resume
   });
 });
+
+describe('keep the pages the user set up (#198)', () => {
+  const SITE: Record<string, string> = {
+    chatgpt: 'https://chatgpt.com/c/user-chat',
+    gemini: 'https://gemini.google.com/app/task-1',
+  };
+
+  async function keepRun(env: ChatLedEnv) {
+    return ChatLedController.create(env, { id: 'run-keep', goal: '派 gemini 用任务模式', candidates: ['gemini'], keepPages: true });
+  }
+
+  it('sends into the open conversations without opening new ones or registering them', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [SEND(['gemini'], 'use the MCP'), DONE('ok')], gemini: ['gemini reply'] });
+    env.readConversationUrl = vi.fn(async (provider: ProviderInstance) => SITE[provider]);
+    const controller = await keepRun(env);
+    await controller.start();
+    expect(env.newSession).not.toHaveBeenCalled();
+    expect(calls.map((call) => call.provider)).toEqual(['chatgpt', 'gemini', 'chatgpt']);
+    expect(controller.getRun()).toMatchObject({ phase: 'finished', keepPages: true, conversations: [], sessionInitializations: [] });
+  });
+
+  it('refuses to send once a page has moved to another conversation since its last reply', async () => {
+    const { env, calls } = makeEnv({
+      chatgpt: [SEND(['gemini'], 'first'), SEND(['gemini'], 'second'), DONE('stopped early')],
+      gemini: ['reply one', 'reply two'],
+    });
+    let geminiUrl = 'https://gemini.google.com/app/task-1';
+    env.readConversationUrl = vi.fn(async (provider: ProviderInstance) => (provider === 'gemini' ? geminiUrl : SITE.chatgpt));
+    const send = env.send;
+    env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
+      const reply = await send(provider, text);
+      // While the coordinator reads Gemini's first reply, the user opens another chat in that page.
+      if (provider === 'chatgpt' && calls.length === 3) geminiUrl = 'https://gemini.google.com/app/another-chat';
+      return reply;
+    });
+    const controller = await keepRun(env);
+    await controller.start();
+    expect(calls.filter((call) => call.provider === 'gemini')).toHaveLength(1);
+    expect(controller.getRun().forwards[1]).toMatchObject({ status: 'failed', error: expect.stringContaining('switched to another conversation') });
+  });
+
+  it('keeps the page pinned after a failed first send, so a later switch is still refused', async () => {
+    const { env, calls } = makeEnv({
+      chatgpt: [SEND(['gemini'], 'first'), SEND(['gemini'], 'second'), DONE('done')],
+      gemini: [new Error('reply timed out'), 'never sent'],
+    });
+    let geminiUrl = 'https://gemini.google.com/app/task-1';
+    env.readConversationUrl = vi.fn(async (provider: ProviderInstance) => (provider === 'gemini' ? geminiUrl : SITE.chatgpt));
+    const send = env.send;
+    env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
+      // The failed Gemini send is reported to the coordinator; meanwhile the user opens another chat.
+      if (provider === 'chatgpt' && calls.length === 2) geminiUrl = 'https://gemini.google.com/app/another-chat';
+      return send(provider, text);
+    });
+    const controller = await keepRun(env);
+    await controller.start();
+    expect(calls.filter((call) => call.provider === 'gemini')).toHaveLength(1);
+    expect(controller.getRun().forwards[1]).toMatchObject({ status: 'failed', error: expect.stringContaining('switched to another conversation') });
+  });
+
+  it('follows a fresh page to the address its first reply creates, then holds it', async () => {
+    const { env, calls } = makeEnv({
+      chatgpt: [SEND(['gemini'], 'first'), SEND(['gemini'], 'second'), DONE('done')],
+      gemini: ['one', 'two'],
+    });
+    let geminiUrl = 'https://gemini.google.com/tasks/new'; // a mode's own empty page
+    env.readConversationUrl = vi.fn(async (provider: ProviderInstance) => (provider === 'gemini' ? geminiUrl : SITE.chatgpt));
+    const send = env.send;
+    env.send = vi.fn(async (provider: ProviderInstance, text: string) => {
+      const reply = await send(provider, text);
+      if (provider === 'gemini') geminiUrl = 'https://gemini.google.com/tasks/t-123';
+      return reply;
+    });
+    const controller = await keepRun(env);
+    await controller.start();
+    expect(calls.filter((call) => call.provider === 'gemini')).toHaveLength(2);
+    expect(controller.getRun().phase).toBe('finished');
+  });
+
+  it('does not send when the page is not on the AI site', async () => {
+    const { env, calls } = makeEnv({ chatgpt: [SEND(['gemini'], 'x'), DONE('done')], gemini: ['never'] });
+    env.readConversationUrl = vi.fn(async (provider: ProviderInstance) =>
+      provider === 'gemini' ? 'https://accounts.google.com/signin' : SITE.chatgpt,
+    );
+    const controller = await keepRun(env);
+    await controller.start();
+    expect(calls.some((call) => call.provider === 'gemini')).toBe(false);
+    expect(controller.getRun().forwards[0]).toMatchObject({ status: 'failed', error: expect.stringContaining('Cannot confirm the page address') });
+  });
+});

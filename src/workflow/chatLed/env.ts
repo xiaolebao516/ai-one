@@ -73,8 +73,9 @@ export async function prepareProviderPage(provider: ProviderInstance): Promise<v
   }
   // Workbench hides loaded views. They must be shown offscreen again to obtain live DOM status.
   await host.provider.park(provider, parkedBounds());
-  // An earlier unconfirmed stop or unknown send locks the page until it is reloaded (#194). A run
-  // starts a new conversation anyway, so reload here instead of failing the first send.
+  // An earlier unconfirmed stop or unknown send locks the page until it is reloaded (#194). Reload
+  // here instead of failing the first send. It keeps the page on its address; with keepPages (#198)
+  // a mode chosen on a still-empty page may fall back to the default, which beats a dead page.
   if (host.provider.isSendBlocked(provider)) {
     if (provider === providerInstanceBase(provider)) resetProviderBootState(providerInstanceBase(provider));
     await host.provider.reload(provider);

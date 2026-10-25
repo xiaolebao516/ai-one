@@ -124,6 +124,7 @@ export interface ChatLedStartInput {
   roundLimit?: number;
   mode?: ChatLedMode;
   workers?: 0 | 1 | 2;
+  keepPages?: boolean;
 }
 
 /** Drives one chat-led run (#113), with pure state transitions and bounded provider I/O. */
@@ -143,6 +144,8 @@ export class ChatLedController {
   private readonly pendingInit = new Set<SessionInitAttempt>();
   /** Startup preparation is bounded by stop(), even if a host readiness call never returns. */
   private startupOperation: Promise<boolean> | undefined;
+  /** keepPages (#198): the conversation each page was on after its last reply. */
+  private readonly inPlaceUrls = new Map<ProviderInstance, string>();
 
   constructor(
     private readonly env: ChatLedEnv,
@@ -163,6 +166,7 @@ export class ChatLedController {
       roundLimit: input.roundLimit ?? DEFAULT_ROUND_LIMIT,
       mode: input.mode ?? 'general',
       workers: input.workers ?? 0,
+      keepPages: input.keepPages,
       now: env.now(),
     });
     return Promise.resolve(new ChatLedController(env, run, input.candidates));
@@ -579,6 +583,7 @@ export class ChatLedController {
       await this.env.prepare(provider);
       this.assertPersisted();
       await proceed();
+      if (this.run.keepPages) return this.sendInPlace(provider, text, live, proceed);
 
       const owned = this.run.conversations.find(
         (conversation) =>
@@ -667,6 +672,51 @@ export class ChatLedController {
       const index = this.stopWaiters.indexOf(stopWaiter);
       if (index >= 0) this.stopWaiters.splice(index, 1);
     }
+  }
+
+  /**
+   * keepPages (#198): send into the conversation the user set up on the page, without navigating,
+   * so its mode / model / thinking level stay. Refuses once the page has moved to another
+   * conversation since the last reply, so a run never writes into a chat the user opened meanwhile.
+   */
+  private async sendInPlace(
+    provider: ProviderInstance,
+    text: string,
+    live: () => boolean,
+    proceed: () => Promise<void>,
+  ): Promise<string> {
+    // The last pause wait must come BEFORE the address read: a read taken before or during a pause
+    // can be stale by the time the user resumes (same rule as the owned-conversation path).
+    let current: string | undefined;
+    for (;;) {
+      await proceed();
+      current = await readUrlWithin(this.env, provider);
+      if (!live()) throw new Error('Run stopped by user');
+      if (this.run.phase === 'paused') continue;
+      break;
+    }
+    if (!current || !isProviderSite(provider, current)) {
+      throw new Error('Cannot confirm the page address; not sending.');
+    }
+    const last = this.inPlaceUrls.get(provider);
+    if (last && !sameConversation(last, current)) {
+      throw new Error('The page has switched to another conversation since the last reply; not sending into it.');
+    }
+    // Pin the conversation before sending, so a failed send still leaves something to compare with.
+    if (!last) this.inPlaceUrls.set(provider, current);
+    this.assertPersisted();
+    const response = await this.env.send(provider, text);
+    const after = await readUrlWithin(this.env, provider);
+    // Follow the page only on its first reply, when the empty conversation the user opened gets its
+    // address (a mode's start page need not be the site's usual one). Any later move keeps the pin,
+    // so the next send is refused.
+    if (after && isProviderSite(provider, after) && (!last || sameConversation(after, current))) {
+      this.inPlaceUrls.set(provider, after);
+    }
+    this.assertPersisted();
+    const providerError = providerResponseError(providerInstanceBase(provider), response);
+    if (providerError) throw providerError;
+    return response;
   }
 
   private beginSessionAttempt(provider: ProviderInstance): SessionInitAttempt {
@@ -907,6 +957,14 @@ function isBlankStart(provider: ProviderInstance, raw: string): boolean {
     const url = new URL(raw);
     const [hosts, paths] = PROVIDER_START[providerInstanceBase(provider)];
     return url.protocol === 'https:' && !url.username && !url.password && !url.port && hosts.includes(url.hostname) && paths.includes(url.pathname);
+  } catch { return false; }
+}
+
+/** An https address on this provider's own site (any path: a mode may have its own pages). */
+function isProviderSite(provider: ProviderInstance, raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.port && PROVIDER_START[providerInstanceBase(provider)][0].includes(url.hostname);
   } catch { return false; }
 }
 

@@ -148,6 +148,12 @@ export interface ChatLedRun {
   unavailable?: UnavailableProvider[];
   roundLimit: number;
   workers?: 0 | 1 | 2; // absent in old storage means zero
+  /**
+   * Send into the conversation each page already has open instead of opening a new one (#198), so
+   * the mode, model and thinking level the user picked on the page stay. Such conversations are the
+   * user's own: never registered, never cleaned up.
+   */
+  keepPages?: boolean;
   mode?: ChatLedMode; // absent in v1 storage means general
   autoReminderStreak?: number; // consecutive automatic retries since a successful send
   round: number; // number of coordinator replies processed so far
