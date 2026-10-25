@@ -186,6 +186,7 @@ export function ChatLedView({
           <span className="text-v2-meta text-v2-ink-2">
             {text.t("chatLedRoundCount", { round: run.round, limit: run.roundLimit })}
           </span>
+          {run.keepPages ? <Badge tone="unknown">{text.t("chatLedKeepPagesOn")}</Badge> : null}
           <span className="flex-1" />
           {active ? (
             <Button size="sm" onClick={onPause}>

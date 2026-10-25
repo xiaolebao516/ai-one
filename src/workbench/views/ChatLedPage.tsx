@@ -54,6 +54,26 @@ function writeDraft(storage: Storage | undefined, draft: string): void {
   }
 }
 
+/** The "keep my pages" choice is sticky: users who need a page mode (#198) need it every run. */
+const KEEP_PAGES_KEY = 'ai-one:chat-led:keep-pages:v1';
+
+function readKeepPages(storage: Storage | undefined): boolean {
+  try {
+    return storage?.getItem(KEEP_PAGES_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeKeepPages(storage: Storage | undefined, keep: boolean): void {
+  try {
+    if (keep) storage?.setItem(KEEP_PAGES_KEY, '1');
+    else storage?.removeItem(KEEP_PAGES_KEY);
+  } catch {
+    // Unavailable storage: the choice still holds for this session.
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
 }
@@ -88,6 +108,8 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
   useEffect(() => writeDraft(storage, goal), [storage, goal]);
   const [mode, setMode] = useState<ChatLedMode>('general');
   const [workers, setWorkers] = useState<0 | 1 | 2>(0);
+  const [keepPages, setKeepPages] = useState(() => readKeepPages(storage));
+  useEffect(() => writeKeepPages(storage, keepPages), [storage, keepPages]);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [takeover, setTakeover] = useState<ProviderInstance | undefined>();
@@ -174,7 +196,7 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
     setError(undefined);
     try {
       const env = createRealChatLedEnv();
-      const controller = await ChatLedController.create(env, { id: newRunId(), goal: trimmed, candidates: [...CANDIDATES, ...EXTRA_WORKERS.slice(0, workers)], mode, workers });
+      const controller = await ChatLedController.create(env, { id: newRunId(), goal: trimmed, candidates: [...CANDIDATES, ...EXTRA_WORKERS.slice(0, workers)], mode, workers, keepPages });
       controllers.current.set(controller.getRun().id, controller);
       persist(controller.getRun());
       if (!persistedRef.current) {
@@ -246,6 +268,19 @@ export function ChatLedPage({ locale }: { locale: Locale }) {
               <option value={1}>{text.t('chatLedWorkersOne')}</option>
               <option value={2}>{text.t('chatLedWorkersTwo')}</option>
             </select>
+            <label className="flex items-start gap-v2-sm text-v2-meta text-v2-ink">
+              <input
+                id="chatled-keep-pages"
+                type="checkbox"
+                className="mt-1"
+                checked={keepPages}
+                onChange={(event) => setKeepPages(event.target.checked)}
+              />
+              <span>
+                <span className="font-medium">{text.t('chatLedKeepPagesLabel')}</span>
+                <span className="block text-v2-ink-2">{text.t('chatLedKeepPagesHint')}</span>
+              </span>
+            </label>
             <p className="text-v2-meta text-v2-ink-2">
               {text.t('chatLedCoordinatorLine', {
                 name: AI_PROVIDERS.chatgpt.name,

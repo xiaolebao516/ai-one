@@ -300,6 +300,25 @@ describe('extra ChatGPT worker selection', () => {
     expect(env.prepare).toHaveBeenCalledWith('chatgpt#2');
   });
 
+  it('remembers "use the open conversations" and starts the run with it (#198)', async () => {
+    const env = makeEnv();
+    mocks.createRealChatLedEnv.mockReturnValue(env);
+    const container = await renderPage();
+    const box = container.querySelector('#chatled-keep-pages') as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    await act(async () => box.click());
+    expect(window.localStorage.getItem('ai-one:chat-led:keep-pages:v1')).toBe('1');
+    await enterGoal(container, 'keep my gemini task mode');
+    await clickButton(container, 'Start');
+    await vi.waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem(CHAT_LED_STORAGE_KEY) ?? '[]') as ChatLedRun[];
+      expect(stored.find((run) => run.goal === 'keep my gemini task mode')?.keepPages).toBe(true);
+    });
+    for (const { root } of roots.splice(0)) await act(async () => root.unmount());
+    const again = await renderPage();
+    expect((again.querySelector('#chatled-keep-pages') as HTMLInputElement).checked).toBe(true);
+  });
+
   it('does not delete any conversation when another instance fails preparation', async () => {
     const run = makeRun();
     run.conversations[1].provider = 'chatgpt#2';

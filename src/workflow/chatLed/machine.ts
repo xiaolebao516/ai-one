@@ -33,6 +33,7 @@ export function createRun(input: {
   roundLimit?: number;
   mode?: ChatLedMode;
   workers?: 0 | 1 | 2;
+  keepPages?: boolean;
   now: number;
 }): ChatLedRun {
   const coordinator = input.coordinator ?? DEFAULT_COORDINATOR;
@@ -46,6 +47,7 @@ export function createRun(input: {
     roundLimit: input.roundLimit ?? DEFAULT_ROUND_LIMIT,
     mode: input.mode ?? 'general',
     workers: input.workers ?? 0,
+    ...(input.keepPages ? { keepPages: true } : {}),
     round: 0,
     phase: 'idle',
     forwards: [],
