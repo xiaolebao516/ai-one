@@ -64,6 +64,8 @@ export interface ForwardRecord {
   message: string; // the coordinator's message for `to`
   /** The user's standing note for `to` (#200), sent before `message`; absent when there is none. */
   note?: string;
+  /** Who the recipient is and how the collaboration works (#206), sent between note and message. */
+  briefing?: string;
   messageChars: number;
   status: ForwardStatus;
   reply?: string; // complete reply once status === 'done'
