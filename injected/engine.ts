@@ -953,7 +953,7 @@ class InactiveSendOperationError extends Error {
       if (adapter.provider === 'chatgpt') {
         const chatGptAdapter = adapter;
         if (await chatGptTurnAppearsLate(chatGptAdapter, sendOperation)) return;
-        const lateInput = queryInput(chatGptAdapter);
+        const lateInput = queryInput(adapter ?? chatGptAdapter);
         const composerState = !lateInput ? 'disappeared' : getInputText(lateInput).trim() ? 'changed' : 'cleared';
         emitChatGptUnconfirmed(composerState);
         doneWithError(
@@ -1007,10 +1007,12 @@ class InactiveSendOperationError extends Error {
     const deadline = Date.now() + CHATGPT_CLEARED_COMPOSER_GRACE_MS;
     while (Date.now() < deadline) {
       await new Promise<void>((resolve) => window.setTimeout(resolve, CHATGPT_CLEARED_COMPOSER_POLL_MS));
-      if (!isActiveSendOperation(sendOperation) || !waitingForResponse || adapter !== activeAdapter) return true;
-      if (abortAutomationForChallenge(activeAdapter.provider, true, 'send', sendOperation)) return true;
-      if (sendStarted(activeAdapter) || providerStillGeneratingBeforeSend(activeAdapter.provider)) return true;
-      const input = queryInput(activeAdapter);
+      // A refreshed adapter for the same provider keeps the wait going with the new selectors.
+      const live = adapter;
+      if (!isActiveSendOperation(sendOperation) || !waitingForResponse || live?.provider !== activeAdapter.provider) return true;
+      if (abortAutomationForChallenge(live.provider, true, 'send', sendOperation)) return true;
+      if (sendStarted(live) || providerStillGeneratingBeforeSend(live.provider)) return true;
+      const input = queryInput(live);
       if (!input || getInputText(input).trim()) return false;
     }
     return false;
