@@ -208,6 +208,39 @@ export function parseCoordinatorReply(
   return { kind: 'send', to: targets, message: payload.message };
 }
 
+/**
+ * What a forwarded AI is told about the collaboration it is part of. Without it a worker only sees the
+ * coordinator's message: it does not know its own provider key, who sent the message, or that its
+ * reply goes back to the coordinator. The full text goes with the first delivered forward to that AI
+ * in a run, a one-line reminder with every later one.
+ */
+export function buildWorkerBriefing(input: {
+  self: ProviderInstance;
+  selfLabel: string;
+  coordinator: AIProvider;
+  participants: readonly { provider: ProviderInstance; label: string }[];
+  goal: string;
+  round: number;
+  first: boolean;
+}): string {
+  const me = input.self + '（' + input.selfLabel + '）';
+  const coordinator = input.coordinator + '（' + PROVIDER_LABELS[input.coordinator] + '）';
+  if (!input.first) {
+    return '[ai-one] 你是 ' + me + '，下面是协调者 ' + coordinator + '第 ' + input.round + ' 轮转来的消息；你的完整回复会原样交回协调者。';
+  }
+  const participants = input.participants.map((item) => item.provider + '（' + item.label + '）').join('、');
+  return [
+    '[ai-one 协作说明] 这是用户用 ai-one 组织的多 AI 协作。ai-one 是用户电脑上的桌面工具，只负责在各个 AI 的网页对话之间原样转发消息。',
+    '- 你的标识：' + me + '。',
+    '- 协调者：' + coordinator + '，负责拆分任务、分派给各个 AI、汇总结果并决定何时结束。',
+    '- 本次参与的 AI：' + participants + '。',
+    '- 流程：你收到的消息都由协调者撰写、经 ai-one 原样转来；你的完整回复会原样交回协调者，由它决定下一步。你看不到其他 AI 的对话，它们也看不到你的；需要和其他 AI 交流的内容直接写进回复，由协调者转达。',
+    '- 消息里如果按标识给不同 AI 分了任务，只做属于你的那一份。',
+    '- 不要输出 ' + SEND_FENCE + ' 或 ' + DONE_FENCE + ' 指令块，那是协调者专用的。',
+    '- 用户的总目标如下，供你理解背景；这一轮具体做什么，以协调者的消息为准：\n' + input.goal,
+  ].join('\n');
+}
+
 export function buildIntroPrompt(input: {
   goal: string;
   coordinator: AIProvider;
@@ -250,6 +283,8 @@ export function buildIntroPrompt(input: {
       'ai-one 会在你转发给下列 AI 的 message 前面自动附上用户给它的固定说明，你不用重复，也不要写出与之矛盾的要求：\n' + listed +
       '\n涉及用户为某个 AI 配置的工具（例如用户自定义的 GitHub MCP Server）时，要写明是“用户配置的”，不要写成“你自己的工具”，也不要让它改用浏览器或网页搜索代替。');
   }
+  parts.splice(-1, 0,
+    'ai-one 第一次转发给每个 AI 时，会自动附上一段协作说明：它的标识、你是协调者、本次参与的 AI、用户的总目标，以及“它的回复会原样交回给你”的流程；之后每次转发都会附上它的标识。你不用重复这些，但 message 仍要写清这一轮要它做什么。');
   if (input.available.some(({ provider }) => provider.startsWith('chatgpt#'))) {
     parts.splice(-1, 0, 'chatgpt#2 / chatgpt#3 是另外的独立 ChatGPT 工人对话，与你（协调者）不共享上下文，message 必须自包含。');
   }

@@ -17,7 +17,7 @@ import {
   type SessionInitializationStatus,
   type UnavailableProvider,
 } from './types';
-import { parseCoordinatorReply, PROVIDER_LABELS } from './protocol';
+import { buildWorkerBriefing, parseCoordinatorReply, PROVIDER_LABELS } from './protocol';
 
 export interface FeedbackItem {
   from: ProviderInstance;
@@ -32,9 +32,12 @@ function notesOrUndefined(notes: Partial<Record<ProviderInstance, string>> | und
   return Object.keys(kept).length > 0 ? kept : undefined;
 }
 
-/** The exact text a forward sends: the user's standing note for that AI, then the coordinator's message. */
-export function forwardText(forward: Pick<ForwardRecord, 'message' | 'note'>): string {
-  return forward.note ? forward.note + '\n\n' + forward.message : forward.message;
+/**
+ * The exact text a forward sends: the user's standing note for that AI (first, so a leading @mention
+ * still works), the collaboration briefing, then the coordinator's message.
+ */
+export function forwardText(forward: Pick<ForwardRecord, 'message' | 'note' | 'briefing'>): string {
+  return [forward.note, forward.briefing, forward.message].filter(Boolean).join('\n\n');
 }
 
 export function createRun(input: {
@@ -273,6 +276,16 @@ export function applyCoordinatorReply(
       to: provider,
       message: parsed.message,
       ...(run.forwardNotes?.[provider] ? { note: run.forwardNotes[provider] } : {}),
+      briefing: buildWorkerBriefing({
+        self: provider,
+        selfLabel: providerInstanceName(provider, PROVIDER_LABELS),
+        coordinator: run.coordinator,
+        participants: run.available.map((item) => ({ provider: item, label: providerInstanceName(item, PROVIDER_LABELS) })),
+        goal: run.goal,
+        round: nextRound,
+        // Until a reply came back this AI may never have received the full briefing.
+        first: !run.forwards.some((forward) => forward.to === provider && forward.status === 'done'),
+      }),
       messageChars: parsed.message.length,
       status: 'queued' as const,
     }));

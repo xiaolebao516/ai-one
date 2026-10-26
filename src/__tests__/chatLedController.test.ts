@@ -70,6 +70,36 @@ async function create(env: ChatLedEnv, roundLimit?: number) {
 }
 
 describe('ChatLedController', () => {
+  it('briefs each AI on its identity, the coordinator, the participants and the goal once, then reminds it who it is', async () => {
+    const { env, calls } = makeEnv({
+      chatgpt: [SEND(['gemini', 'chatgpt#2'], 'if you are chatgpt#2 add numbers'), SEND(['chatgpt#2'], 'now subtract'), DONE('ok')],
+      gemini: ['gemini part'],
+      'chatgpt#2': ['42', '7'],
+    }, ['chatgpt', 'gemini', 'chatgpt#2']);
+    const controller = await ChatLedController.create(env, {
+      id: 'run-briefing',
+      goal: 'gemini and chatgpt#2 split the arithmetic',
+      candidates: ['gemini', 'chatgpt#2'],
+    });
+    await controller.start();
+
+    const toWorker = calls.filter((call) => call.provider === 'chatgpt#2').map((call) => call.text);
+    expect(toWorker).toHaveLength(2);
+    expect(toWorker[0]).toContain('[ai-one 协作说明]');
+    expect(toWorker[0]).toContain('你的标识：chatgpt#2（ChatGPT #2）');
+    expect(toWorker[0]).toContain('协调者：chatgpt（ChatGPT）');
+    expect(toWorker[0]).toContain('本次参与的 AI：gemini（Gemini）、chatgpt#2（ChatGPT #2）');
+    expect(toWorker[0]).toContain('只做属于你的那一份');
+    expect(toWorker[0]).toContain('gemini and chatgpt#2 split the arithmetic');
+    expect(toWorker[0].endsWith('\n\nif you are chatgpt#2 add numbers')).toBe(true);
+    expect(toWorker[1]).not.toContain('[ai-one 协作说明]');
+    expect(toWorker[1]).toBe('[ai-one] 你是 chatgpt#2（ChatGPT #2），下面是协调者 chatgpt（ChatGPT）第 2 轮转来的消息；你的完整回复会原样交回协调者。\n\nnow subtract');
+    expect(calls.find((call) => call.provider === 'gemini')?.text).toContain('你的标识：gemini（Gemini）');
+    // The record keeps the coordinator's own words apart from what ai-one added.
+    expect(controller.getRun().forwards[0]).toMatchObject({ message: 'if you are chatgpt#2 add numbers' });
+    expect(controller.getRun().phase).toBe('finished');
+  });
+
   it('waits for the user once forwards to one AI fail twice in a row, then hands that round to the coordinator', async () => {
     const broken = () => new Error('gemini send was not accepted; draft is still in composer');
     const { env, calls } = makeEnv({
@@ -252,7 +282,9 @@ describe('ChatLedController', () => {
     expect(run.forwards).toHaveLength(1);
     expect(run.forwards[0]).toMatchObject({ to: 'claude', status: 'done', reply: 'claude says: looks fine' });
     // the forwarded text is the complete message, and the coordinator got the complete reply back
-    expect(calls[1]).toEqual({ provider: 'claude', text: 'please review X' });
+    expect(calls[1].provider).toBe('claude');
+    expect(calls[1].text).toContain('[ai-one 协作说明]');
+    expect(calls[1].text.endsWith('\n\nplease review X')).toBe(true);
     expect(calls[2].provider).toBe('chatgpt');
     expect(calls[2].text).toContain('claude says: looks fine');
     // each provider gets its own new session before its first send
@@ -1245,7 +1277,8 @@ describe('run-through fixes (#200)', () => {
     });
     await controller.start();
     const toGemini = calls.find((call) => call.provider === 'gemini');
-    expect(toGemini?.text).toBe('@Github MCP Server 用我配置的 MCP\n\ninvestigate');
+    expect(toGemini?.text.startsWith('@Github MCP Server 用我配置的 MCP\n\n[ai-one 协作说明]')).toBe(true);
+    expect(toGemini?.text.endsWith('\n\ninvestigate')).toBe(true);
     expect(controller.getRun().forwards[0]).toMatchObject({ message: 'investigate', note: '@Github MCP Server 用我配置的 MCP' });
     expect(controller.getRun().forwardNotes).toEqual({ gemini: '@Github MCP Server 用我配置的 MCP' });
     expect(calls[0].text).toContain('gemini（Gemini）：「@Github MCP Server 用我配置的 MCP」');
