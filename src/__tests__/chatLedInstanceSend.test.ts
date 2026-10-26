@@ -51,4 +51,39 @@ describe('extra ChatGPT instance response isolation', () => {
     await expect(failed).rejects.toThrow('cancelled');
     await expect(successful).resolves.toBe('third is fine');
   });
+
+  function silentWorker(generating: boolean, answerAfterMs: number) {
+    const startedAt = Date.now();
+    mocks.evalWithCallback.mockImplementation(async (_instance: string, js: string) => {
+      if (js.includes('generating')) return JSON.stringify(generating);
+      if (Date.now() - startedAt < answerAfterMs) return '[]';
+      return JSON.stringify([{ v: 1, provider: 'chatgpt', bootId: 'b', mid: 1, action: 'RESPONSE_DONE', payload: 'thought it through' }]);
+    });
+  }
+
+  it('keeps waiting while the worker thinks for longer than ten minutes without output', async () => {
+    vi.useFakeTimers();
+    try {
+      silentWorker(true, 14 * 60_000);
+      const reply = sendAndWaitInstance('chatgpt#2', 'hard task');
+      reply.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(15 * 60_000);
+      await expect(reply).resolves.toBe('thought it through');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still gives up after ten silent minutes when the worker is not generating', async () => {
+    vi.useFakeTimers();
+    try {
+      silentWorker(false, 14 * 60_000);
+      const reply = sendAndWaitInstance('chatgpt#2', 'stuck task');
+      reply.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(11 * 60_000);
+      await expect(reply).rejects.toThrow('Provider instance response timed out.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
