@@ -22,6 +22,7 @@ import {
   setAvailableProviders,
   appendLog,
   forwardText,
+  workerBriefing,
   setInitializationPending,
   startRun,
   stopRun,
@@ -551,6 +552,16 @@ export class ChatLedController {
     await Promise.all(queued.map((forward) => this.forwardOne(forward, live)));
   }
 
+  /** The conversation this run created for the provider and still trusts; sendOwned opens a new one otherwise. */
+  private ownedConversation(provider: ProviderInstance) {
+    return this.run.conversations.find(
+      (conversation) =>
+        conversation.provider === provider &&
+        conversation.registrationStatus !== 'manual' &&
+        hasConversationPath(conversation.url),
+    );
+  }
+
   private async forwardOne(forward: ForwardRecord, live: () => boolean): Promise<void> {
     const patch = (p: Partial<ForwardRecord>) => {
       if (live()) this.set(updateForward(this.run, forward.id, p, this.env.now()));
@@ -568,8 +579,12 @@ export class ChatLedController {
       this.assertPersisted();
       if (!forwardLive()) return;
       if (!sendable.includes(forward.to)) throw new Error('Target AI is not logged in or its page is not ready.');
-      patch({ status: 'waiting' });
-      const reply = await this.sendOwned(forward.to, forwardText(forward), forwardLive);
+      // A fresh conversation knows nothing of earlier rounds, so it gets the full briefing even when
+      // this AI already replied in a conversation ai-one can no longer trust (#208).
+      const opensNewConversation = !this.run.keepPages && !this.ownedConversation(forward.to);
+      const briefing = opensNewConversation ? workerBriefing(this.run, forward.to, forward.round, true) : forward.briefing;
+      patch(briefing === forward.briefing ? { status: 'waiting' } : { status: 'waiting', briefing });
+      const reply = await this.sendOwned(forward.to, forwardText({ ...forward, briefing }), forwardLive);
       if (!forwardLive()) return;
       patch({ status: 'done', reply, replyChars: reply.length, finishedAt: this.env.now() });
     })();
@@ -623,12 +638,7 @@ export class ChatLedController {
       await proceed();
       if (this.run.keepPages) return this.sendInPlace(provider, text, live, proceed);
 
-      const owned = this.run.conversations.find(
-        (conversation) =>
-          conversation.provider === provider &&
-          conversation.registrationStatus !== 'manual' &&
-          hasConversationPath(conversation.url),
-      );
+      const owned = this.ownedConversation(provider);
       let firstSend: SessionInitAttempt | undefined;
       let expectedUrl: string | undefined;
       let expectedDocumentId: string | undefined;

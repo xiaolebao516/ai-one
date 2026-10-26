@@ -40,6 +40,19 @@ export function forwardText(forward: Pick<ForwardRecord, 'message' | 'note' | 'b
   return [forward.note, forward.briefing, forward.message].filter(Boolean).join('\n\n');
 }
 
+/** The collaboration briefing for one forward: in full (`first`) or as a one-line reminder. */
+export function workerBriefing(run: ChatLedRun, provider: ProviderInstance, round: number, first: boolean): string {
+  return buildWorkerBriefing({
+    self: provider,
+    selfLabel: providerInstanceName(provider, PROVIDER_LABELS),
+    coordinator: run.coordinator,
+    participants: run.available.map((item) => ({ provider: item, label: providerInstanceName(item, PROVIDER_LABELS) })),
+    goal: run.goal,
+    round,
+    first,
+  });
+}
+
 export function createRun(input: {
   id: string;
   goal: string;
@@ -276,16 +289,8 @@ export function applyCoordinatorReply(
       to: provider,
       message: parsed.message,
       ...(run.forwardNotes?.[provider] ? { note: run.forwardNotes[provider] } : {}),
-      briefing: buildWorkerBriefing({
-        self: provider,
-        selfLabel: providerInstanceName(provider, PROVIDER_LABELS),
-        coordinator: run.coordinator,
-        participants: run.available.map((item) => ({ provider: item, label: providerInstanceName(item, PROVIDER_LABELS) })),
-        goal: run.goal,
-        round: nextRound,
-        // Until a reply came back this AI may never have received the full briefing.
-        first: !run.forwards.some((forward) => forward.to === provider && forward.status === 'done'),
-      }),
+      // Until a reply came back this AI may never have received the full briefing.
+      briefing: workerBriefing(run, provider, nextRound, !run.forwards.some((forward) => forward.to === provider && forward.status === 'done')),
       messageChars: parsed.message.length,
       status: 'queued' as const,
     }));

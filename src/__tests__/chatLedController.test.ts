@@ -70,6 +70,37 @@ async function create(env: ChatLedEnv, roundLimit?: number) {
 }
 
 describe('ChatLedController', () => {
+  it('sends the full briefing again when an AI that already replied has to start a new conversation', async () => {
+    const { env, calls } = makeEnv({
+      chatgpt: [SEND(['gemini'], 'first task'), SEND(['gemini'], 'second task'), DONE('ok')],
+      gemini: ['first answer', 'second answer'],
+    });
+    // Gemini replies from a fresh blank page whose conversation address never shows up, so its
+    // registration ends as "check manually" and ai-one will not send into that page again.
+    const blank = 'https://gemini.google.com/app';
+    let documents = 0;
+    const newSession = env.newSession;
+    env.newSession = vi.fn(async (provider: ProviderInstance) => {
+      if (provider !== 'gemini') return newSession(provider);
+      documents += 1;
+      return { url: blank, freshDocument: true, documentId: 'gemini-doc-' + documents };
+    });
+    env.readDocumentId = vi.fn(async (provider: ProviderInstance) => (provider === 'gemini' ? 'gemini-doc-' + documents : undefined));
+    const readUrl = env.readConversationUrl;
+    env.readConversationUrl = vi.fn(async (provider: ProviderInstance) => (provider === 'gemini' ? blank : readUrl(provider)));
+    const controller = await create(env);
+    await controller.start();
+
+    expect(controller.getRun().phase).toBe('finished');
+    expect(env.newSession).toHaveBeenCalledTimes(3); // coordinator + one per Gemini round
+    const toGemini = calls.filter((call) => call.provider === 'gemini').map((call) => call.text);
+    expect(toGemini).toHaveLength(2);
+    expect(toGemini[1]).toContain('[ai-one 协作说明]');
+    expect(toGemini[1].endsWith('\n\nsecond task')).toBe(true);
+    // The record shows what was actually sent.
+    expect(controller.getRun().forwards[1].briefing).toContain('[ai-one 协作说明]');
+  });
+
   it('briefs each AI on its identity, the coordinator, the participants and the goal once, then reminds it who it is', async () => {
     const { env, calls } = makeEnv({
       chatgpt: [SEND(['gemini', 'chatgpt#2'], 'if you are chatgpt#2 add numbers'), SEND(['chatgpt#2'], 'now subtract'), DONE('ok')],
