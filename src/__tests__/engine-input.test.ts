@@ -1054,6 +1054,91 @@ describe('injected engine input hardening', () => {
     expect(errorDone(env)?.payload).toBe('[Error: grok input injection failed: execCommand insertText returned false]');
   });
 
+  it('fills the ChatGPT composer, never an editable writing block earlier in the conversation', async () => {
+    vi.useFakeTimers();
+    const env = createEnv({ inputKind: 'contenteditable' });
+    // The writing block's editor comes first in the document and matches the adapter's first selector.
+    const blockEditor = env.input;
+    blockEditor.setVisibleText('Original document');
+    blockEditor.setAttribute('class', 'ProseMirror');
+    blockEditor.setAttribute('contenteditable', 'true');
+    const block = new FakeElement(env.document, 'div');
+    block.setAttribute('data-testid', 'chatgpt-writing-block');
+    block.appendChild(blockEditor);
+    env.document.body.appendChild(block);
+    const composer = new FakeElement(env.document, 'div');
+    composer.setAttribute('class', 'ProseMirror');
+    composer.setAttribute('contenteditable', 'true');
+    composer.onDispatch = (event) => {
+      if (event.type === 'paste') {
+        const clipboardEvent = event as unknown as FakeClipboardEvent;
+        composer.setVisibleText(clipboardEvent.clipboardData?.getData('text/plain') ?? '');
+      }
+    };
+    const form = new FakeElement(env.document, 'form');
+    form.appendChild(composer);
+    env.document.body.appendChild(form);
+    const handler = await installEngine(env);
+    dispatchAdapter(handler, bundledChatGptAdapter());
+    expect(env.document.querySelector('.ProseMirror[contenteditable="true"]')).toBe(blockEditor);
+
+    handler({ v: 1, action: 'FILL_DRAFT', provider: 'chatgpt', payload: { text: 'Forwarded task' } });
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(composer.textContent).toBe('Forwarded task');
+    expect(blockEditor.textContent).toBe('Original document');
+    expect(errorDone(env)).toBeUndefined();
+  });
+
+  it('fills the Gemini composer, never a prompt editor inside the conversation', async () => {
+    vi.useFakeTimers();
+    const env = createEnv({ inputKind: 'contenteditable' });
+    // A prompt being edited inside the conversation comes first and matches the adapter selector.
+    const promptEditor = env.input;
+    promptEditor.setVisibleText('Earlier prompt');
+    promptEditor.setAttribute('class', 'ql-editor');
+    promptEditor.setAttribute('contenteditable', 'true');
+    const query = new FakeElement(env.document, 'user-query');
+    query.appendChild(promptEditor);
+    env.document.body.appendChild(query);
+    const composer = new FakeElement(env.document, 'div');
+    composer.setAttribute('class', 'ql-editor');
+    composer.setAttribute('contenteditable', 'true');
+    const inputArea = new FakeElement(env.document, 'input-area-v2');
+    const richTextarea = new FakeElement(env.document, 'rich-textarea');
+    richTextarea.appendChild(composer);
+    inputArea.appendChild(richTextarea);
+    env.document.body.appendChild(inputArea);
+    const handler = await installEngine(env);
+    dispatchAdapter(handler, { provider: 'gemini', inputSelectors: ['.ql-editor[contenteditable="true"]'], inputStrategy: 'quill-angular' });
+    expect(env.document.querySelector('.ql-editor[contenteditable="true"]')).toBe(promptEditor);
+
+    handler({ v: 1, action: 'FILL_DRAFT', provider: 'gemini', payload: { text: 'Forwarded task' } });
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(composer.textContent).toBe('Forwarded task');
+    expect(promptEditor.textContent).toBe('Earlier prompt');
+    expect(errorDone(env)).toBeUndefined();
+  });
+
+  it('says how far the editor text got when the injected text does not match', async () => {
+    vi.useFakeTimers();
+    const env = createEnv({ inputKind: 'contenteditable' });
+    env.document.execCommandResult = true;
+    env.document.execCommandMutates = false;
+    env.document.onExecCommand = () => env.input.setVisibleText('hello wor');
+    const handler = await installEngine(env);
+    dispatchAdapter(handler);
+
+    send(handler, 'hello world');
+    await flushMicrotasks();
+
+    expect(errorDone(env)?.payload).toBe(
+      '[Error: grok input injection failed: default produced mismatched editor text after injection (editor 8 chars, expected 10, first difference at 8)]',
+    );
+    expect(env.sendButton?.clickCount).toBe(0);
+  });
+
   it('keeps the original pre-send budget while async strategies finish', async () => {
     vi.useFakeTimers();
     const env = createEnv({ inputKind: 'contenteditable' });

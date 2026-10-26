@@ -90,6 +90,22 @@ const CHATGPT_LIVE_SEND_BUTTON_SELECTORS = [
   'button[data-testid="composer-submit-button"]',
   'button[aria-label="Send message"]',
 ];
+// The chat composer itself. A reply can carry its own editable area (a ChatGPT writing block,
+// a Gemini prompt being edited) that comes first in the DOM and matches the generic adapter
+// selectors; text filled there is never sent, and ChatGPT autosaves it over the block's content.
+const COMPOSER_INPUT_SELECTORS: Partial<Record<AIProvider, string[]>> = {
+  chatgpt: [
+    'form .ProseMirror[contenteditable="true"]',
+    '.ProseMirror[contenteditable="true"][data-composer-markdown]',
+    '#prompt-textarea',
+  ],
+  gemini: [
+    'input-area-v2 rich-textarea .ql-editor[contenteditable="true"]',
+    'input-container rich-textarea .ql-editor[contenteditable="true"]',
+  ],
+};
+const NON_COMPOSER_CONTAINER_SELECTOR =
+  '[data-testid="chatgpt-writing-block"], [data-message-author-role], user-query, model-response';
 const CHATGPT_COLLAPSED_PROMPT_MIN_SOURCE_CHARS = 512;
 const CHATGPT_COLLAPSED_PROMPT_MIN_VISIBLE_CHARS = 80;
 const CHATGPT_COLLAPSED_PROMPT_PREFIX_CHARS = 160;
@@ -580,7 +596,26 @@ class InactiveSendOperationError extends Error {
     if (activeAdapter.provider === 'meta') {
       return queryFirstUsable(activeAdapter.inputSelectors);
     }
-    return queryFirst(activeAdapter.inputSelectors);
+    const composerSelectors = COMPOSER_INPUT_SELECTORS[activeAdapter.provider];
+    if (!composerSelectors) return queryFirst(activeAdapter.inputSelectors);
+    return queryFirst(composerSelectors) ?? queryFirstOutsideConversation(activeAdapter.inputSelectors);
+  }
+
+  function queryFirstOutsideConversation(selectors: string[]): Element | null {
+    for (const selector of selectors) {
+      const matches = Array.from(document.querySelectorAll(selector));
+      // Lightweight test/fallback DOMs may implement querySelector without querySelectorAll.
+      const first = document.querySelector(selector);
+      if (first && !matches.includes(first)) matches.push(first);
+      const composer = matches.find((match) => !insideConversation(match));
+      if (composer) return composer;
+    }
+    return null;
+  }
+
+  function insideConversation(element: Element): boolean {
+    const closest = (element as Element & { closest?: (selectors: string) => Element | null }).closest;
+    return typeof closest === 'function' && Boolean(closest.call(element, NON_COMPOSER_CONTAINER_SELECTOR));
   }
 
   function stop(): EngineStopResult {
@@ -2108,7 +2143,18 @@ class InactiveSendOperationError extends Error {
     if (!text.trim()) return;
     if (composerTextMatches(input, text)) return;
     if (!getInputText(input).trim()) throw new InputInjectionError(`${strategy} left editor empty after injection`);
-    throw new InputInjectionError(`${strategy} produced mismatched editor text after injection`);
+    throw new InputInjectionError(
+      `${strategy} produced mismatched editor text after injection (${describeTextMismatch(getInputText(input), text)})`,
+    );
+  }
+
+  // Lengths and position only: the error is shown and stored, the prompt text stays out of it.
+  function describeTextMismatch(actual: string, expected: string): string {
+    const got = compactVisibleText(actual);
+    const want = compactVisibleText(expected);
+    let at = 0;
+    while (at < got.length && at < want.length && got[at] === want[at]) at += 1;
+    return `editor ${got.length} chars, expected ${want.length}, first difference at ${at}`;
   }
 
   function composerTextMatches(input: Element, expected: string): boolean {

@@ -336,6 +336,9 @@ export function ChatLedView({
                 error: run.stop.error,
               })}
             </p>
+            {run.stop.repeated ? (
+              <p>{text.t("chatLedRepeatedFailure", { provider: providerName(run.stop.provider, providerLabels) })}</p>
+            ) : null}
             <div className="flex flex-wrap gap-v2-sm">
               <Button size="sm" onClick={onRemind}>
                 {text.t("chatLedRetry")}
