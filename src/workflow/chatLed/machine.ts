@@ -491,11 +491,15 @@ export function resumeAfterStop(run: ChatLedRun, now: number): ChatLedRun {
 }
 
 /**
- * The AI whose latest forwards all failed, MAX_CONSECUTIVE_FORWARD_FAILURES in a row. Sending the
- * coordinator another feedback round would only make it re-dispatch into the same broken page.
+ * An AI sent to in this round whose latest forwards all failed, MAX_CONSECUTIVE_FORWARD_FAILURES in a
+ * row. Sending the coordinator another feedback round would only make it re-dispatch into the same
+ * broken page. An AI the coordinator has moved away from no longer counts.
  */
-export function repeatedForwardFailure(run: ChatLedRun): { provider: ProviderInstance; error: string } | undefined {
-  const providers = [...new Set(run.forwards.map((forward) => forward.to))];
+export function repeatedForwardFailure(
+  run: ChatLedRun,
+  round: number,
+): { provider: ProviderInstance; error: string } | undefined {
+  const providers = [...new Set(run.forwards.filter((forward) => forward.round === round).map((forward) => forward.to))];
   for (const provider of providers) {
     const latest = run.forwards.filter((forward) => forward.to === provider).slice(-MAX_CONSECUTIVE_FORWARD_FAILURES);
     if (latest.length < MAX_CONSECUTIVE_FORWARD_FAILURES) continue;

@@ -531,7 +531,7 @@ export class ChatLedController {
         const items = settledFeedbackItems(this.run, round);
         if (!items) return;
         this.set(resetAutoRemindersAfterForward(this.run, round, this.env.now()));
-        const repeated = repeatedForwardFailure(this.run);
+        const repeated = repeatedForwardFailure(this.run, round);
         if (repeated) {
           this.set(failProvider(this.run, repeated.provider, repeated.error, this.env.now(), true));
           return;
