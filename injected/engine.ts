@@ -39,6 +39,7 @@ interface MacEngineState {
   bootId: string;
   adapterVersion: number;
   stop?: () => EngineStopResult;
+  generating?: () => boolean;
 }
 
 // What a host stop request actually did on the page. Clicking a stop control does not prove the
@@ -78,6 +79,8 @@ const SEND_RETRY_DELAY_MS = 1500;
 const SEND_FINAL_VERIFY_DELAY_MS = 1500;
 const CHATGPT_INITIAL_SEND_CONFIRMATION_DELAY_MS = 10_000;
 const CHATGPT_FALLBACK_SEND_CONFIRMATION_DELAY_MS = 4_000;
+const CHATGPT_CLEARED_COMPOSER_GRACE_MS = 60_000;
+const CHATGPT_CLEARED_COMPOSER_POLL_MS = 1_000;
 const CHATGPT_USER_MESSAGE_SELECTORS = [
   '[data-message-author-role="user"]',
   '[data-testid="user-message"]',
@@ -360,6 +363,8 @@ class InactiveSendOperationError extends Error {
     bootId: bridge.bootId,
     adapterVersion: 0,
     stop,
+    // Extra instances only see the outbox, which stays silent while a model thinks without output.
+    generating: () => Boolean(adapter) && isGenerating(),
   };
 
   (window as unknown as { __MAC_REPORT__?: unknown }).__MAC_REPORT__ = {
@@ -946,9 +951,13 @@ class InactiveSendOperationError extends Error {
     const inputText = getInputText(currentInput).trim();
     if (!inputText) {
       if (adapter.provider === 'chatgpt') {
-        emitChatGptUnconfirmed('cleared');
+        const chatGptAdapter = adapter;
+        if (await chatGptTurnAppearsLate(chatGptAdapter, sendOperation)) return;
+        const lateInput = queryInput(adapter ?? chatGptAdapter);
+        const composerState = !lateInput ? 'disappeared' : getInputText(lateInput).trim() ? 'changed' : 'cleared';
+        emitChatGptUnconfirmed(composerState);
         doneWithError(
-          'chatgpt send could not be confirmed; composer cleared before a matching user turn appeared',
+          `chatgpt send could not be confirmed; composer ${composerState} before a matching user turn appeared`,
           originalAdapter.provider,
           sendOperation,
         );
@@ -989,6 +998,24 @@ class InactiveSendOperationError extends Error {
     window.setTimeout(() => {
       void verifySendAfterRetry(retryAttempt, originalAdapter, sendOperation);
     }, fallbackSendConfirmationDelay(originalAdapter));
+  }
+
+  // A long paste becomes a "Pasted text" attachment: ChatGPT empties the composer at once but only
+  // shows the user turn once the upload is done, which can take longer than the confirmation delay.
+  // True when the send was confirmed meanwhile, or this send is no longer the one to report on.
+  async function chatGptTurnAppearsLate(activeAdapter: AdapterConfig, sendOperation: number): Promise<boolean> {
+    const deadline = Date.now() + CHATGPT_CLEARED_COMPOSER_GRACE_MS;
+    while (Date.now() < deadline) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, CHATGPT_CLEARED_COMPOSER_POLL_MS));
+      // A refreshed adapter for the same provider keeps the wait going with the new selectors.
+      const live = adapter;
+      if (!isActiveSendOperation(sendOperation) || !waitingForResponse || live?.provider !== activeAdapter.provider) return true;
+      if (abortAutomationForChallenge(live.provider, true, 'send', sendOperation)) return true;
+      if (sendStarted(live) || providerStillGeneratingBeforeSend(live.provider)) return true;
+      const input = queryInput(live);
+      if (!input || getInputText(input).trim()) return false;
+    }
+    return false;
   }
 
   async function verifySendAfterRetry(

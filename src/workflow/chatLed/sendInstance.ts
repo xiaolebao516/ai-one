@@ -5,6 +5,9 @@ import { host } from '../../host';
 interface Pending { cancelled: boolean; cancel(reason: Error): void }
 const pending = new Map<ProviderInstance, Pending>();
 const sleep = (ms: number) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, ms));
+const GENERATING_PROBE_INTERVAL_MS = 10_000;
+const GENERATING_PROBE_JS =
+  "window.__MAC_ENGINE__ && typeof window.__MAC_ENGINE__.generating === 'function' ? window.__MAC_ENGINE__.generating() : false";
 
 function parseBatch(raw: string): unknown[] {
   const first: unknown = JSON.parse(raw);
@@ -47,6 +50,7 @@ export function sendAndWaitInstance(instance: ProviderInstance, text: string): P
     let failures = 0;
     const startedAt = Date.now();
     let lastActivityAt = startedAt;
+    let lastGeneratingProbeAt = startedAt;
     while (!state.cancelled) {
       if (Date.now() - lastActivityAt > 10 * 60_000 || Date.now() - startedAt > 60 * 60_000) {
         throw new Error('Provider instance response timed out.');
@@ -73,6 +77,13 @@ export function sendAndWaitInstance(instance: ProviderInstance, text: string): P
               throw new Error('Provider response was truncated.');
             completed = replyText(item.payload);
           }
+        }
+        if (maxMid === lastMid && Date.now() - lastGeneratingProbeAt >= GENERATING_PROBE_INTERVAL_MS) {
+          // A model can think for many minutes without output; that is activity, not a stalled page.
+          lastGeneratingProbeAt = Date.now();
+          const generating = await host.provider.evalWithCallback(instance, GENERATING_PROBE_JS);
+          if (state.cancelled) break;
+          if (JSON.parse(generating) === true) lastActivityAt = Date.now();
         }
         if (maxMid > lastMid) {
           await host.provider.eval(instance, `window.__MAC_BRIDGE__ && window.__MAC_BRIDGE__.ackBulk(${maxMid});`);

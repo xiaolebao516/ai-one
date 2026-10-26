@@ -12,6 +12,7 @@ const SEND_RETRY_DELAY_MS = 1500;
 const SEND_FINAL_VERIFY_DELAY_MS = 1500;
 const CHATGPT_INITIAL_SEND_CONFIRMATION_DELAY_MS = 10_000;
 const CHATGPT_FALLBACK_SEND_CONFIRMATION_DELAY_MS = 4_000;
+const CHATGPT_CLEARED_COMPOSER_GRACE_MS = 60_000;
 const CHATGPT_COMPOSER_SUBMIT_SELECTOR = 'button[data-testid="composer-submit-button"]';
 const CHATGPT_USER_MESSAGE_TESTID_SELECTOR = '[data-testid="user-message"]';
 const GROK_CHAT_STOP_BUTTON_SELECTOR = 'button[data-testid="chat-stop-button"]';
@@ -1311,6 +1312,8 @@ describe('injected engine input hardening', () => {
     expect(errorDone(env)).toBeUndefined();
 
     await vi.advanceTimersByTimeAsync(CHATGPT_INITIAL_SEND_CONFIRMATION_DELAY_MS - 4_000);
+    expect(errorDone(env)).toBeUndefined(); // a long paste can show its user turn late
+    await vi.advanceTimersByTimeAsync(CHATGPT_CLEARED_COMPOSER_GRACE_MS);
 
     expect(env.sendButton?.clickCount).toBe(1);
     expect(keyEventCount(env.input)).toBe(0);
@@ -1342,6 +1345,24 @@ describe('injected engine input hardening', () => {
 
     send(handler, prompt, 'chatgpt');
     await vi.advanceTimersByTimeAsync(PRE_SEND_DELAY_MS + CHATGPT_INITIAL_SEND_CONFIRMATION_DELAY_MS);
+
+    expect(env.sendButton?.clickCount).toBe(1);
+    expect(errorDone(env)).toBeUndefined();
+  });
+
+  it('accepts a ChatGPT user turn that appears late after a long paste emptied the composer', async () => {
+    vi.useFakeTimers();
+    const env = createEnv({ inputKind: 'textarea' });
+    const prompt = 'long feedback that ChatGPT turns into a pasted-text attachment';
+    if (env.sendButton) env.sendButton.onClick = () => env.input.setVisibleText('');
+    const handler = await installEngine(env);
+    dispatchAdapter(handler, { provider: 'chatgpt' });
+
+    send(handler, prompt, 'chatgpt');
+    await vi.advanceTimersByTimeAsync(PRE_SEND_DELAY_MS + CHATGPT_INITIAL_SEND_CONFIRMATION_DELAY_MS + 20_000);
+    expect(errorDone(env)).toBeUndefined();
+    env.userMessages = [new FakeElement(env.document, 'div', prompt)];
+    await vi.advanceTimersByTimeAsync(CHATGPT_CLEARED_COMPOSER_GRACE_MS);
 
     expect(env.sendButton?.clickCount).toBe(1);
     expect(errorDone(env)).toBeUndefined();
@@ -1641,7 +1662,7 @@ describe('injected engine input hardening', () => {
     dispatchAdapter(handler, { provider: 'chatgpt' });
 
     send(handler, prompt, 'chatgpt');
-    await vi.advanceTimersByTimeAsync(PRE_SEND_DELAY_MS + CHATGPT_INITIAL_SEND_CONFIRMATION_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(PRE_SEND_DELAY_MS + CHATGPT_INITIAL_SEND_CONFIRMATION_DELAY_MS + CHATGPT_CLEARED_COMPOSER_GRACE_MS);
 
     expect(errorDone(env)?.payload).toBe(
       '[Error: chatgpt send could not be confirmed; composer cleared before a matching user turn appeared]',
@@ -1869,7 +1890,7 @@ describe('injected engine input hardening', () => {
       if (kind === 'user message') candidate.setAttribute('data-message-author-role', 'user');
       env.responses = [candidate];
       FakeMutationObserver.notify();
-      await vi.advanceTimersByTimeAsync(CHATGPT_INITIAL_SEND_CONFIRMATION_DELAY_MS);
+      await vi.advanceTimersByTimeAsync(CHATGPT_INITIAL_SEND_CONFIRMATION_DELAY_MS + CHATGPT_CLEARED_COMPOSER_GRACE_MS);
 
       expect(env.emitted.filter(message => message.action === 'RESPONSE_CHUNK')).toHaveLength(0);
       expect(errorDone(env)?.payload).toBe('[Error: chatgpt send could not be confirmed; composer cleared before a matching user turn appeared]');

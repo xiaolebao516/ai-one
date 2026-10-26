@@ -22,6 +22,7 @@ declare global {
       bootId: string;
       adapterVersion: number;
       stop?: () => void;
+      generating?: () => boolean;
     };
   }
 }
