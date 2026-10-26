@@ -70,6 +70,46 @@ async function create(env: ChatLedEnv, roundLimit?: number) {
 }
 
 describe('ChatLedController', () => {
+  it('waits for the user once forwards to one AI fail twice in a row, then hands that round to the coordinator', async () => {
+    const broken = () => new Error('gemini send was not accepted; draft is still in composer');
+    const { env, calls } = makeEnv({
+      chatgpt: [SEND(['gemini'], 'first try'), SEND(['gemini'], 'second try'), SEND(['gemini'], 'third try'), DONE('gave up')],
+      gemini: [broken(), broken(), 'finally works'],
+    });
+    const controller = await create(env);
+    await controller.start();
+
+    const coordinatorCalls = () => calls.filter((call) => call.provider === 'chatgpt');
+    expect(coordinatorCalls()).toHaveLength(2); // intro + feedback after the first failure, no third re-dispatch
+    expect(controller.getRun()).toMatchObject({
+      phase: 'awaiting-user',
+      stop: { type: 'provider-failure', provider: 'gemini', repeated: true, error: expect.stringContaining('not accepted') },
+    });
+
+    await controller.remind();
+
+    expect(coordinatorCalls()[2].text).toContain('not accepted'); // the held-back round 2 feedback, not a bare reminder
+    expect(controller.getRun().forwards.at(-1)).toMatchObject({ to: 'gemini', status: 'done', reply: 'finally works' });
+    expect(controller.getRun().phase).toBe('finished');
+  });
+
+  it('does not stop again for an AI that failed twice once the coordinator has moved on to another AI', async () => {
+    const broken = () => new Error('gemini send was not accepted; draft is still in composer');
+    const { env, calls } = makeEnv({
+      chatgpt: [SEND(['gemini'], 'first try'), SEND(['gemini'], 'second try'), SEND(['claude'], 'ask claude'), DONE('done')],
+      gemini: [broken(), broken()],
+      claude: ['claude answer'],
+    });
+    const controller = await create(env);
+    await controller.start();
+    expect(controller.getRun().stop).toMatchObject({ type: 'provider-failure', provider: 'gemini', repeated: true });
+
+    await controller.remind();
+
+    expect(calls.filter((call) => call.provider === 'chatgpt')).toHaveLength(4);
+    expect(controller.getRun().phase).toBe('finished');
+  });
+
   it('sends from a verified blank new page before the server creates its conversation URL', async () => {
     const { env, calls } = makeEnv({ chatgpt: [] });
     let url = 'https://chatgpt.com/';

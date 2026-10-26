@@ -13,6 +13,7 @@ import {
   recordCleanup,
   recordExport,
   registerConversation,
+  repeatedForwardFailure,
   resumeAfterStop,
   resumeRun,
   resetAutoRemindersAfterForward,
@@ -465,11 +466,20 @@ export class ChatLedController {
     const text =
       stop.type === 'protocol-violation'
         ? buildViolationReminder(stop.violation.code)
-        : buildViolationReminder('no-directive');
+        : (stop.type === 'provider-failure' && stop.repeated && this.lastRoundFeedback()) ||
+          buildViolationReminder('no-directive');
     const next = resumeAfterStop(this.run, this.env.now());
     if (next === this.run) return;
     this.set(next);
     await this.drive(text);
+  }
+
+  /** The feedback held back when forwards kept failing: the coordinator has not seen that round yet. */
+  private lastRoundFeedback(): string | undefined {
+    const round = this.run.round;
+    const items = settledFeedbackItems(this.run, round);
+    if (!items) return undefined;
+    return buildFeedbackPrompt(items, round, Math.max(0, this.run.roundLimit - round));
   }
 
   async extendLimit(extra: number): Promise<void> {
@@ -521,6 +531,11 @@ export class ChatLedController {
         const items = settledFeedbackItems(this.run, round);
         if (!items) return;
         this.set(resetAutoRemindersAfterForward(this.run, round, this.env.now()));
+        const repeated = repeatedForwardFailure(this.run, round);
+        if (repeated) {
+          this.set(failProvider(this.run, repeated.provider, repeated.error, this.env.now(), true));
+          return;
+        }
         const remaining = Math.max(0, this.run.roundLimit - this.run.round);
         text = buildFeedbackPrompt(items, round, remaining);
         feedback = { round, remaining };

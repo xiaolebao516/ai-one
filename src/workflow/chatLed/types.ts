@@ -12,6 +12,8 @@ import type { AIProvider, ProviderInstance } from '../../../shared/types';
 export const DEFAULT_COORDINATOR: AIProvider = 'chatgpt';
 export const DEFAULT_ROUND_LIMIT = 8;
 export const MAX_CONSECUTIVE_AUTO_REMINDERS = 2;
+/** Forwards to one AI that may fail in a row before the run waits for the user. */
+export const MAX_CONSECUTIVE_FORWARD_FAILURES = 2;
 export type ChatLedMode = 'general' | 'repo' | 'discuss';
 /** Max forward targets in one `ai-one-send` block. */
 export const MAX_TARGETS_PER_DIRECTIVE = 4;
@@ -83,7 +85,8 @@ export type RunPhase =
 export type StopReason =
   | { type: 'protocol-violation'; violation: ProtocolViolation; rawReply: string }
   | { type: 'round-limit'; limit: number }
-  | { type: 'provider-failure'; provider: ProviderInstance; error: string }
+  // repeated: forwards to this AI kept failing; retrying hands the last round's results to the coordinator.
+  | { type: 'provider-failure'; provider: ProviderInstance; error: string; repeated?: true }
   | { type: 'user' };
 
 export type SessionInitializationStatus = 'pending' | 'registered' | 'manual' | 'not-created';

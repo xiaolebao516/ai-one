@@ -4,6 +4,7 @@ import {
   DEFAULT_COORDINATOR,
   DEFAULT_ROUND_LIMIT,
   MAX_CONSECUTIVE_AUTO_REMINDERS,
+  MAX_CONSECUTIVE_FORWARD_FAILURES,
   MAX_LOG_ENTRIES,
   type ChatLedLogEntry,
   type ChatLedMode,
@@ -489,11 +490,31 @@ export function resumeAfterStop(run: ChatLedRun, now: number): ChatLedRun {
   };
 }
 
+/**
+ * An AI sent to in this round whose latest forwards all failed, MAX_CONSECUTIVE_FORWARD_FAILURES in a
+ * row. Sending the coordinator another feedback round would only make it re-dispatch into the same
+ * broken page. An AI the coordinator has moved away from no longer counts.
+ */
+export function repeatedForwardFailure(
+  run: ChatLedRun,
+  round: number,
+): { provider: ProviderInstance; error: string } | undefined {
+  const providers = [...new Set(run.forwards.filter((forward) => forward.round === round).map((forward) => forward.to))];
+  for (const provider of providers) {
+    const latest = run.forwards.filter((forward) => forward.to === provider).slice(-MAX_CONSECUTIVE_FORWARD_FAILURES);
+    if (latest.length < MAX_CONSECUTIVE_FORWARD_FAILURES) continue;
+    if (!latest.every((forward) => forward.status === 'failed' || forward.status === 'timed-out')) continue;
+    return { provider, error: latest[latest.length - 1].error ?? latest[latest.length - 1].status };
+  }
+  return undefined;
+}
+
 export function failProvider(
   run: ChatLedRun,
   provider: ProviderInstance,
   error: string,
   now: number,
+  repeated = false,
 ): ChatLedRun {
   if (
     run.phase !== 'coordinator-thinking' &&
@@ -514,7 +535,7 @@ export function failProvider(
     ...run,
     phase: 'awaiting-user',
     pausedFrom: undefined,
-    stop: { type: 'provider-failure', provider, error },
+    stop: repeated ? { type: 'provider-failure', provider, error, repeated: true } : { type: 'provider-failure', provider, error },
     forwards,
     updatedAt: now,
   };
