@@ -93,7 +93,7 @@ describe('ChatLedController', () => {
     expect(toWorker[0]).toContain('gemini and chatgpt#2 split the arithmetic');
     expect(toWorker[0].endsWith('\n\nif you are chatgpt#2 add numbers')).toBe(true);
     expect(toWorker[1]).not.toContain('[ai-one 协作说明]');
-    expect(toWorker[1]).toBe('[ai-one] 你是 chatgpt#2（ChatGPT #2），下面是协调者 chatgpt（ChatGPT） 第 2 轮转来的消息；你的完整回复会原样交回协调者。\n\nnow subtract');
+    expect(toWorker[1]).toBe('[ai-one] 你是 chatgpt#2（ChatGPT #2），下面是协调者 chatgpt（ChatGPT）第 2 轮转来的消息；你的完整回复会原样交回协调者。\n\nnow subtract');
     expect(calls.find((call) => call.provider === 'gemini')?.text).toContain('你的标识：gemini（Gemini）');
     // The record keeps the coordinator's own words apart from what ai-one added.
     expect(controller.getRun().forwards[0]).toMatchObject({ message: 'if you are chatgpt#2 add numbers' });

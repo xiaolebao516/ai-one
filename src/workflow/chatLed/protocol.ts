@@ -226,7 +226,7 @@ export function buildWorkerBriefing(input: {
   const me = input.self + '（' + input.selfLabel + '）';
   const coordinator = input.coordinator + '（' + PROVIDER_LABELS[input.coordinator] + '）';
   if (!input.first) {
-    return '[ai-one] 你是 ' + me + '，下面是协调者 ' + coordinator + ' 第 ' + input.round + ' 轮转来的消息；你的完整回复会原样交回协调者。';
+    return '[ai-one] 你是 ' + me + '，下面是协调者 ' + coordinator + '第 ' + input.round + ' 轮转来的消息；你的完整回复会原样交回协调者。';
   }
   const participants = input.participants.map((item) => item.provider + '（' + item.label + '）').join('、');
   return [
